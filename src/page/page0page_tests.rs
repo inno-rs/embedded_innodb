@@ -14,7 +14,7 @@ mod tests {
         let ptr = get_raw_block();
         let page = Page::new(ptr);
         let max_trx_id: crate::utils::TxnId = 2352325;
-        let mtr = None; // Assuming mtr is not used in this test
+        let mtr = None; // Assuming Mtr is not used in this test
 
         page.set_max_trx_id(max_trx_id, mtr);
 

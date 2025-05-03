@@ -1,8 +1,9 @@
-mod buf0buf;
-mod fil0types;
-mod mtr0mtr;
+mod buf;
+mod dict;
+mod fil;
+mod mtr;
 mod page;
-mod rec0rec;
+mod rem;
 mod utils;
 
 fn main() {

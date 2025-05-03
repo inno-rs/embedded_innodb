@@ -1,6 +1,8 @@
-use crate::fil0types::FSEG_PAGE_DATA;
-use crate::mtr0mtr::mtr;
-use crate::rec0rec::{Record, REC_N_EXTRA_BYTES};
+use crate::buf::buf0types::BufBlock;
+use crate::dict::dict0types::Index;
+use crate::fil::fil0types::FSEG_PAGE_DATA;
+use crate::mtr::mtr0mtr::Mtr;
+use crate::rem::rem0rec::{Record, REC_N_EXTRA_BYTES};
 use crate::utils::TxnId;
 
 pub type SlotId = usize;
@@ -8,6 +10,28 @@ pub type SlotId = usize;
 /* PAGE HEADER
 Index page header starts at the first offset left free by the fil-module.
  */
+
+/*
+/***********************************************************************
+ *                     InnoDB Page Header (56 bytes)                   *
+ *                     Offset: 38 (0x26) from page start               *
+ ***********************************************************************
+ * Offset | Size | Name              | Description                     *
+ *--------+------+-------------------+---------------------------------*
+ * 0x26   |  2   | PAGE_N_DIR_SLOTS  | Number of directory slots       *
+ * 0x28   |  2   | PAGE_HEAP_TOP     | Offset to start of free space   *
+ * 0x2A   |  2   | PAGE_N_HEAP       | Heap records + deleted count    *
+ * 0x2C   |  2   | PAGE_FREE         | Start of record free list       *
+ * 0x2E   |  2   | PAGE_GARBAGE      | Fragmented space in bytes       *
+ * 0x30   |  2   | PAGE_LAST_INSERT  | Offset of last insert           *
+ * 0x32   |  2   | PAGE_DIRECTION    | Insert direction (0–2)          *
+ * 0x34   |  2   | PAGE_N_DIRECTION  | Count of inserts in direction   *
+ * 0x36   |  2   | PAGE_N_RECS       | Number of user records          *
+ * 0x38   |  8   | PAGE_MAX_TRX_ID   | Purge-related trx ID (since 5.1)*
+ * 0x40   |  8   | PAGE_HEADER_EXTRA | Additional metadata (if used)   *
+ ***********************************************************************/
+
+*/
 
 /** Index page header starts at this offset. */
 pub const PAGE_HEADER: usize = FSEG_PAGE_DATA;
@@ -64,7 +88,8 @@ pub const PAGE_DATA: usize = PAGE_HEADER + 36 + 2 * FSEG_PAGE_DATA;
 pub const PAGE_INFIMUM: usize = PAGE_DATA + 1 + REC_N_EXTRA_BYTES;
 
 /** Offset of the page Supremum record on a page */
-pub const PAGE_SUPREMUM: usize = PAGE_DATA + 1 + REC_N_EXTRA_BYTES + 8 + 1 + REC_N_EXTRA_BYTES;
+pub const PAGE_SUPREMUM: usize =
+    PAGE_DATA + 1 + REC_N_EXTRA_BYTES + 8 + 1 + REC_N_EXTRA_BYTES;
 
 /** Offset of the page Supremum record end on the page */
 pub const PAGE_SUPREMUM_END: usize = PAGE_SUPREMUM + 9;
@@ -106,10 +131,10 @@ impl Page {
     /// # Arguments
     ///
     /// * `max_trx_id`: The maximum transaction id to set.
-    /// * `mtr`: An optional transaction object.
+    /// * `Mtr`: An optional transaction object.
     ///
     /// Returns: ()
-    pub fn set_max_trx_id(&self, max_trx_id: TxnId, mtr: Option<mtr>) {
+    pub fn set_max_trx_id(&self, max_trx_id: TxnId, mtr: Option<Mtr>) {
         let page = self.ptr as *mut i64;
         /* It is not necessary to write this change to the redo log as
         during the database recovery we assume that the max transaction id
@@ -120,8 +145,8 @@ impl Page {
                 page.add((PAGE_HEADER + PAGE_MAX_TRX_ID)).write(max_trx_id);
             },
             Some(_) => {
-                log::warn!("don't know how to handle mtr");
-                panic!("don't know how to handle mtr");
+                log::warn!("don't know how to handle Mtr");
+                panic!("don't know how to handle Mtr");
             }
         }
     }
@@ -131,7 +156,8 @@ impl Page {
     /// The maximum transaction ID (`TxnId`) stored in the page.
     pub fn get_max_trx_id(&self) -> TxnId {
         unsafe {
-            let page_ptr = (self.ptr as *const TxnId).add((PAGE_HEADER + PAGE_MAX_TRX_ID));
+            let page_ptr = (self.ptr as *const TxnId)
+                .add((PAGE_HEADER + PAGE_MAX_TRX_ID));
             *page_ptr
         }
     }
@@ -187,7 +213,9 @@ impl Page {
     }
 
     pub fn page_get_middle_rec(&self) -> Record {
-        let middle = (self.page_get_header_field(PAGE_N_RECS) + PAGE_HEAP_NO_USER_LOW) / 2;
+        let middle = (self.page_get_header_field(PAGE_N_RECS)
+            + PAGE_HEAP_NO_USER_LOW)
+            / 2;
 
         let mut i: usize = 0;
         let mut count: usize = 0;
@@ -203,7 +231,7 @@ impl Page {
         }
 
         let mut rec = self.page_dir_slot_get_rec(i - 1);
-        for j in 0..(middle - count) {
+        for _ in 0..(middle - count) {
             let next = rec.rec_get_next();
             rec = next;
         }
@@ -246,6 +274,8 @@ impl Page {
         return slot_ptr;
     }
 
+    pub fn page_create(&self, index: &Index, buf: &BufBlock, mtr: Mtr) {}
+
     /// Searches for a record within a page that corresponds to the given heap number.
     ///
     /// This method starts at the infimum record of the page and traverses the record list
@@ -260,7 +290,10 @@ impl Page {
     ///
     /// - `Some(Record)`: If a record with the specified `heap_no` is found.
     /// - `None`: If no record with the specified `heap_no` exists within the page.
-    pub fn page_find_rec_with_heap_no(&self, heap_no: usize) -> Option<Record> {
+    pub fn page_find_rec_with_heap_no(
+        &self,
+        heap_no: usize,
+    ) -> Option<Record> {
         let mut rec = self.page_get_infimum_rec();
         loop {
             let rec_heap_no = rec.rec_get_heap_no();
