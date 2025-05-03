@@ -1,0 +1,281 @@
+use crate::fil0types::FSEG_PAGE_DATA;
+use crate::mtr0mtr::mtr;
+use crate::rec0rec::{Record, REC_N_EXTRA_BYTES};
+use crate::utils::TxnId;
+
+pub type SlotId = usize;
+
+/* PAGE HEADER
+Index page header starts at the first offset left free by the fil-module.
+ */
+
+/** Index page header starts at this offset. */
+pub const PAGE_HEADER: usize = FSEG_PAGE_DATA;
+
+/** Number of slots in the page-directory. */
+pub const PAGE_N_DIR_SLOTS: usize = 0;
+
+/** Pointer to the record heap top. Points to the first unused space (more like never used before).  */
+pub const PAGE_HEAP_TOP: usize = 2;
+
+/** Number of records in the heap. */
+pub const PAGE_N_HEAP: usize = 4;
+
+/** Pointer to the start of the free record list. This points to the single linked list of free-ed up records. */
+pub const PAGE_FREE: usize = 6;
+
+/** Number of bytes in deleted records. */
+pub const PAGE_GARBAGE: usize = 8;
+
+/** Pointer to the last inserted record,
+or NULL if this information has been reset by a delete operation */
+pub const PAGE_LAST_INSERT: usize = 10;
+
+/** Last insert direction. Values: [PAGE_LEFT, PAGE_RIGHT, PAGE_SAME_REC, ..] */
+pub const PAGE_DIRECTION: usize = 12;
+
+/** Number of consecutive inserts to the same direction */
+pub const PAGE_N_DIRECTION: usize = 14;
+
+/** Number of user records on the page */
+pub const PAGE_N_RECS: usize = 16;
+
+/** Highest id of the transaction that may have modified a record on the page; a i64;
+defined only in the secondary indexes; NOTE:
+this may be modified only when the thread has an x-latch to the page. */
+pub const PAGE_MAX_TRX_ID: usize = 18;
+
+/** Level of the node in an index tree.
+The leaf is at level 0.
+This field should not be written to the page after creation. */
+pub const PAGE_LEVEL: usize = 26;
+
+/** IndexId of the page. This field should not be written to the page after creation. */
+pub const PAGE_INDEX_ID: usize = 28;
+
+/** File-segment-header of the leaf pages in the btree.
+It is defined only on the root page of the BTree. */
+pub const PAGE_BTR_SEG_LEAF: usize = 36;
+
+/** Start of data on the page */
+pub const PAGE_DATA: usize = PAGE_HEADER + 36 + 2 * FSEG_PAGE_DATA;
+
+/** Offset of the page Infimum record on a page */
+pub const PAGE_INFIMUM: usize = PAGE_DATA + 1 + REC_N_EXTRA_BYTES;
+
+/** Offset of the page Supremum record on a page */
+pub const PAGE_SUPREMUM: usize = PAGE_DATA + 1 + REC_N_EXTRA_BYTES + 8 + 1 + REC_N_EXTRA_BYTES;
+
+/** Offset of the page Supremum record end on the page */
+pub const PAGE_SUPREMUM_END: usize = PAGE_SUPREMUM + 9;
+
+/*-----------------------------*/
+
+/* Heap numbers */
+/* Each record stored in InnoDB has a heap number. */
+
+/** Page Infimum */
+pub const PAGE_HEAP_NO_INFIMUM: usize = 0;
+
+/** Page Supremum */
+pub const PAGE_HEAP_NO_SUPREMUM: usize = 1;
+
+/** First user record in creation (insertion) order. */
+pub const PAGE_HEAP_NO_USER_LOW: usize = 2;
+
+/* Directions of cursor movement */
+pub const PAGE_LEFT: usize = 0;
+pub const PAGE_RIGHT: usize = 1;
+pub const PAGE_SAME_REC: usize = 2;
+pub const PAGE_SAME_PAGE: usize = 3;
+pub const PAGE_NO_DIRECTION: usize = 4;
+
+pub const PAGE_SIZE: usize = 16 * 1024;
+
+pub(crate) struct Page {
+    ptr: *mut u8,
+}
+
+impl Page {
+    pub fn new(ptr: *mut u8) -> Self {
+        Page { ptr }
+    }
+
+    /// Set the max transaction id on the page.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_trx_id`: The maximum transaction id to set.
+    /// * `mtr`: An optional transaction object.
+    ///
+    /// Returns: ()
+    pub fn set_max_trx_id(&self, max_trx_id: TxnId, mtr: Option<mtr>) {
+        let page = self.ptr as *mut i64;
+        /* It is not necessary to write this change to the redo log as
+        during the database recovery we assume that the max transaction id
+        of every pae is the maximum transaction id assigned before the crash.
+        */
+        match mtr {
+            None => unsafe {
+                page.add((PAGE_HEADER + PAGE_MAX_TRX_ID)).write(max_trx_id);
+            },
+            Some(_) => {
+                log::warn!("don't know how to handle mtr");
+                panic!("don't know how to handle mtr");
+            }
+        }
+    }
+
+    /// Retrieves the maximum transaction ID stored in the page.
+    /// # Returns
+    /// The maximum transaction ID (`TxnId`) stored in the page.
+    pub fn get_max_trx_id(&self) -> TxnId {
+        unsafe {
+            let page_ptr = (self.ptr as *const TxnId).add((PAGE_HEADER + PAGE_MAX_TRX_ID));
+            *page_ptr
+        }
+    }
+
+    pub fn page_get_infimum_rec(&self) -> Record {
+        let ptr = unsafe { self.ptr.add(PAGE_HEADER + PAGE_INFIMUM) };
+        Record::new(ptr)
+    }
+
+    /// Sets the value of a given field in the page header.
+    ///
+    /// # Parameters
+    /// - `field`: The offset (in `usize`) of the specific field within the page header.
+    /// - `value`: The value to set for the field.
+    ///
+    /// # Returns
+    /// - None
+    pub fn page_set_header_field(&self, field: usize, value: usize) {
+        unsafe {
+            let ptr = self.ptr.add(PAGE_HEADER + field) as *mut u16;
+            *ptr = value as u16;
+        }
+    }
+
+    /// Retrieves the value of a given field from the page header.
+    ///
+    /// # Parameters
+    /// - `field`: The offset (in `usize`) of the specific field within the page header.
+    ///
+    /// # Returns
+    /// - Returns the value of the field as a `usize`.
+    pub fn page_get_header_field(&self, field: usize) -> usize {
+        unsafe {
+            let ptr = self.ptr.add(PAGE_HEADER + field) as *const u16;
+            *ptr as usize
+        }
+    }
+
+    /// Checks if the current page is a leaf node.
+    ///
+    /// # Returns
+    ///
+    /// * `true` - If the page level is 0, indicating the page is a leaf node.
+    /// * `false` - If the page level is greater than 0, indicating the page is not a leaf node.
+    pub fn page_is_leaf(&self) -> bool {
+        let level = self.page_get_header_field(PAGE_LEVEL);
+        level == 0
+    }
+
+    pub fn page_get_supremum_rec(&self) -> Record {
+        let ptr = unsafe { self.ptr.add(PAGE_HEADER + PAGE_SUPREMUM) };
+        Record::new(ptr)
+    }
+
+    pub fn page_get_middle_rec(&self) -> Record {
+        let middle = (self.page_get_header_field(PAGE_N_RECS) + PAGE_HEAP_NO_USER_LOW) / 2;
+
+        let mut i: usize = 0;
+        let mut count: usize = 0;
+        loop {
+            let n_owned = self.page_dir_get_n_owned(i) as usize;
+
+            if (count + n_owned) >= middle {
+                break;
+            }
+
+            count += n_owned;
+            i += 1;
+        }
+
+        let mut rec = self.page_dir_slot_get_rec(i - 1);
+        for j in 0..(middle - count) {
+            let next = rec.rec_get_next();
+            rec = next;
+        }
+
+        rec
+    }
+
+    pub fn page_dir_slot_get_rec(&self, slot: usize) -> Record {
+        unsafe {
+            let ptr = self.ptr.add(PAGE_HEADER + slot);
+            Record::new(ptr)
+        }
+    }
+
+    pub fn page_n_get_recs(&self) -> usize {
+        self.page_get_header_field(PAGE_N_RECS)
+    }
+
+    pub fn page_dir_get_n_slots(&self, slot: usize) -> SlotId {
+        return 5;
+    }
+
+    pub fn page_dir_get_n_owned(&self, slot: usize) -> SlotId {
+        let page_dir = unsafe { self.ptr.add(PAGE_HEADER as usize) };
+        let slot_ptr = unsafe { page_dir.add(slot as usize) };
+        let n_owned = unsafe { *(slot_ptr as *const u16) };
+        return n_owned as SlotId;
+    }
+
+    pub fn page_dir_find_owner_slot(&self, record: Record) -> SlotId {
+        let page_ptr = record.page_align();
+        let first_slot = self.page_dir_get_nth_slot(0);
+
+        return 6;
+    }
+
+    pub fn page_dir_get_nth_slot(&self, slot_id: SlotId) -> *const u8 {
+        let page_dir = unsafe { self.ptr.add(PAGE_HEADER as usize) };
+        let slot_ptr = unsafe { page_dir.add(slot_id as usize) };
+        return slot_ptr;
+    }
+
+    /// Searches for a record within a page that corresponds to the given heap number.
+    ///
+    /// This method starts at the infimum record of the page and traverses the record list
+    /// sequentially until it finds a record with a matching `heap_no`
+    /// or reaches the supremum record.
+    ///
+    /// # Parameters
+    ///
+    /// - `heap_no`: The heap number of the record to find.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(Record)`: If a record with the specified `heap_no` is found.
+    /// - `None`: If no record with the specified `heap_no` exists within the page.
+    pub fn page_find_rec_with_heap_no(&self, heap_no: usize) -> Option<Record> {
+        let mut rec = self.page_get_infimum_rec();
+        loop {
+            let rec_heap_no = rec.rec_get_heap_no();
+
+            if rec_heap_no == heap_no {
+                return Some(rec);
+            }
+
+            // We have reached the end of the list, and there is nothing left.
+            if heap_no == PAGE_HEAP_NO_SUPREMUM {
+                return None;
+            }
+
+            // Move to the next record
+            rec = rec.rec_get_next();
+        }
+    }
+}
