@@ -1,0 +1,88 @@
+
+//! On-disk layout constants for InnoDB FSP
+//!
+
+/// Offset of the page data area inside a raw page
+pub const FIL_PAGE_DATA: usize = 38;
+
+/// Offset of the segment-inode page data inside a raw page
+pub const FSEG_PAGE_DATA: usize = FIL_PAGE_DATA;
+
+/// Size of an address in FIL_ADDR (bytes)
+pub const FIL_ADDR_SIZE: usize = 6;
+
+/// Base size of a list node (bytes) from fut0lst.h: 4 + 2 * FIL_ADDR_SIZE
+pub const FLST_BASE_NODE_SIZE: usize = 4 + 2 * FIL_ADDR_SIZE;
+
+/// Size of the list node linking multiple pages (bytes)
+pub const FLST_NODE_SIZE: usize = 2 * FIL_ADDR_SIZE;
+
+/// Default InnoDB page size (bytes)
+pub const UNIV_PAGE_SIZE: usize = 16384;
+
+/// Number of pages per extent in InnoDB
+pub const FSP_EXTENT_SIZE: usize = 64;
+
+/// Compute how many bytes are needed to store the given number of bits
+#[inline]
+pub const fn ut_bits_in_bytes(bits: usize) -> usize {
+    (bits + 7) / 8
+}
+
+// Space header offsets and sizes
+pub const FSP_HEADER_OFFSET: usize = FIL_PAGE_DATA;
+pub const FSP_SPACE_ID: usize = 0;
+pub const FSP_NOT_USED: usize = 4;
+pub const FSP_SIZE: usize = 8;
+pub const FSP_FREE_LIMIT: usize = 12;
+pub const FSP_SPACE_FLAGS: usize = 16;
+pub const FSP_FRAG_N_USED: usize = 20;
+pub const FSP_FREE: usize = 24;
+pub const FSP_FREE_FRAG: usize = 24 + FLST_BASE_NODE_SIZE;
+pub const FSP_FULL_FRAG: usize = 24 + 2 * FLST_BASE_NODE_SIZE;
+pub const FSP_SEG_ID: usize = 24 + 3 * FLST_BASE_NODE_SIZE;
+pub const FSP_SEG_INODES_FULL: usize = 32 + 3 * FLST_BASE_NODE_SIZE;
+pub const FSP_SEG_INODES_FREE: usize = 32 + 4 * FLST_BASE_NODE_SIZE;
+pub const FSP_HEADER_SIZE: usize = 32 + 5 * FLST_BASE_NODE_SIZE;
+pub const FSP_FREE_ADD: usize = 4;
+
+// Segment inode page constants
+pub const FSEG_INODE_PAGE_NODE: usize = FSEG_PAGE_DATA;
+pub const FSEG_ARR_OFFSET: usize = FSEG_PAGE_DATA + FLST_NODE_SIZE;
+
+// Segment header offsets
+pub const FSEG_ID: usize = 0;
+pub const FSEG_NOT_FULL_N_USED: usize = 8;
+pub const FSEG_FREE: usize = 12;
+pub const FSEG_NOT_FULL: usize = 12 + FLST_BASE_NODE_SIZE;
+pub const FSEG_FULL: usize = 12 + 2 * FLST_BASE_NODE_SIZE;
+pub const FSEG_MAGIC_N: usize = 12 + 3 * FLST_BASE_NODE_SIZE;
+pub const FSEG_FRAG_ARR: usize = 16 + 3 * FLST_BASE_NODE_SIZE;
+pub const FSEG_FRAG_ARR_N_SLOTS: usize = FSP_EXTENT_SIZE / 2;
+pub const FSEG_FRAG_SLOT_SIZE: usize = 4;
+
+// Inode size and per-page count
+pub const FSEG_INODE_SIZE: usize = 16 + 3 * FLST_BASE_NODE_SIZE + FSEG_FRAG_ARR_N_SLOTS * FSEG_FRAG_SLOT_SIZE;
+pub const FSP_SEG_INODES_PER_PAGE: usize = (UNIV_PAGE_SIZE - FSEG_ARR_OFFSET - 10) / FSEG_INODE_SIZE;
+pub const FSEG_MAGIC_N_VALUE: usize = 97937874;
+
+// Fillfactor and fragment limits
+pub const FSEG_FILLFACTOR: usize = 8;
+pub const FSEG_FRAG_LIMIT: usize = FSEG_FRAG_ARR_N_SLOTS;
+pub const FSEG_FREE_LIST_LIMIT: usize = 40;
+pub const FSEG_FREE_LIST_MAX_LEN: usize = 4;
+
+// Extent descriptor constants
+pub const XDES_ID: usize = 0;
+pub const XDES_FLST_NODE: usize = 8;
+pub const XDES_STATE: usize = FLST_NODE_SIZE + 8;
+pub const XDES_BITMAP: usize = FLST_NODE_SIZE + 12;
+pub const XDES_BITS_PER_PAGE: usize = 2;
+pub const XDES_FREE_BIT: usize = 0;
+pub const XDES_CLEAN_BIT: usize = 1;
+pub const XDES_FREE: usize = 1;
+pub const XDES_FREE_FRAG: usize = 2;
+pub const XDES_FULL_FRAG: usize = 3;
+pub const XDES_FSEG: usize = 4;
+pub const XDES_SIZE: usize = XDES_BITMAP + ut_bits_in_bytes(FSP_EXTENT_SIZE * XDES_BITS_PER_PAGE);
+pub const XDES_ARR_OFFSET: usize = FSP_HEADER_OFFSET + FSP_HEADER_SIZE;
