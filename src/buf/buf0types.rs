@@ -1,13 +1,15 @@
-pub struct BufBlock {}
+pub struct BufBlock {
+    frame: Frame,
+}
+// The frame is a pointer to a memory location where the block's data is stored.
+pub type Frame = *mut u8;
 
 impl BufBlock {
-    pub fn getFrame(&self) -> [u8; 4096] {
-        let mut frame: [u8; 4096] = [0; 4096];
-        // Fill the frame with some data
-        for i in 0..4096 {
-            frame[i] = i as u8;
-        }
+    pub fn new(frame: Frame) -> Self {
+        BufBlock { frame }
+    }
 
-        frame
+    pub fn getFrame(&self) -> Frame {
+        self.frame
     }
 }

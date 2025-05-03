@@ -1,8 +1,13 @@
 use crate::buf::buf0types::BufBlock;
+use crate::data::data0types::{
+    DTuple, DATA_ENGLIGH, DATA_NOT_NULL, DATA_VARCHAR,
+};
 use crate::dict::dict0types::Index;
 use crate::fil::fil0types::FSEG_PAGE_DATA;
 use crate::mtr::mtr0mtr::Mtr;
-use crate::rem::rem0rec::{Record, REC_N_EXTRA_BYTES};
+use crate::rem::rem0rec::{
+    Record, REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM,
+};
 use crate::utils::TxnId;
 
 pub type SlotId = usize;
@@ -135,14 +140,17 @@ impl Page {
     ///
     /// Returns: ()
     pub fn set_max_trx_id(&self, max_trx_id: TxnId, mtr: Option<Mtr>) {
-        let page = self.ptr as *mut i64;
+        let page = self.ptr;
         /* It is not necessary to write this change to the redo log as
         during the database recovery we assume that the max transaction id
         of every pae is the maximum transaction id assigned before the crash.
         */
         match mtr {
             None => unsafe {
-                page.add((PAGE_HEADER + PAGE_MAX_TRX_ID)).write(max_trx_id);
+                let loc =
+                    page.add((PAGE_HEADER + PAGE_MAX_TRX_ID)) as *mut TxnId;
+
+                loc.write(max_trx_id);
             },
             Some(_) => {
                 log::warn!("don't know how to handle Mtr");
@@ -274,7 +282,64 @@ impl Page {
         return slot_ptr;
     }
 
-    pub fn page_create(&self, index: &Index, buf: &BufBlock, mtr: Mtr) {}
+    pub fn page_create(&self, index: &Index, buf: &BufBlock, mtr: Mtr) {
+        let ptr = buf.getFrame();
+
+        /* CREATE THE INFIMUM AND SUPREMUM RECORDS */
+
+        // Create tuple for infimum record
+        {
+            let dTuple = DTuple::new(1);
+            dTuple.dtuple_set_info_bits(REC_STATUS_INFIMUM);
+
+            let field = dTuple.dtuple_get_nth_field(0);
+            field.dfield_set_data(
+                "infimum", 8, /* size of infimum string*/
+            );
+            field.set_type(DATA_VARCHAR, DATA_ENGLIGH | DATA_NOT_NULL, 8);
+
+            let heap_top =
+                unsafe { self.ptr.add(PAGE_HEADER + PAGE_HEAP_TOP) };
+            let infimum_rec = Record::new(heap_top)
+                .rec_convert_dtuple_to_rec(index, dTuple, 0);
+            infimum_rec.rec_set_n_owned(1);
+            infimum_rec.rec_set_heap_no(0);
+        }
+
+        // Create tuple for supremum record
+        {
+            let dTuple = DTuple::new(1);
+            dTuple.dtuple_set_info_bits(REC_STATUS_SUPREMUM);
+
+            let field = dTuple.dtuple_get_nth_field(0);
+            field.dfield_set_data(
+                "supremum", 9, /* size of supremum string*/
+            );
+            field.set_type(DATA_VARCHAR, DATA_ENGLIGH | DATA_NOT_NULL, 8);
+
+            let heap_top =
+                unsafe { self.ptr.add(PAGE_HEADER + PAGE_HEAP_TOP) };
+            let supremum_rec = Record::new(heap_top)
+                .rec_convert_dtuple_to_rec(index, dTuple, 0);
+            supremum_rec.rec_set_n_owned(1);
+            supremum_rec.rec_set_heap_no(1);
+        }
+
+        /* 4. INITIALIZE THE PAGE */
+        self.page_set_header_field(PAGE_N_DIR_SLOTS, 2);
+        self.page_set_header_field(PAGE_HEAP_TOP, PAGE_SUPREMUM_END);
+        self.page_set_header_field(PAGE_N_HEAP, PAGE_HEAP_NO_USER_LOW);
+        self.page_set_header_field(PAGE_FREE, u16::MAX as usize);
+        self.page_set_header_field(PAGE_GARBAGE, 0);
+        self.page_set_header_field(PAGE_LAST_INSERT, u16::MAX as usize);
+        self.page_set_header_field(PAGE_DIRECTION, PAGE_NO_DIRECTION);
+        self.page_set_header_field(PAGE_N_DIRECTION, 0);
+        self.page_set_header_field(PAGE_N_RECS, 0);
+        self.set_max_trx_id(0, None);
+        // Do I need to perform memset here?
+
+        /* 5. SET POINTERS IN RECORDS AND DIR SLOTS */
+    }
 
     /// Searches for a record within a page that corresponds to the given heap number.
     ///

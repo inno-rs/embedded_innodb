@@ -5,7 +5,7 @@ mod mtr;
 mod page;
 mod rem;
 mod utils;
-mod fsp;
+mod data;
 
 fn main() {
     println!("Hello, world!");

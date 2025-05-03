@@ -1,18 +1,19 @@
 #[cfg(test)]
 mod tests {
     use super::super::page0page::Page;
+    use crate::buf::buf0types::Frame;
     use crate::page::page0page::*;
     use std::alloc::{alloc, Layout};
 
-    fn get_raw_block() -> *mut u8 {
+    fn get_raw_block() -> Frame {
         let layout = Layout::from_size_align(1024, 1).unwrap();
         unsafe { alloc(layout) }
     }
 
     #[test]
     fn test_page_set_max_trx_id() {
-        let ptr = get_raw_block();
-        let page = Page::new(ptr);
+        let frame = get_raw_block();
+        let page = Page::new(frame);
         let max_trx_id: crate::utils::TxnId = 2352325;
         let mtr = None; // Assuming Mtr is not used in this test
 
