@@ -3,7 +3,8 @@ use crate::data::data0types::{
     DTuple, DATA_ENGLIGH, DATA_NOT_NULL, DATA_VARCHAR,
 };
 use crate::dict::dict0types::Index;
-use crate::fil::fil0types::FSEG_PAGE_DATA;
+use crate::fil::fil0types::{FIL_PAGE_DATA_END, FSEG_PAGE_DATA};
+use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
 use crate::mtr::mtr0mtr::Mtr;
 use crate::rem::rem0rec::{
     Record, REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM,
@@ -99,7 +100,7 @@ pub const PAGE_SUPREMUM: usize =
 /** Offset of the page Supremum record end on the page */
 pub const PAGE_SUPREMUM_END: usize = PAGE_SUPREMUM + 9;
 
-/*-----------------------------*/
+/*---------------------------------------------------------*/
 
 /* Heap numbers */
 /* Each record stored in InnoDB has a heap number. */
@@ -121,6 +122,16 @@ pub const PAGE_SAME_PAGE: usize = 3;
 pub const PAGE_NO_DIRECTION: usize = 4;
 
 pub const PAGE_SIZE: usize = 16 * 1024;
+
+/*	PAGE DIRECTORY */
+
+/// Offset of the directory starts from the page end.
+/// We call the slot with the highest file address directory start
+/// as it points to the first record in the list.
+pub const PAGE_DIR: usize = FIL_PAGE_DATA_END;
+
+/// We define a slot in the page directory as two bytes.
+pub const PAGE_DIR_SLOT_SIZE: usize = 2;
 
 pub(crate) struct Page {
     ptr: *mut u8,
@@ -170,8 +181,38 @@ impl Page {
         }
     }
 
+    /// Calculates the free space available in an empty page.
+    ///
+    /// # Returns
+    /// The amount of free space in bytes.
+    pub fn page_get_free_space_of_empty(&self) -> usize {
+        // UNIV_PAGE_SIZE = Page Size
+        // PAGE_SUPREMUM_END = Offset of the supremum record end. This is where everythings related to the header ends.
+        // PAGE_DIR = Size of the page trailer.
+        // 2 * PAGE_DIR_SLOT_SIZE = Both infimum and supremum records are stored in the page directory in an empty page as well.
+        return UNIV_PAGE_SIZE
+            - PAGE_SUPREMUM_END
+            - PAGE_DIR
+            - 2 * PAGE_DIR_SLOT_SIZE;
+    }
+
+    /// Retrieves the infimum record from the page.
+    ///
+    /// # Returns
+    /// A `Record` object representing the infimum record.
+    ///
     pub fn page_get_infimum_rec(&self) -> Record {
         let ptr = unsafe { self.ptr.add(PAGE_HEADER + PAGE_INFIMUM) };
+        Record::new(ptr)
+    }
+
+    /// Retrieves the supremum record from the page.
+    ///
+    /// # Returns
+    /// A `Record` object representing the supremum record.
+    ///    
+    pub fn page_get_supremum_rec(&self) -> Record {
+        let ptr = unsafe { self.ptr.add(PAGE_HEADER + PAGE_SUPREMUM) };
         Record::new(ptr)
     }
 
@@ -215,11 +256,6 @@ impl Page {
         level == 0
     }
 
-    pub fn page_get_supremum_rec(&self) -> Record {
-        let ptr = unsafe { self.ptr.add(PAGE_HEADER + PAGE_SUPREMUM) };
-        Record::new(ptr)
-    }
-
     pub fn page_get_middle_rec(&self) -> Record {
         let middle = (self.page_get_header_field(PAGE_N_RECS)
             + PAGE_HEAP_NO_USER_LOW)
@@ -247,6 +283,14 @@ impl Page {
         rec
     }
 
+    /// Get the record pointer to by the slot in the page directory.
+    ///
+    /// # Parameters
+    /// - `slot`: The slot number in the page directory.
+    ///
+    /// # Returns
+    /// - A `Record` object representing the record at the specified slot.
+    ///
     pub fn page_dir_slot_get_rec(&self, slot: usize) -> Record {
         unsafe {
             let ptr = self.ptr.add(PAGE_HEADER + slot);
@@ -339,6 +383,61 @@ impl Page {
         // Do I need to perform memset here?
 
         /* 5. SET POINTERS IN RECORDS AND DIR SLOTS */
+    }
+
+    fn page_offset(&self, rec: Record) -> usize {
+        rec.get_ptr() as usize % UNIV_PAGE_SIZE
+    }
+
+    /// Checks if the given record is the infimum record of the page.
+    ///
+    /// # Parameters
+    ///
+    /// - `rec`: The record to check.
+    ///
+    /// # Returns
+    ///
+    /// - `true`: If the record is the infimum record.
+    /// - `false`: If the record is not the infimum record.
+    ///
+    pub fn page_rec_is_infimum(&self, rec: Record) -> bool {
+        let rec_offset = self.page_offset(rec);
+
+        rec_offset == PAGE_INFIMUM
+    }
+
+    /// Checks if the given record is the supremum record of the page.
+    ///
+    /// # Parameters
+    ///
+    /// - `rec`: The record to check.
+    ///
+    /// # Returns
+    ///
+    /// - `true`: If the record is the supremum record.
+    /// - `false`: If the record is not the supremum record.
+    ///
+    pub fn page_rec_is_supremum(&self, rec: Record) -> bool {
+        let rec_offset = self.page_offset(rec);
+
+        rec_offset == PAGE_SUPREMUM
+    }
+
+    /// Checks if the given record is a user record.
+    ///   
+    /// # Parameters
+    ///     
+    /// - `rec`: The record to check.
+    ///
+    /// # Returns
+    ///
+    /// - `true`: If the record is a user record.
+    /// - `false`: If the record is not a user record.
+    ///
+    pub fn page_rec_is_user_rec(&self, rec: Record) -> bool {
+        let rec_offset = self.page_offset(rec);
+
+        rec_offset != PAGE_INFIMUM && rec_offset != PAGE_SUPREMUM
     }
 
     /// Searches for a record within a page that corresponds to the given heap number.

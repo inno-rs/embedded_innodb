@@ -1,5 +1,6 @@
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
+use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
 use std::ptr::null_mut;
 
 /** Number of extra bytes in a record in addition to the data and offsets. */
@@ -10,6 +11,40 @@ pub const REC_STATUS_INFIMUM: usize = 2;
 pub const REC_STATUS_SUPREMUM: usize = 3;
 
 pub const REC_N_EXTRA_BYTES: usize = 6;
+/***
+The record header is 6 bytes long and contains the following fields:
+
+1. Next record pointer (2 bytes)
+2. Short flag (1 bit)
+3. Number of fields (7 bits)
+4. Heap number (5 bits)
+5. Number of records owned (4 bits)
+6. Info bits (4 bits)
+
+Row Format: [... record header | data]
+
+The layout of the record header is as follows:
+╔══════════════╦══════════════════════════════════════════════╗
+║ Byte Offset  ║ Bit Usage (within byte)                      ║
+╠══════════════╬══════════════════════════════════════════════╣
+║ 1            ║ [0..7] → Next record pointer (low byte)      ║
+║ 2            ║ [0..7] → Next record pointer (high byte)     ║
+║ 3            ║ [0]    → Short flag                           ║
+║              ║ [1..7] → Number of fields (bits 0–6)          ║
+║ 4            ║ [0..2] → Number of fields (bits 7–9)          ║
+║              ║ [3..7] → Heap number (bits 0–4)              ║
+║ 5            ║ [0..7] → Heap number (bits 5–12)             ║
+║ 6            ║ [0..3] → Number of records owned (n_owned)   ║
+║              ║ [4..7] → Info bits (e.g., delete mark, etc.) ║
+╚══════════════╩══════════════════════════════════════════════╝
+
+[ info_bits (4) | n_owned (4) | heap_no (13) | n_fields (10) | short_flag (1) | next_rec_ptr (16) ]
+*/
+
+pub const REC_N_OWNED: usize = 6;
+pub const REC_N_OWNED_MASK: usize = 0xF;
+pub const REC_N_OWNED_SHIFT: usize = 0;
+
 pub struct Record {
     ptr: *mut u8,
 }
@@ -17,6 +52,10 @@ pub struct Record {
 impl Record {
     pub fn new(ptr: *mut u8) -> Self {
         Record { ptr }
+    }
+
+    pub fn get_ptr(&self) -> *const u8 {
+        return self.ptr;
     }
 
     /// Aligns the record pointer to the specified offset.
@@ -31,10 +70,10 @@ impl Record {
     }
 
     pub fn page_align(&self) -> *const u8 {
-        let align = 16 * 1024;
+        let align = UNIV_PAGE_SIZE;
         let addr = self.ptr as usize;
         let aligned_addr = addr & !(align - 1); // Align down by masking lower bits
-        return aligned_addr as *const u8;
+        aligned_addr as *const u8
     }
 
     pub fn rec_get_next_ptr(&self) -> *const u8 {
@@ -61,6 +100,13 @@ impl Record {
         n_ext: usize,
     ) -> Record {
         unimplemented!()
+    }
+
+    pub fn rec_get_n_owned(&self) -> usize {
+        unsafe {
+            let p = self.ptr.add(REC_N_OWNED);
+            (*p as usize & REC_N_OWNED_MASK) >> REC_N_OWNED_SHIFT
+        }
     }
 
     pub fn rec_set_n_owned(&self, n_owned: usize) {
