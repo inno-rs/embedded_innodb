@@ -32,9 +32,9 @@ mod tests {
             let field_offset: usize = PAGE_N_DIR_SLOTS;
             let value = 42;
 
-            page.page_set_header_field(field_offset, value as usize);
+            page.page_header_set_field(field_offset, value as usize);
 
-            let retrieved_value = page.page_get_header_field(field_offset);
+            let retrieved_value = page.page_header_get_field(field_offset);
             assert_eq!(retrieved_value, value);
         }
 
@@ -42,9 +42,9 @@ mod tests {
             let field_offset: usize = PAGE_HEAP_TOP;
             let value = 44;
 
-            page.page_set_header_field(field_offset, value);
+            page.page_header_set_field(field_offset, value);
 
-            let retrieved_value = page.page_get_header_field(field_offset);
+            let retrieved_value = page.page_header_get_field(field_offset);
             assert_eq!(retrieved_value, value);
         }
 
@@ -52,9 +52,9 @@ mod tests {
             let field_offset: usize = PAGE_N_HEAP;
             let value = 46;
 
-            page.page_set_header_field(field_offset, value);
+            page.page_header_set_field(field_offset, value);
 
-            let retrieved_value = page.page_get_header_field(field_offset);
+            let retrieved_value = page.page_header_get_field(field_offset);
             assert_eq!(retrieved_value, value);
         }
 
@@ -62,9 +62,9 @@ mod tests {
             let field_offset: usize = PAGE_FREE;
             let value = 47;
 
-            page.page_set_header_field(field_offset, value);
+            page.page_header_set_field(field_offset, value);
 
-            let retrieved_value = page.page_get_header_field(field_offset);
+            let retrieved_value = page.page_header_get_field(field_offset);
             assert_eq!(retrieved_value, value);
         }
 
@@ -72,9 +72,9 @@ mod tests {
             let field_offset: usize = PAGE_GARBAGE;
             let value = 48;
 
-            page.page_set_header_field(field_offset, value);
+            page.page_header_set_field(field_offset, value);
 
-            let retrieved_value = page.page_get_header_field(field_offset);
+            let retrieved_value = page.page_header_get_field(field_offset);
             assert_eq!(retrieved_value, value);
         }
 
@@ -82,9 +82,9 @@ mod tests {
             let field_offset: usize = PAGE_LAST_INSERT;
             let value = 54;
 
-            page.page_set_header_field(field_offset, value);
+            page.page_header_set_field(field_offset, value);
 
-            let retrieved_value = page.page_get_header_field(field_offset);
+            let retrieved_value = page.page_header_get_field(field_offset);
             assert_eq!(retrieved_value, value);
         }
 
@@ -92,9 +92,9 @@ mod tests {
             let field_offset: usize = PAGE_DIRECTION;
             let value = 56;
 
-            page.page_set_header_field(field_offset, value);
+            page.page_header_set_field(field_offset, value);
 
-            let retrieved_value = page.page_get_header_field(field_offset);
+            let retrieved_value = page.page_header_get_field(field_offset);
             assert_eq!(retrieved_value, value);
         }
 
@@ -102,9 +102,9 @@ mod tests {
             let field_offset: usize = PAGE_N_DIRECTION;
             let value = 58;
 
-            page.page_set_header_field(field_offset, value);
+            page.page_header_set_field(field_offset, value);
 
-            let retrieved_value = page.page_get_header_field(field_offset);
+            let retrieved_value = page.page_header_get_field(field_offset);
             assert_eq!(retrieved_value, value);
         }
 
@@ -112,9 +112,9 @@ mod tests {
             let field_offset: usize = PAGE_N_RECS;
             let value = 60;
 
-            page.page_set_header_field(field_offset, value);
+            page.page_header_set_field(field_offset, value);
 
-            let retrieved_value = page.page_get_header_field(field_offset);
+            let retrieved_value = page.page_header_get_field(field_offset);
             assert_eq!(retrieved_value, value);
         }
 
@@ -122,9 +122,9 @@ mod tests {
             let field_offset: usize = PAGE_MAX_TRX_ID;
             let value = 62;
 
-            page.page_set_header_field(field_offset, value);
+            page.page_header_set_field(field_offset, value);
 
-            let retrieved_value = page.page_get_header_field(field_offset);
+            let retrieved_value = page.page_header_get_field(field_offset);
             assert_eq!(retrieved_value, value);
         }
 
@@ -132,9 +132,9 @@ mod tests {
             let field_offset: usize = PAGE_LEVEL;
             let value = 64;
 
-            page.page_set_header_field(field_offset, value);
+            page.page_header_set_field(field_offset, value);
 
-            let retrieved_value = page.page_get_header_field(field_offset);
+            let retrieved_value = page.page_header_get_field(field_offset);
             assert_eq!(retrieved_value, value);
         }
 
@@ -142,9 +142,9 @@ mod tests {
             let field_offset: usize = PAGE_INDEX_ID;
             let value = 66;
 
-            page.page_set_header_field(field_offset, value);
+            page.page_header_set_field(field_offset, value);
 
-            let retrieved_value = page.page_get_header_field(field_offset);
+            let retrieved_value = page.page_header_get_field(field_offset);
             assert_eq!(retrieved_value, value);
         }
     }
