@@ -7,6 +7,7 @@ mod rem;
 mod utils;
 mod data;
 mod innodb;
+mod fsp;
 
 fn main() {
     println!("Hello, world!");

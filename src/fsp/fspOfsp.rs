@@ -23,6 +23,15 @@ pub const UNIV_PAGE_SIZE: usize = 16384;
 /// Number of pages per extent in InnoDB
 pub const FSP_EXTENT_SIZE: usize = 64;
 
+/// Offset of the 4-byte page number in the page header
+pub const FIL_PAGE_OFFSET: usize = 4;
+/// Offset of the 8-byte page LSN in the page header
+pub const FIL_PAGE_LSN: usize = 24;
+/// Offset of the 4-byte space ID in the page header
+pub const FIL_PAGE_SPACE_ID: usize = 28;
+/// Number of bytes reserved at end of page for end-LSN/checksum
+pub const FIL_PAGE_END_LSN_CHKSUM: usize = 8;
+
 /// Compute how many bytes are needed to store the given number of bits
 #[inline]
 pub const fn ut_bits_in_bytes(bits: usize) -> usize {
@@ -86,3 +95,66 @@ pub const XDES_FULL_FRAG: usize = 3;
 pub const XDES_FSEG: usize = 4;
 pub const XDES_SIZE: usize = XDES_BITMAP + ut_bits_in_bytes(FSP_EXTENT_SIZE * XDES_BITS_PER_PAGE);
 pub const XDES_ARR_OFFSET: usize = FSP_HEADER_OFFSET + FSP_HEADER_SIZE;
+
+
+
+/// In debug builds, mark the memory as invalid (for sanitizer/debug hooks).
+#[cfg(debug_assertions)]
+fn univ_mem_invalid(frame: &mut [u8]) {
+    // Fill with a recognizable pattern (0xCC) to catch uninitialized reads
+    frame.fill(0xCC);
+}
+
+/// No-op in non-debug builds
+#[cfg(not(debug_assertions))]
+fn univ_mem_invalid(_frame: &mut [u8]) {}
+
+
+// Page initialization routines
+/// Wraps `init_file_page_low` in a mini-transaction and logs the operation
+/// Direct port of InnoDB's `fsp_init_file_page_low`
+///
+/// https://docs.google.com/document/d/17Cv1R1ELip8PYuCrQFgbkxe1KRfgsjWFyCje9bS9dRI/edit?tab=t.0#heading=h.kiodsa4o1rj7
+pub fn init_file_page_low(frame: &mut [u8], page_no: u32, space_id: u32) {
+
+    univ_mem_invalid(frame);
+
+    // -- Zero the entire page
+    frame.fill(0);
+
+    // -- Write page number (4 bytes, big-endian)
+    //We’re choosing big-endian because the on-disk InnoDB format
+    // defines the page-number and space-ID fields as big-endian values.
+    frame[FIL_PAGE_OFFSET..FIL_PAGE_OFFSET + 4]
+        .copy_from_slice(&page_no.to_be_bytes());
+
+    // -- Zero the 8-byte page LSN
+    // Not sure why do we need to zero them again!!!
+    frame[FIL_PAGE_LSN..FIL_PAGE_LSN + 8].fill(0);
+
+    // -- Write space ID (4 bytes, big-endian)
+    frame[FIL_PAGE_SPACE_ID..FIL_PAGE_SPACE_ID + 4]
+        .copy_from_slice(&space_id.to_be_bytes());
+
+    // -- Zero the 8-byte end-LSN/checksum trailer
+    let trailer_start = UNIV_PAGE_SIZE - FIL_PAGE_END_LSN_CHKSUM;
+    frame[trailer_start..trailer_start + FIL_PAGE_END_LSN_CHKSUM].fill(0);
+
+    // -- (Optional) Repeat space ID if mirroring C++ duplication
+    frame[FIL_PAGE_SPACE_ID..FIL_PAGE_SPACE_ID + 4]
+        .copy_from_slice(&space_id.to_be_bytes());
+}
+
+
+// Wrapper of  method init_file_page_low().
+pub fn init_file_page(
+    frame: &mut [u8],
+    page_no: u32,
+    space_id: u32,
+    /* mtr: &mut Mtr */
+) {
+    init_file_page_low(frame, page_no, space_id);
+    // TODO: emit redo-log record using `mlog_write_initial_log_record`
+}
+
+
