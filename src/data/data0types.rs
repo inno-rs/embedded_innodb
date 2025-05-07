@@ -12,7 +12,7 @@ pub const DATA_VARCHAR: usize = 1;
 pub const DATA_ENGLIGH: usize = 4;
 
 pub struct DTuple {
-    pub(crate) number_of_fields: usize,
+    pub number_of_fields: usize,
 }
 
 pub struct DField {}

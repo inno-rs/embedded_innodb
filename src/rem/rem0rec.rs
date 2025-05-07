@@ -1,7 +1,6 @@
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
 use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
-use std::ptr::null_mut;
 
 /** Number of extra bytes in a record in addition to the data and offsets. */
 /** Record status values */
@@ -27,23 +26,44 @@ The layout of the record header is as follows:
 ╔══════════════╦══════════════════════════════════════════════╗
 ║ Byte Offset  ║ Bit Usage (within byte)                      ║
 ╠══════════════╬══════════════════════════════════════════════╣
-║ 1            ║ [0..7] → Next record pointer (low byte)      ║
-║ 2            ║ [0..7] → Next record pointer (high byte)     ║
-║ 3            ║ [0]    → Short flag                           ║
-║              ║ [1..7] → Number of fields (bits 0–6)          ║
-║ 4            ║ [0..2] → Number of fields (bits 7–9)          ║
-║              ║ [3..7] → Heap number (bits 0–4)              ║
-║ 5            ║ [0..7] → Heap number (bits 5–12)             ║
-║ 6            ║ [0..3] → Number of records owned (n_owned)   ║
-║              ║ [4..7] → Info bits (e.g., delete mark, etc.) ║
-╚══════════════╩══════════════════════════════════════════════╝
+║ -1            ║ [0..7] → Next record pointer (low byte)      ║
+║ -2            ║ [0..7] → Next record pointer (high byte)     ║
+║ -3            ║ [7]    → Short flag                           ║
+║               ║ [0..6] → Number of fields (bits 0–6)          ║
+║ -4            ║ [6..7] → Number of fields (bits 7–9)          ║
+║               ║ [0..5] → Heap number (bits 0–4)              ║
+║ -5            ║ [0..7] → Heap number (bits 5–12)             ║
+║ -6            ║ [4..7] → Number of records owned (n_owned)   ║
+║               ║ [0..3] → Info bits (e.g., delete mark, etc.) ║
+╚═══════════════╩══════════════════════════════════════════════╝
+Read the table upwards.
 
 [ info_bits (4) | n_owned (4) | heap_no (13) | n_fields (10) | short_flag (1) | next_rec_ptr (16) ]
 */
 
+pub const REC_NEXT: usize = 2;
+pub const REC_NEXT_MASK: usize = 0xFFFF;
+pub const REC_NEXT_SHIFT: usize = 0;
+
+pub const REC_SHORT: usize = 3;
+pub const REC_SHORT_MASK: usize = 0x1;
+pub const REC_SHORT_SHIFT: usize = 0;
+
+pub const REC_N_FIELDS: usize = 4;
+pub const REC_N_FIELDS_MASK: usize = 0x7FE;
+pub const REC_N_FIELDS_SHIFT: usize = 0;
+
 pub const REC_N_OWNED: usize = 6;
 pub const REC_N_OWNED_MASK: usize = 0xF;
 pub const REC_N_OWNED_SHIFT: usize = 0;
+
+pub const REC_HEAP_NO: usize = 5;
+pub const REC_HEAP_NO_MASK: usize = 0xFFF8;
+pub const REC_HEAP_NO_SHIFT: usize = 0;
+
+pub const REC_INFO_BITS: usize = 6;
+pub const REC_INFO_BITS_MASK: usize = 0xF0;
+pub const REC_INFO_BITS_SHIFT: usize = 0;
 
 pub struct Record {
     ptr: *mut u8,
@@ -76,13 +96,18 @@ impl Record {
         aligned_addr as *const u8
     }
 
-    pub fn rec_get_next_ptr(&self) -> *const u8 {
-        let next_ptr_offset = 0; // Replace with the actual offset for the next pointer
-        self.align_offset(next_ptr_offset)
-    }
-
+    /// Get the next record chained to the current record.
+    ///
+    /// # Returns
+    ///
+    /// * A new Record object representing the next record.
     pub fn rec_get_next(&self) -> Record {
-        Record::new(null_mut())
+        unsafe {
+            let offset = self.ptr.sub(REC_NEXT) as *const u16;
+            let page_ptr = self.page_align();
+            let next_ptr = page_ptr.add(*offset as usize);
+            Record::new(next_ptr as *mut u8)
+        }
     }
 
     /// Builds a physical record out of a data tuple, and stores it in the record.
@@ -102,10 +127,79 @@ impl Record {
         unimplemented!()
     }
 
+    /// Gets the number of fields in the current record.
+    ///
+    /// # Returns
+    ///
+    /// * The number of fields in the current record.
+    ///
+    pub fn rec_get_n_fields(&self) -> usize {
+        unsafe {
+            let p = self.ptr.sub(REC_N_FIELDS) as *const u16;
+            (*p as usize & REC_N_FIELDS_MASK) >> REC_N_FIELDS_SHIFT
+        }
+    }
+
+    /// Sets the number of fields in the current record.
+    ///
+    /// # Arguments
+    ///
+    /// * `n_fields`: The number of fields to set.
+    ///
+    /// # Returns
+    ///
+    /// * `None` if the operation was successful, or an error if it failed.
+    pub fn rec_set_n_fields(&self, n_fields: usize) {
+        unsafe {
+            let p = self.ptr.sub(REC_N_FIELDS) as *mut u16;
+            let val = (*p as usize & !REC_N_FIELDS_MASK)
+                | (n_fields << REC_N_FIELDS_SHIFT);
+            *p = (val & REC_N_FIELDS_MASK) as u16;
+        }
+    }
+
+    /// Gets the number of records owned by the current directory record.
+    ///
+    /// # Returns
+    ///
+    /// * The number of records owned by the current directory record.
+    ///
     pub fn rec_get_n_owned(&self) -> usize {
         unsafe {
-            let p = self.ptr.add(REC_N_OWNED);
+            let p = self.ptr.sub(REC_N_OWNED);
             (*p as usize & REC_N_OWNED_MASK) >> REC_N_OWNED_SHIFT
+        }
+    }
+
+    /// Get the info bits of the current record.
+    ///
+    /// # Returns
+    ///
+    /// * The info bits of the current record.
+    ///     
+    pub fn rec_get_info_bits(&self) -> usize {
+        unsafe {
+            let p = self.ptr.sub(REC_INFO_BITS);
+            (*p as usize & REC_INFO_BITS_MASK) >> REC_INFO_BITS_SHIFT
+        }
+    }
+
+    /// Sets the info bits of the current record.
+    ///
+    /// # Arguments
+    ///
+    /// * `info_bits`: The info bits to set.
+    ///
+    /// # Returns
+    ///
+    /// * `None` if the operation was successful, or an error if it failed.
+    ///
+    pub fn rec_set_info_bits(&self, info_bits: usize) {
+        unsafe {
+            let p = self.ptr.sub(REC_INFO_BITS);
+            let val = (*p as usize & !REC_INFO_BITS_MASK)
+                | (info_bits << REC_INFO_BITS_SHIFT);
+            *p = (val & REC_INFO_BITS_MASK) as u8;
         }
     }
 
@@ -113,13 +207,50 @@ impl Record {
         unimplemented!()
     }
 
+    /// Sets the heap number of the current record.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_no`: The heap number to set.
+    ///
+    /// # Returns
+    ///     
+    /// * `None` if the operation was successful, or an error if it failed.
     pub fn rec_set_heap_no(&self, heap_no: usize) {
-        unimplemented!()
+        unsafe {
+            let p = self.ptr.sub(REC_HEAP_NO) as *mut u16;
+            let val = (*p as usize & !REC_HEAP_NO_MASK)
+                | (heap_no << REC_HEAP_NO_SHIFT);
+            *p = (val & REC_HEAP_NO_MASK) as u16;
+        }
     }
 
+    /// Gets the heap number of the current record.
+    ///
+    /// # Returns
+    ///
+    /// * The heap number of the current record.
+    ///
     pub fn rec_get_heap_no(&self) -> usize {
-        let heap_no_offset = 0; // Replace with the actual offset for the heap number
-        let heap_no_ptr = self.align_offset(heap_no_offset);
-        unsafe { *(heap_no_ptr as *const usize) }
+        unsafe {
+            let p = self.ptr.sub(REC_HEAP_NO);
+            (*p as usize & REC_HEAP_NO_MASK) >> REC_HEAP_NO_SHIFT
+        }
+    }
+
+    /// Sets the offset of the next record in a physical record.
+    ///
+    /// # Arguments
+    ///
+    /// * `next`: The offset of the next record.
+    ///
+    /// # Returns
+    ///
+    /// * `None` if the operation was successful, or an error if it failed.
+    pub fn rec_set_next_offs(&self, next: usize) {
+        unsafe {
+            let next_ptr = self.ptr.sub(REC_NEXT) as *mut u16;
+            *next_ptr = next as u16;
+        }
     }
 }
