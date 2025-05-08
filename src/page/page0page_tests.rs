@@ -6,7 +6,7 @@ mod tests {
     use std::alloc::{alloc, Layout};
 
     fn get_raw_block() -> Frame {
-        let layout = Layout::from_size_align(1024, 1).unwrap();
+        let layout = Layout::from_size_align(1024, 1024).unwrap();
         unsafe { alloc(layout) }
     }
 
