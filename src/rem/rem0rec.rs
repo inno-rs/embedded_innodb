@@ -31,8 +31,8 @@ The layout of the record header is as follows:
 ║ -2            ║ [0..7] → Next record pointer (high byte)     ║
 ║ -3            ║ [7]    → Short flag                           ║
 ║               ║ [0..6] → Number of fields (bits 0–6)          ║
-║ -4            ║ [6..7] → Number of fields (bits 7–9)          ║
-║               ║ [0..5] → Heap number (bits 0–4)              ║
+║ -4            ║ [6..7] → Number of fields (bits 6–7)          ║
+║               ║ [0..5] → Heap number (bits 0–5)              ║
 ║ -5            ║ [0..7] → Heap number (bits 5–12)             ║
 ║ -6            ║ [4..7] → Number of records owned (n_owned)   ║
 ║               ║ [0..3] → Info bits (e.g., delete mark, etc.) ║
@@ -52,7 +52,7 @@ pub const REC_SHORT_SHIFT: usize = 0;
 
 pub const REC_N_FIELDS: usize = 4;
 pub const REC_N_FIELDS_MASK: usize = 0x7FE;
-pub const REC_N_FIELDS_SHIFT: usize = 0;
+pub const REC_N_FIELDS_SHIFT: usize = 1;
 
 pub const REC_N_OWNED: usize = 6;
 pub const REC_N_OWNED_MASK: usize = 0xF;
@@ -60,7 +60,7 @@ pub const REC_N_OWNED_SHIFT: usize = 0;
 
 pub const REC_HEAP_NO: usize = 5;
 pub const REC_HEAP_NO_MASK: usize = 0xFFF8;
-pub const REC_HEAP_NO_SHIFT: usize = 0;
+pub const REC_HEAP_NO_SHIFT: usize = 3;
 
 pub const REC_INFO_BITS: usize = 6;
 pub const REC_INFO_BITS_MASK: usize = 0xF0;
@@ -90,6 +90,11 @@ impl Record {
         unsafe { self.ptr.add(offset) }
     }
 
+    /// Aligns the record pointer to the page size.
+    ///
+    /// # Returns
+    ///
+    /// *const u8
     pub fn page_align(&self) -> *const u8 {
         let align = UNIV_PAGE_SIZE;
         let addr = self.ptr as usize;
@@ -137,7 +142,6 @@ impl Record {
     pub fn rec_get_n_fields(&self) -> usize {
         unsafe {
             let p = self.ptr.sub(REC_N_FIELDS) as *const u16;
-            println!("p: {:?}", *p);
             (*p as usize & REC_N_FIELDS_MASK) >> REC_N_FIELDS_SHIFT
         }
     }
@@ -157,7 +161,6 @@ impl Record {
             let val = (*p as usize & !REC_N_FIELDS_MASK)
                 | (n_fields << REC_N_FIELDS_SHIFT);
             p.write_unaligned(val as u16);
-            println!("val: {:?}", *p);
         }
     }
 
@@ -207,8 +210,24 @@ impl Record {
         }
     }
 
+    /// Sets the number of records owned by the current directory record.
+    ///
+    /// # Arguments
+    ///
+    /// * `n_owned`: The number of records owned to set.
+    ///
+    /// # Returns
+    ///
+    /// * `None` if the operation was successful, or an error if it failed.
+    ///
     pub fn rec_set_n_owned(&self, n_owned: usize) {
-        unimplemented!()
+        unsafe {
+            let p = self.ptr.sub(REC_N_OWNED);
+            let prev_val = p.read_unaligned();
+            let val = (prev_val as usize & !REC_N_OWNED_MASK)
+                | (n_owned << REC_N_OWNED_SHIFT);
+            p.write_unaligned(val as u8);
+        }
     }
 
     /// Sets the heap number of the current record.
@@ -223,9 +242,10 @@ impl Record {
     pub fn rec_set_heap_no(&self, heap_no: usize) {
         unsafe {
             let p = self.ptr.sub(REC_HEAP_NO) as *mut u16;
-            let val = (*p as usize & !REC_HEAP_NO_MASK)
+            let prev_val = p.read_unaligned();
+            let val = (prev_val as usize & !REC_HEAP_NO_MASK)
                 | (heap_no << REC_HEAP_NO_SHIFT);
-            *p = (val & REC_HEAP_NO_MASK) as u16;
+            p.write_unaligned(val as u16);
         }
     }
 
@@ -237,8 +257,8 @@ impl Record {
     ///
     pub fn rec_get_heap_no(&self) -> usize {
         unsafe {
-            let p = self.ptr.sub(REC_HEAP_NO);
-            (*p as usize & REC_HEAP_NO_MASK) >> REC_HEAP_NO_SHIFT
+            let p = (self.ptr.sub(REC_HEAP_NO) as *const u16).read_unaligned();
+            (p as usize & REC_HEAP_NO_MASK) >> REC_HEAP_NO_SHIFT
         }
     }
 
