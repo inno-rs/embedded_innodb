@@ -1,3 +1,6 @@
 pub struct Index {}
-
-impl Index {}
+impl Index {
+    pub(crate) fn new() -> Self {
+        Index {}
+    }
+}

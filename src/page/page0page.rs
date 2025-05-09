@@ -10,6 +10,7 @@ use crate::rem::rem0rec::{
     Record, REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM,
 };
 use crate::utils::TxnId;
+use log::info;
 
 pub type SlotId = usize;
 
@@ -199,7 +200,8 @@ impl Page {
     /// A `Record` object representing the infimum record.
     ///
     pub fn page_get_infimum_rec(&self) -> Record {
-        let ptr = unsafe { self.ptr.add(PAGE_HEADER + PAGE_INFIMUM) };
+        let ptr = unsafe { self.ptr.add(PAGE_INFIMUM) };
+        println!("ptr: {}", ptr as usize);
         Record::new(ptr)
     }
 
@@ -209,7 +211,7 @@ impl Page {
     /// A `Record` object representing the supremum record.
     ///    
     pub fn page_get_supremum_rec(&self) -> Record {
-        let ptr = unsafe { self.ptr.add(PAGE_HEADER + PAGE_SUPREMUM) };
+        let ptr = unsafe { self.ptr.add(PAGE_SUPREMUM) };
         Record::new(ptr)
     }
 
@@ -290,9 +292,8 @@ impl Page {
     pub fn page_dir_slot_set_rec(&self, slot: usize, rec: Record) {
         let record_offset = self.page_offset(rec);
         unsafe {
-            let slot_ptr =
-                self.ptr.add(PAGE_HEADER + record_offset) as *mut u16;
-            *slot_ptr = record_offset as u16;
+            let slot_ptr = self.page_dir_get_nth_slot(slot) as *mut u16;
+            slot_ptr.write_unaligned(record_offset as u16);
         }
     }
 
@@ -352,11 +353,13 @@ impl Page {
     ///
     /// - A pointer to the nth slot in the page directory.
     ///
-    pub fn page_dir_get_nth_slot(&self, slot_id: SlotId) -> *const u8 {
+    pub fn page_dir_get_nth_slot(&self, slot_id: SlotId) -> *mut u8 {
         unsafe {
-            let page_dir = self.ptr.add(PAGE_HEADER);
-            let slot_ptr = page_dir.add(slot_id as usize);
-            slot_ptr
+            self.ptr.add(
+                UNIV_PAGE_SIZE
+                    - PAGE_DIR
+                    - ((slot_id + 1) * PAGE_DIR_SLOT_SIZE),
+            )
         }
     }
 
@@ -372,50 +375,65 @@ impl Page {
     ///
     /// - A `Page` object representing the created page.
     ///
-    pub fn page_create(index: &Index, buf: &BufBlock, mtr: Mtr) -> Page {
+    pub fn page_create(
+        index: &Index,
+        buf: &BufBlock,
+        mtr: Option<Mtr>,
+    ) -> Page {
         let ptr = buf.getFrame();
         let page = Page::new(ptr);
 
-        page.page_create_write_log(buf, mtr);
+        if !mtr.is_none() {
+            page.page_create_write_log(buf, mtr.unwrap());
+        }
 
         /* CREATE THE INFIMUM AND SUPREMUM RECORDS */
 
         // Create tuple for infimum record
-        let infimum_d_tuple = DTuple::new(1);
+        let mut infimum_d_tuple = DTuple::new(1);
         infimum_d_tuple.dtuple_set_info_bits(REC_STATUS_INFIMUM);
 
         let infimum_field = infimum_d_tuple.dtuple_get_nth_field(0);
-        infimum_field
-            .dfield_set_data("infimum", 8 /* size of infimum string*/);
+
+        infimum_field.dfield_set_data(
+            "infimumr".as_ptr(),
+            8, /* size of infimum string*/
+        );
         infimum_field.set_type(DATA_VARCHAR, DATA_ENGLIGH | DATA_NOT_NULL, 8);
 
-        let heap_top = unsafe { ptr.add(PAGE_HEADER + PAGE_HEAP_TOP) };
+        let heap_top = unsafe { ptr.add(PAGE_INFIMUM) };
+        println!("heap_top: {}", heap_top as usize);
         let infimum_rec = Record::new(heap_top).rec_convert_dtuple_to_rec(
             index,
             infimum_d_tuple,
             0,
         );
+        println!("infimum no of fields: {}", infimum_rec.rec_get_n_fields());
+        println!("infimum position: {}", infimum_rec.get_ptr() as usize);
         infimum_rec.rec_set_n_owned(1);
-        infimum_rec.rec_set_heap_no(0);
+        // infimum_rec.rec_set_heap_no(0);
 
         // Create tuple for supremum record
 
-        let supremum_tuple = DTuple::new(1);
+        let mut supremum_tuple = DTuple::new(1);
         supremum_tuple.dtuple_set_info_bits(REC_STATUS_SUPREMUM);
 
         let supremum_field = supremum_tuple.dtuple_get_nth_field(0);
-        supremum_field
-            .dfield_set_data("supremum", 9 /* size of supremum string*/);
-        supremum_field.set_type(DATA_VARCHAR, DATA_ENGLIGH | DATA_NOT_NULL, 8);
+        supremum_field.dfield_set_data(
+            "supremumr".as_ptr(),
+            9, /* size of supremum string*/
+        );
+        supremum_field.set_type(DATA_VARCHAR, DATA_ENGLIGH | DATA_NOT_NULL, 9);
 
-        let heap_top = unsafe { ptr.add(PAGE_HEADER + PAGE_HEAP_TOP) };
+        let heap_top = unsafe { ptr.add(PAGE_SUPREMUM) };
         let supremum_rec = Record::new(heap_top).rec_convert_dtuple_to_rec(
             index,
             supremum_tuple,
             0,
         );
+        println!("supremum no of fields: {}", supremum_rec.rec_get_n_fields());
         supremum_rec.rec_set_n_owned(1);
-        supremum_rec.rec_set_heap_no(1);
+        // supremum_rec.rec_set_heap_no(1);
 
         /* 4. INITIALIZE THE PAGE */
         page.page_header_set_field(PAGE_N_DIR_SLOTS, 2);
@@ -428,10 +446,11 @@ impl Page {
         page.page_header_set_field(PAGE_N_DIRECTION, 0);
         page.page_header_set_field(PAGE_N_RECS, 0);
         page.set_max_trx_id(0, None);
-        // Do I need to perform memset here?
 
-        /* 5. SET POINTERS IN RECORDS AND DIR SLOTS */
-
+        // // Do I need to perform memset here?
+        //
+        // /* 5. SET POINTERS IN RECORDS AND DIR SLOTS */
+        //
         // Set the slots to point to the infimum and supremum records.
         page.page_dir_slot_set_rec(0, infimum_rec);
         page.page_dir_slot_set_rec(1, supremum_rec);

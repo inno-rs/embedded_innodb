@@ -1,13 +1,69 @@
 #[cfg(test)]
 mod tests {
     use super::super::page0page::Page;
-    use crate::buf::buf0types::Frame;
+    use crate::buf::buf0types::{BufBlock, Frame};
+    use crate::dict::dict0types::Index;
+    use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
     use crate::page::page0page::*;
-    use std::alloc::{alloc, Layout};
+    use std::alloc::{alloc_zeroed, Layout};
 
     fn get_raw_block() -> Frame {
-        let layout = Layout::from_size_align(1024, 1024).unwrap();
-        unsafe { alloc(layout) }
+        let layout =
+            Layout::from_size_align(UNIV_PAGE_SIZE, UNIV_PAGE_SIZE).unwrap();
+        unsafe { alloc_zeroed(layout) }
+    }
+
+    #[test]
+    fn test_page_create() {
+        let index = Index::new();
+        let buf_block = BufBlock::new(get_raw_block());
+        let mtr = None;
+        let page = Page::page_create(&index, &buf_block, mtr);
+
+        let infimum_rec = page.page_get_infimum_rec();
+        assert_eq!(infimum_rec.rec_get_data(0).unwrap(), "infimumr");
+
+        let supremum_rec = page.page_get_supremum_rec();
+        println!("{:?}", supremum_rec.rec_get_n_fields());
+        assert_eq!(supremum_rec.rec_get_data(0).unwrap(), "supremumr");
+
+        assert_eq!(page.page_header_get_field(PAGE_N_DIR_SLOTS), 2);
+        assert_eq!(
+            page.page_header_get_field(PAGE_HEAP_TOP),
+            PAGE_SUPREMUM_END
+        );
+        assert_eq!(
+            page.page_header_get_field(PAGE_N_HEAP),
+            PAGE_HEAP_NO_USER_LOW
+        );
+        assert_eq!(page.page_header_get_field(PAGE_FREE), u16::MAX as usize);
+        assert_eq!(page.page_header_get_field(PAGE_GARBAGE), 0);
+        assert_eq!(
+            page.page_header_get_field(PAGE_LAST_INSERT),
+            u16::MAX as usize
+        );
+        assert_eq!(
+            page.page_header_get_field(PAGE_DIRECTION),
+            PAGE_NO_DIRECTION
+        );
+        assert_eq!(page.page_header_get_field(PAGE_N_DIRECTION), 0);
+        assert_eq!(page.page_header_get_field(PAGE_N_RECS), 0);
+        assert_eq!(page.get_max_trx_id(), 0);
+
+        // Check the slots in the page header
+        // assert_eq!(
+        //     page.page_dir_slot_get_rec(0).get_ptr() as usize,
+        //     infimum_rec.get_ptr() as usize
+        // );
+
+        // assert_eq!(
+        //     page.page_dir_slot_get_rec(1).get_ptr() as usize,
+        //     supremum_rec.get_ptr() as usize
+        // );
+
+        // Check next offsets of the infimum and supremum records
+        assert_eq!(infimum_rec.rec_get_next_offs(), PAGE_SUPREMUM);
+        assert_eq!(page.page_get_supremum_rec().rec_get_next_offs(), 0);
     }
 
     #[test]
