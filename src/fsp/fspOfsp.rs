@@ -158,3 +158,53 @@ pub fn init_file_page(
 }
 
 
+/// Initialize one extent descriptor (40 bytes):
+/// - bytes 24..40: set every byte to 0xFF → all 64 pages “free & clean”
+/// - bytes 20..24: write the 4‐byte state = XDES_FREE (little‐endian)
+pub fn xdes_init(descr: &mut [u8]) {
+
+    assert!(
+        descr.len() >= XDES_SIZE,
+        "extent-descriptor buffer must be at least {} bytes",
+        XDES_SIZE
+    );
+    // Byte 24- Byte 39 ( State of pages bitmap within extent)
+    for i in XDES_BITMAP..XDES_SIZE {
+        descr[i] = 0xFF;
+    }
+
+    let state_bytes = (XDES_FREE as u32).to_le_bytes();
+    let off = XDES_STATE;
+
+    // Byte 20 -23(4 bytes) is the state of extent
+    descr[off..off + 4].copy_from_slice(&state_bytes);
+     // TODO: emit corresponding MTR log records here
+
+
+}
+
+
+/// Read a single bit from the extent descriptor bitmap
+/// `page_idx` is 0..63, `which` is either XDES_FREE_BIT or XDES_CLEAN_BIT
+///
+/// TODO test pending
+pub fn xdes_get_bit(descr: &[u8], page_idx: usize, which: usize) -> bool {
+    let bit = page_idx * XDES_BITS_PER_PAGE + which;
+    let byte_off = XDES_BITMAP + (bit / 8);
+    let bit_in_byte = bit % 8;
+    (descr[byte_off] & (1 << bit_in_byte)) != 0
+}
+
+/// Set or clear a single bit in the extent descriptor bitmap
+///
+/// TODO test pending
+pub fn xdes_set_bit(descr: &mut [u8], page_idx: usize, which: usize, val: bool) {
+    let bit = page_idx * XDES_BITS_PER_PAGE + which;
+    let byte_off = XDES_BITMAP + (bit / 8);
+    let bit_in_byte = bit % 8;
+    if val {
+        descr[byte_off] |= 1 << bit_in_byte;
+    } else {
+        descr[byte_off] &= !(1 << bit_in_byte);
+    }
+}
