@@ -39,4 +39,36 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn test_xdes_init() {
+        let mut descr = vec![0xAAu8; XDES_SIZE];
+        xdes_init(&mut descr);
+
+        let expected_state = (XDES_FREE as u32).to_le_bytes();
+        assert_eq!(&descr[XDES_STATE..XDES_STATE + 4], &expected_state, "state field incorrect");
+
+        assert!(
+            descr[XDES_BITMAP..XDES_SIZE].iter().all(|&b| b == 0xFF),
+            "bitmap not fully initialized to 0xFF"
+        );
+
+        // 5) Ensure bytes outside state+bitmap are untouched (still 0xAA)
+        for (i, &b) in descr.iter().enumerate() {
+            let in_state = i >= XDES_STATE && i < XDES_STATE + 4;
+            let in_bitmap = i >= XDES_BITMAP && i < XDES_SIZE;
+            if in_state || in_bitmap {
+                continue;
+            }
+            assert_eq!(
+                b, 0xAA,
+                "byte at offset {} changed unexpectedly (was {:02x})",
+                i, b
+            );
+        }
+
+
+
+    }
+
 }
