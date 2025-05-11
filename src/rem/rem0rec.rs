@@ -112,12 +112,17 @@ impl Record {
     /// # Returns
     ///
     /// * A new Record object representing the next record.
-    pub fn rec_get_next(&self) -> Record {
+    pub fn rec_get_next(&self) -> Option<Record> {
         unsafe {
-            let offset = self.ptr.sub(REC_NEXT) as *const u16;
+            let offset = self.rec_get_next_offs();
+            if offset == 0 {
+                // There is no next record
+                return None;
+            }
+
             let page_ptr = self.page_align();
-            let next_ptr = page_ptr.add(*offset as usize);
-            Record::new(next_ptr as *mut u8)
+            let next_ptr = page_ptr.add(offset);
+            Some(Record::new(next_ptr as *mut u8))
         }
     }
 
@@ -237,7 +242,8 @@ impl Record {
     pub fn rec_get_n_owned(&self) -> usize {
         unsafe {
             let p = self.ptr.sub(REC_N_OWNED);
-            (*p as usize & REC_N_OWNED_MASK) >> REC_N_OWNED_SHIFT
+            (p.read_unaligned() as usize & REC_N_OWNED_MASK)
+                >> REC_N_OWNED_SHIFT
         }
     }
 
