@@ -5,16 +5,44 @@ pub const DATA_NOT_NULL: usize = 256;
 
 /* The 'MAIN TYPE' of a column */
 
-/** Character varying of the latin1_swedish_ci charset-collection */
+/// Character varying of the latin1_swedish_ci charset-collection.
 pub const DATA_VARCHAR: usize = 1;
 
+/// Fixed-length character of the latin1_swedish_ci charset-collection.
+pub const DATA_CHAR: usize = 2;
+
+/// Binary string of fixed length.
+pub const DATA_FIXBINARY: usize = 3;
+
+/// Binary string of variable length.
+pub const DATA_BINARY: usize = 4;
+
+/// Binary large object, or a TEXT type.
+pub const DATA_BLOB: usize = 5;
+
+/// Integer can be any size 1-8 bytes.
+pub const DATA_INT: usize = 6;
+
+/// Address of the child page in the node pointer.
+pub const DATA_SYS_CHILD: usize = 7;
+
+/// System Column.
+pub const DATA_SYS: usize = 8;
+
+//// Data types >= DATA_FLOAT must be compared using the whole field, not as binary string.
+pub const DATA_FLOAT: usize = 9;
+pub const DATA_DOUBLE: usize = 10;
+
+/// Decimal number stored as an ASCII string.
+pub const DATA_DECIMAL: usize = 11;
+
 /** English language character string: only used for InnoDB's own system tables */
-pub const DATA_ENGLIGH: usize = 4;
+pub const DATA_ENGLISH: usize = 4;
 
 #[derive(Clone)]
 pub struct DType {
     /// Main data type.
-    pub dtype: u8,
+    pub m_type: u8,
     /// Length of the column in bytes.
     pub len: u16,
     /// Precise type; user data type, charset code,

@@ -1,6 +1,6 @@
 use crate::buf::buf0types::BufBlock;
 use crate::data::data0types::{
-    DTuple, DATA_ENGLIGH, DATA_NOT_NULL, DATA_VARCHAR,
+    DTuple, DATA_ENGLISH, DATA_NOT_NULL, DATA_VARCHAR,
 };
 use crate::dict::dict0types::Index;
 use crate::fil::fil0types::{FIL_PAGE_DATA_END, FSEG_PAGE_DATA};
@@ -425,7 +425,7 @@ impl Page {
             "infimumr".as_ptr(),
             8, /* size of infimum string*/
         );
-        infimum_field.set_type(DATA_VARCHAR, DATA_ENGLIGH | DATA_NOT_NULL, 8);
+        infimum_field.set_type(DATA_VARCHAR, DATA_ENGLISH | DATA_NOT_NULL, 8);
 
         let heap_top = unsafe { ptr.add(PAGE_INFIMUM) };
         println!("heap_top: {}", heap_top as usize);
@@ -449,7 +449,7 @@ impl Page {
             "supremumr".as_ptr(),
             9, /* size of supremum string*/
         );
-        supremum_field.set_type(DATA_VARCHAR, DATA_ENGLIGH | DATA_NOT_NULL, 9);
+        supremum_field.set_type(DATA_VARCHAR, DATA_ENGLISH | DATA_NOT_NULL, 9);
 
         let heap_top = unsafe { ptr.add(PAGE_SUPREMUM) };
         let supremum_rec = Record::new(heap_top).rec_convert_dtuple_to_rec(

@@ -1,3 +1,5 @@
+extern crate core;
+
 mod buf;
 mod dict;
 mod fil;
@@ -8,6 +10,8 @@ mod utils;
 mod data;
 mod innodb;
 mod fsp;
+mod log;
+mod os;
 
 fn main() {
     println!("Hello, world!");
