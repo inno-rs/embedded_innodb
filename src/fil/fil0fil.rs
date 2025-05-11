@@ -14,7 +14,8 @@
  * 0x1A   | 2    | FIL_PAGE_FILE_FLUSH_LSN | Flush LSN for redo logs    *
  * 0x1C   | 8    | FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID | Varies by version *
  ************************************************************************/
-use crate::fil::fil0types::{FilSpace, FilType, SpaceId};
+use crate::fil::fil0types::{FilNode, FilSpace, FilType, SpaceId};
+use crate::os::os0file::os_file_create;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -22,6 +23,8 @@ struct Fil {
     space_by_id: HashMap<SpaceId, Arc<RwLock<FilSpace>>>,
     space_by_name: HashMap<String, Arc<RwLock<FilSpace>>>,
     tablespace_version: i64,
+    /// Number of files currently open.
+    n_open_files: usize,
 }
 
 impl Fil {
@@ -30,6 +33,7 @@ impl Fil {
             space_by_id: HashMap::new(),
             space_by_name: HashMap::new(),
             tablespace_version: 0,
+            n_open_files: 0,
         }
     }
 
@@ -107,5 +111,33 @@ impl Fil {
             let space = space.read().unwrap();
             Some(space.fil_type.clone())
         })
+    }
+
+    pub fn node_open_file(
+        &mut self,
+        file_node: &mut FilNode,
+        fil_space: FilSpace,
+        startup: bool,
+    ) -> bool {
+        if file_node.get_size_in_pages() == 0 {
+            todo!()
+        }
+
+        match fil_space.fil_type {
+            FilType::FIL_LOG => {
+                let file_handle = os_file_create(file_node.get_name());
+                file_node.set_file_handle(file_handle);
+            }
+            _ => {
+                todo!("Handle other file types");
+            }
+        }
+
+        file_node.set_is_open();
+
+        // Open the file and increase the open file count.
+        self.n_open_files += 1;
+
+        true
     }
 }

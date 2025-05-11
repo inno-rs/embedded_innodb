@@ -51,19 +51,74 @@ mod tests {
         assert_eq!(page.get_max_trx_id(), 0);
 
         // Check the slots in the page header
-        // assert_eq!(
-        //     page.page_dir_slot_get_rec(0).get_ptr() as usize,
-        //     infimum_rec.get_ptr() as usize
-        // );
+        assert_eq!(
+            page.page_dir_slot_get_rec(0).get_ptr() as usize,
+            infimum_rec.get_ptr() as usize
+        );
 
-        // assert_eq!(
-        //     page.page_dir_slot_get_rec(1).get_ptr() as usize,
-        //     supremum_rec.get_ptr() as usize
-        // );
+        assert_eq!(
+            page.page_dir_slot_get_rec(1).get_ptr() as usize,
+            supremum_rec.get_ptr() as usize
+        );
 
         // Check next offsets of the infimum and supremum records
         assert_eq!(infimum_rec.rec_get_next_offs(), PAGE_SUPREMUM);
         assert_eq!(page.page_get_supremum_rec().rec_get_next_offs(), 0);
+    }
+
+    #[test]
+    fn test_page_get_n_recs() {
+        let index = Index::new();
+        let buf_block = BufBlock::new(get_raw_block());
+        let mtr = None;
+        let page = Page::page_create(&index, &buf_block, mtr);
+
+        assert_eq!(page.page_n_get_recs(), 0)
+    }
+
+    #[test]
+    fn test_page_get_next_record() {
+        let index = Index::new();
+        let buf_block = BufBlock::new(get_raw_block());
+        let mtr = None;
+        let page = Page::page_create(&index, &buf_block, mtr);
+
+        let infimum_rec = page.page_get_infimum_rec();
+        let supremum_rec = infimum_rec.rec_get_next().unwrap();
+        let supremum_next = supremum_rec.rec_get_next();
+
+        assert!(page.page_rec_is_infimum(infimum_rec));
+        assert!(page.page_rec_is_supremum(supremum_rec));
+
+        assert_eq!(supremum_next, None);
+    }
+
+    #[test]
+    fn test_page_rec_is_user_record() {
+        let index = Index::new();
+        let buf_block = BufBlock::new(get_raw_block());
+        let mtr = None;
+        let page = Page::page_create(&index, &buf_block, mtr);
+
+        let infimum_rec = page.page_get_infimum_rec();
+        let supremum_rec = infimum_rec.rec_get_next().unwrap();
+
+        assert!(!page.page_rec_is_user_rec(infimum_rec));
+        assert!(!page.page_rec_is_user_rec(supremum_rec));
+    }
+
+    #[test]
+    fn test_page_dir_find_owner_slot() {
+        let index = Index::new();
+        let buf_block = BufBlock::new(get_raw_block());
+        let mtr = None;
+        let page = Page::page_create(&index, &buf_block, mtr);
+
+        let infimum_rec = page.page_get_infimum_rec();
+        let supremum_rec = infimum_rec.rec_get_next().unwrap();
+
+        assert_eq!(page.page_dir_find_owner_slot(infimum_rec), 0);
+        assert_eq!(page.page_dir_find_owner_slot(supremum_rec), 1);
     }
 
     #[test]

@@ -1,8 +1,14 @@
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
 use crate::innodb::innodb0types::{UNIV_PAGE_SIZE, UNIV_SQL_NULL};
+use crate::page::page0page::Page;
 use log::info;
 use std::{ptr, slice};
+
+/// Info bit denoting the predefined minimum record:
+/// this bit is set if and only if the record
+/// is the first user record on a non-leaf B-Tree page that is the leftmost page on its level.
+pub const REC_INFO_MIN_REC_FLAG: usize = 0x10;
 
 /** Number of extra bytes in a record in addition to the data and offsets. */
 /** Record status values */
@@ -70,7 +76,7 @@ pub const REC_INFO_BITS_SHIFT: usize = 4;
 /// The following masks are used to filter the SQL null bit from the one byte and two byte offsets.
 pub const REC_1BYTE_SQL_NULL_MASK: usize = 0x80;
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Copy, Clone)]
 pub struct Record {
     ptr: *mut u8,
 }
@@ -100,11 +106,11 @@ impl Record {
     /// # Returns
     ///
     /// *const u8
-    pub fn page_align(&self) -> *const u8 {
+    pub fn page_align(&self) -> *mut u8 {
         let align = UNIV_PAGE_SIZE;
         let addr = self.ptr as usize;
         let aligned_addr = addr & !(align - 1); // Align down by masking lower bits
-        aligned_addr as *const u8
+        aligned_addr as *mut u8
     }
 
     /// Get the next record chained to the current record.
@@ -112,13 +118,43 @@ impl Record {
     /// # Returns
     ///
     /// * A new Record object representing the next record.
-    pub fn rec_get_next(&self) -> Record {
+    pub fn rec_get_next(&self) -> Option<Record> {
         unsafe {
-            let offset = self.ptr.sub(REC_NEXT) as *const u16;
+            let offset = self.rec_get_next_offs();
+            if offset == 0 {
+                // There is no next record
+                return None;
+            }
+
             let page_ptr = self.page_align();
-            let next_ptr = page_ptr.add(*offset as usize);
-            Record::new(next_ptr as *mut u8)
+            let next_ptr = page_ptr.add(offset);
+            Some(Record::new(next_ptr as *mut u8))
         }
+    }
+
+    /// Get the previous record chained to the current record.
+    ///
+    /// # Returns
+    ///
+    /// * A new Record object representing the previous record.
+    ///
+    pub fn rec_get_prev(&self) -> Option<Record> {
+        let page = Page::new(self.page_align());
+
+        let slot_no = page.page_dir_find_owner_slot(self.clone());
+        let mut rec = page.page_dir_slot_get_rec(slot_no - 1);
+
+        let mut prev_rec = rec;
+        while rec.get_ptr() != self.ptr {
+            prev_rec = rec;
+
+            match rec.rec_get_next() {
+                Some(next_rec) => rec = next_rec,
+                None => panic!("rec_get_prev: no next record"),
+            }
+        }
+
+        Some(prev_rec)
     }
 
     /// Builds a physical record out of a data tuple, and stores it in the record.
@@ -237,7 +273,8 @@ impl Record {
     pub fn rec_get_n_owned(&self) -> usize {
         unsafe {
             let p = self.ptr.sub(REC_N_OWNED);
-            (*p as usize & REC_N_OWNED_MASK) >> REC_N_OWNED_SHIFT
+            (p.read_unaligned() as usize & REC_N_OWNED_MASK)
+                >> REC_N_OWNED_SHIFT
         }
     }
 

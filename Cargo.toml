@@ -6,3 +6,9 @@ edition = "2024"
 [dependencies]
 log = "0.4"
 env_logger = "0.11"
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio-uring = "0.4"

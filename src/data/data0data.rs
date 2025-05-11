@@ -90,7 +90,7 @@ impl DField {
             len: 0,
             ext: false,
             field_type: DType {
-                dtype: 0,
+                m_type: 0,
                 len: 0,
                 pr_type: 0,
                 mb_min_len: 0,
@@ -132,7 +132,7 @@ impl DField {
     ///
     pub fn set_type(&mut self, m_type: usize, pr_type: usize, len: usize) {
         info!("Setting type: {} {} {}", m_type, pr_type, len);
-        self.field_type.dtype = m_type as u8;
+        self.field_type.m_type = m_type as u8;
         self.field_type.pr_type = pr_type;
         self.field_type.len = len as u16;
     }

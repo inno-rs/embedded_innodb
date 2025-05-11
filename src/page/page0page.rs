@@ -1,6 +1,6 @@
 use crate::buf::buf0types::BufBlock;
 use crate::data::data0types::{
-    DTuple, DATA_ENGLIGH, DATA_NOT_NULL, DATA_VARCHAR,
+    DTuple, DATA_ENGLISH, DATA_NOT_NULL, DATA_VARCHAR,
 };
 use crate::dict::dict0types::Index;
 use crate::fil::fil0types::{FIL_PAGE_DATA_END, FSEG_PAGE_DATA};
@@ -162,7 +162,7 @@ impl Page {
                 let loc =
                     page.add((PAGE_HEADER + PAGE_MAX_TRX_ID)) as *mut TxnId;
 
-                loc.write(max_trx_id);
+                loc.write_unaligned(max_trx_id);
             },
             Some(_) => {
                 log::warn!("don't know how to handle Mtr");
@@ -178,7 +178,7 @@ impl Page {
         unsafe {
             let page_ptr =
                 self.ptr.add((PAGE_HEADER + PAGE_MAX_TRX_ID)) as *const TxnId;
-            *page_ptr
+            page_ptr.read_unaligned()
         }
     }
 
@@ -188,7 +188,8 @@ impl Page {
     /// The amount of free space in bytes.
     pub fn page_get_free_space_of_empty(&self) -> usize {
         // UNIV_PAGE_SIZE = Page Size
-        // PAGE_SUPREMUM_END = Offset of the supremum record end. This is where everythings related to the header ends.
+        // PAGE_SUPREMUM_END = Offset of the supremum record end.
+        // This is where everything's related to the header ends.
         // PAGE_DIR = Size of the page trailer.
         // 2 * PAGE_DIR_SLOT_SIZE = Both infimum and supremum records are stored in the page directory in an empty page as well.
         UNIV_PAGE_SIZE - PAGE_SUPREMUM_END - PAGE_DIR - 2 * PAGE_DIR_SLOT_SIZE
@@ -226,7 +227,7 @@ impl Page {
     pub fn page_header_set_field(&self, field: usize, value: usize) {
         unsafe {
             let ptr = self.ptr.add(PAGE_HEADER + field) as *mut u16;
-            *ptr = value as u16;
+            ptr.write_unaligned(value as u16);
         }
     }
 
@@ -240,7 +241,7 @@ impl Page {
     pub fn page_header_get_field(&self, field: usize) -> usize {
         unsafe {
             let ptr = self.ptr.add(PAGE_HEADER + field) as *const u16;
-            *ptr as usize
+            ptr.read_unaligned() as usize
         }
     }
 
@@ -276,7 +277,7 @@ impl Page {
         let mut rec = self.page_dir_slot_get_rec(i - 1);
         for _ in 0..(middle - count) {
             let next = rec.rec_get_next();
-            rec = next;
+            rec = next.unwrap();
         }
 
         rec
@@ -307,40 +308,65 @@ impl Page {
     ///
     pub fn page_dir_slot_get_rec(&self, slot: usize) -> Record {
         unsafe {
-            let ptr = self.ptr.add(PAGE_HEADER + slot);
-            Record::new(ptr)
+            let slot_ptr = self.page_dir_get_nth_slot(slot) as *const u16;
+            Record::new(self.ptr.add(slot_ptr.read_unaligned() as usize))
         }
     }
 
+    /// Retrieves the number of records in the page.
+    ///
+    /// # Returns
+    ///
+    /// - The number of records in the page as a `usize`.
+    ///
     pub fn page_n_get_recs(&self) -> usize {
         self.page_header_get_field(PAGE_N_RECS)
     }
 
     /// Retrieves the number of slots in the page directory.
     ///
-    /// # Parameters
-    ///
-    /// - `slot`: The slot number in the page directory.
-    ///
     /// # Returns
     ///
     /// - The number of slots in the page directory as a `SlotId`.
-    pub fn page_dir_get_n_slots(&self, slot: usize) -> SlotId {
-        self.page_header_get_field(slot) as SlotId
+    pub fn page_dir_get_n_slots(&self) -> SlotId {
+        self.page_header_get_field(PAGE_N_DIR_SLOTS) as SlotId
     }
 
     pub fn page_dir_get_n_owned(&self, slot: usize) -> SlotId {
         let page_dir = unsafe { self.ptr.add(PAGE_HEADER as usize) };
         let slot_ptr = unsafe { page_dir.add(slot as usize) };
         let n_owned = unsafe { *(slot_ptr as *const u16) };
-        return n_owned as SlotId;
+        n_owned as SlotId
     }
 
+    /// Finds the owner slot of a given record in the page directory.
+    ///
+    /// # Parameters
+    ///
+    /// - `record`: The record to find the owner slot for.
+    ///
+    /// # Returns
+    ///
+    /// - The slot ID of the owner slot as a `SlotId`.
+    ///
     pub fn page_dir_find_owner_slot(&self, record: Record) -> SlotId {
-        let page_ptr = record.page_align();
         let first_slot = self.page_dir_get_nth_slot(0);
+        let record_offset = self.page_offset(record);
 
-        return 6;
+        unsafe {
+            let mut slot =
+                self.page_dir_get_nth_slot(self.page_dir_get_n_slots() - 1);
+
+            println!("slot: {}", slot as usize);
+            println!("record_offset: {}", record_offset);
+
+            while (slot as *mut u16).read_unaligned() as usize != record_offset
+            {
+                slot = slot.add(PAGE_DIR_SLOT_SIZE);
+            }
+
+            (first_slot as usize - slot as usize) / PAGE_DIR_SLOT_SIZE
+        }
     }
 
     /// Retrieves the pointer to the nth slot in the page directory.
@@ -399,7 +425,7 @@ impl Page {
             "infimumr".as_ptr(),
             8, /* size of infimum string*/
         );
-        infimum_field.set_type(DATA_VARCHAR, DATA_ENGLIGH | DATA_NOT_NULL, 8);
+        infimum_field.set_type(DATA_VARCHAR, DATA_ENGLISH | DATA_NOT_NULL, 8);
 
         let heap_top = unsafe { ptr.add(PAGE_INFIMUM) };
         println!("heap_top: {}", heap_top as usize);
@@ -423,7 +449,7 @@ impl Page {
             "supremumr".as_ptr(),
             9, /* size of supremum string*/
         );
-        supremum_field.set_type(DATA_VARCHAR, DATA_ENGLIGH | DATA_NOT_NULL, 9);
+        supremum_field.set_type(DATA_VARCHAR, DATA_ENGLISH | DATA_NOT_NULL, 9);
 
         let heap_top = unsafe { ptr.add(PAGE_SUPREMUM) };
         let supremum_rec = Record::new(heap_top).rec_convert_dtuple_to_rec(
@@ -448,9 +474,9 @@ impl Page {
         page.set_max_trx_id(0, None);
 
         // // Do I need to perform memset here?
-        //
-        // /* 5. SET POINTERS IN RECORDS AND DIR SLOTS */
-        //
+
+        /* 5. SET POINTERS IN RECORDS AND DIR SLOTS */
+
         // Set the slots to point to the infimum and supremum records.
         page.page_dir_slot_set_rec(0, infimum_rec);
         page.page_dir_slot_set_rec(1, supremum_rec);
@@ -463,6 +489,15 @@ impl Page {
         page
     }
 
+    /// Get the offset of the record within the page.
+    ///
+    /// # Parameters
+    ///
+    /// - `rec`: The record to get the offset for.
+    ///
+    /// # Returns
+    ///
+    /// - The offset of the record within the page as a `usize`.
     fn page_offset(&self, rec: Record) -> usize {
         rec.get_ptr() as usize % UNIV_PAGE_SIZE
     }
@@ -480,7 +515,6 @@ impl Page {
     ///
     pub fn page_rec_is_infimum(&self, rec: Record) -> bool {
         let rec_offset = self.page_offset(rec);
-
         rec_offset == PAGE_INFIMUM
     }
 
@@ -550,7 +584,7 @@ impl Page {
             }
 
             // Move to the next record
-            rec = rec.rec_get_next();
+            rec = rec.rec_get_next().unwrap();
         }
     }
 
