@@ -1,14 +1,10 @@
 use crate::innodb::innodb0types::{Lsn, IB_FILE_BLOCK_SIZE};
-use crate::log::log0types::{LOG_BLOCK_HDR_SIZE, LOG_BLOCK_TRL_SIZE};
+use crate::log::log0types::{
+    LOG_BLOCK_CHECKPOINT_NO, LOG_BLOCK_FIRST_REC_GROUP,
+    LOG_BLOCK_FLUSH_BIT_MASK, LOG_BLOCK_HDR_DATA_LENGTH, LOG_BLOCK_HDR_NO,
+    LOG_BLOCK_HDR_SIZE, LOG_BLOCK_TRL_SIZE,
+};
 use std::sync::{Arc, Condvar, Mutex};
-
-/// Offsets to the log block header.
-
-/// Block number which must be > 0 and is allowed to wrap around at 2G. The highest bit is set to 1 if this is the first block in a log flush write segment.
-pub const LOG_BLOCK_HDR_NO: usize = 0;
-
-/// The number of bytes written to the block.
-pub const LOG_BLOCK_HDR_DATA_LENGTH: usize = 4;
 
 /// We write to alternative checkpoint blocks when we make new checkpoints.
 /// This is to avoid overwriting the previous checkpoint blocks resulting in corruption.
@@ -94,6 +90,220 @@ impl Log {
         }
     }
 
+    /// Gets the flush bit from the log block header.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_offset` - The offset of the block in the log buffer.
+    ///
+    /// # Returns
+    ///
+    /// * The flush bit from the block header.
+    pub fn block_get_flush_bit(&self, block_offset: usize) -> bool {
+        let block_number = self.block_get_hdr_no(block_offset);
+        (block_number & LOG_BLOCK_FLUSH_BIT_MASK) != 0
+    }
+
+    /// Sets the flush bit in the log block header.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_offset` - The offset of the block in the log buffer.
+    /// * `flush_bit` - The flush bit to set.
+    ///
+    /// # Returns
+    ///
+    /// * None
+    pub fn block_set_flush_bit(
+        &mut self,
+        block_offset: usize,
+        flush_bit: bool,
+    ) {
+        // Set the flush bit in the header
+        let mut block_number = self.block_get_hdr_no(block_offset);
+        let new_block_number = if flush_bit {
+            block_number | LOG_BLOCK_FLUSH_BIT_MASK
+        } else {
+            block_number & !LOG_BLOCK_FLUSH_BIT_MASK
+        };
+
+        self.block_set_hdr_no(block_offset, new_block_number);
+    }
+
+    /// Gets the block number from the log block header.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_offset` - The offset of the block in the log buffer.
+    ///
+    /// # Returns
+    ///
+    /// * The block number from the header.
+    ///
+    pub fn block_get_hdr_no(&self, block_offset: usize) -> usize {
+        // Get the block number from the header
+        let start = block_offset + LOG_BLOCK_HDR_NO;
+        let end = block_offset + LOG_BLOCK_HDR_NO + 4;
+        let block_number_bytes = &self.buf[start..end];
+        u32::from_le_bytes(block_number_bytes.try_into().unwrap()) as usize
+    }
+
+    /// Sets the block number in the log block header.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_offset` - The offset of the block in the log buffer.
+    /// * `log_block_number` - The block number to set.
+    ///
+    /// # Returns
+    ///
+    /// * None
+    pub fn block_set_hdr_no(
+        &mut self,
+        block_offset: usize,
+        log_block_number: usize,
+    ) {
+        // Set the block number in the header
+        let start = block_offset + LOG_BLOCK_HDR_NO;
+        let end = block_offset + LOG_BLOCK_HDR_NO + 4;
+        debug_assert!(end - start == 4);
+        self.buf[start..end]
+            .copy_from_slice(&(log_block_number as u32).to_le_bytes());
+    }
+
+    /// Gets the data length of the log block.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_offset` - The offset of the block in the log buffer.
+    ///
+    /// # Returns
+    ///
+    /// * The data length of the block.
+    ///
+    pub fn block_get_data_length(&self, block_offset: usize) -> usize {
+        // Get the data length from the block
+        let start = block_offset + LOG_BLOCK_HDR_DATA_LENGTH;
+        let end = block_offset + LOG_BLOCK_HDR_DATA_LENGTH + 4;
+        let data_length_bytes = &self.buf[start..end];
+        u32::from_le_bytes(data_length_bytes.try_into().unwrap()) as usize
+    }
+
+    /// Set the data length of the log block.
+    ///
+    /// # Arguments
+    ///
+    /// * `block` - The log block to set the data length for.
+    /// * `data_len` - The length of the data to set.
+    ///
+    /// # Returns
+    ///
+    /// * None
+    pub fn block_set_data_length(
+        &mut self,
+        block_offset: usize,
+        data_len: usize,
+    ) {
+        // Set the data length in the block
+        let start = block_offset + LOG_BLOCK_HDR_DATA_LENGTH;
+        let end = block_offset + LOG_BLOCK_HDR_DATA_LENGTH + 4;
+        self.buf[start..end].copy_from_slice(&(data_len as u32).to_le_bytes());
+    }
+
+    /// Gets the offset of the first mtr log record in a lo
+    ///
+    /// # Arguments
+    ///
+    /// * `block_offset` - The offset of the block in the log buffer.
+    ///
+    /// # Returns
+    ///
+    /// * The offset of the first mtr log record in the block.
+    ///
+    pub fn block_get_first_rec_group(&self, block_offset: usize) -> usize {
+        let start = block_offset + LOG_BLOCK_FIRST_REC_GROUP;
+        let end = block_offset + LOG_BLOCK_FIRST_REC_GROUP + 2;
+        let first_rec_group_bytes = &self.buf[start..end];
+        u16::from_le_bytes(first_rec_group_bytes.try_into().unwrap()) as usize
+    }
+
+    /// Sets the offset of the first mtr log record in a log block.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_offset` - The offset of the block in the log buffer.
+    /// * `rec_offset` - The offset of the first mtr log record to set.
+    ///
+    /// # Returns
+    ///
+    /// * None
+    pub fn block_set_first_rec_group(
+        &mut self,
+        block_offset: usize,
+        rec_offset: usize,
+    ) {
+        // Set the offset of the first mtr log record in the block
+        let start = block_offset + LOG_BLOCK_FIRST_REC_GROUP;
+        let end = block_offset + LOG_BLOCK_FIRST_REC_GROUP + 2;
+        self.buf[start..end]
+            .copy_from_slice(&(rec_offset as u16).to_le_bytes());
+    }
+
+    /// Gets the checkpoint number from the log block header.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_offset` - The offset of the block in the log buffer.
+    ///
+    /// # Returns
+    ///
+    /// * The checkpoint number from the block header.
+    pub fn block_get_checkpoint_number(&self, block_offset: usize) -> usize {
+        // Get the checkpoint number from the block
+        let start = block_offset + LOG_BLOCK_CHECKPOINT_NO;
+        let end = block_offset + LOG_BLOCK_CHECKPOINT_NO + 4;
+        let checkpoint_number_bytes = &self.buf[start..end];
+        u32::from_le_bytes(checkpoint_number_bytes.try_into().unwrap())
+            as usize
+    }
+
+    /// Set the checkpoint number fields of the log block header.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_offset` - The offset of the block in the log buffer.
+    /// * `checkpoint_number` - The checkpoint number to set.
+    ///
+    /// # Returns
+    ///
+    /// * None
+    pub fn block_set_checkpoint_number(
+        &mut self,
+        block_offset: usize,
+        checkpoint_number: usize,
+    ) {
+        // Set the checkpoint number in the header
+        let start = block_offset + LOG_BLOCK_CHECKPOINT_NO;
+        let end = block_offset + LOG_BLOCK_CHECKPOINT_NO + 4;
+        self.buf[start..end]
+            .copy_from_slice(&(checkpoint_number as u32).to_le_bytes());
+    }
+
+    /// Converts a log sequence number (LSN) to a block number.
+    ///
+    /// # Arguments
+    ///
+    /// * `lsn` - The log sequence number to convert.
+    ///
+    /// # Returns
+    ///
+    /// * The block number corresponding to the given LSN. It is > 0 and <= 1G.
+    ///
+    pub fn block_convert_lsn_to_no(lsn: Lsn) -> usize {
+        // Convert the LSN to a block number
+        ((lsn as usize / IB_FILE_BLOCK_SIZE) & 0x3FFFFFFF) + 1
+    }
+
     /// Calculates the checksum for a log block.
     ///
     /// # Arguments
@@ -126,42 +336,30 @@ impl Log {
         sum
     }
 
-    /// Converts a log sequence number (LSN) to a block number.
-    ///
-    /// # Arguments
-    ///
-    /// * `lsn` - The log sequence number to convert.
-    ///
-    /// # Returns
-    ///
-    /// * The block number corresponding to the given LSN. It is > 0 and <= 1G.
-    ///
-    pub fn block_convert_lsn_to_no(lsn: Lsn) -> usize {
-        // Convert the LSN to a block number
-        ((lsn as usize / IB_FILE_BLOCK_SIZE) & 0x3FFFFFFF) + 1
-    }
-
-    /// Sets the block number in the log block header.
+    /// Retrieve the checksum from the trailer checksum field of the log block.
     ///
     /// # Arguments
     ///
     /// * `block_offset` - The offset of the block in the log buffer.
-    /// * `log_block_number` - The block number to set.
     ///
     /// # Returns
     ///
-    /// * None
-    pub fn block_set_hdr_no(
-        &mut self,
-        block_offset: usize,
-        log_block_number: usize,
-    ) {
-        // Set the block number in the header
-        let start = block_offset;
-        let end = block_offset + LOG_BLOCK_HDR_NO;
-        debug_assert!(end - start == 4);
-        self.buf[start..end]
-            .copy_from_slice(&(log_block_number as u32).to_le_bytes());
+    /// * The checksum for the block.
+    pub fn block_get_checksum(&self, block_offset: usize) -> u32 {
+        let start = block_offset + IB_FILE_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE;
+        let end = block_offset + IB_FILE_BLOCK_SIZE;
+        let checksum_bytes = &self.buf[start..end];
+        u32::from_le_bytes(checksum_bytes.try_into().unwrap())
+    }
+
+    /// Store a 4-byte checksum in the trailer checksum field of the log block
+    /// before writing it to a log file.
+    /// This checksum is used during recovery to check the consistency of the log block.
+    pub fn block_store_checksum(&mut self, block_offset: usize) {
+        let checksum = self.block_calc_checksum(block_offset);
+        let start = block_offset + IB_FILE_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE;
+        let end = block_offset + IB_FILE_BLOCK_SIZE;
+        self.buf[start..end].copy_from_slice(&checksum.to_le_bytes());
     }
 
     /// Initializes a log block with the given LSN.
@@ -176,27 +374,7 @@ impl Log {
 
         self.block_set_hdr_no(block_offset, block_no);
         self.block_set_data_length(block_offset, LOG_BLOCK_HDR_SIZE);
-    }
-
-    /// Set the data length of the log block.
-    ///
-    /// # Arguments
-    ///
-    /// * `block` - The log block to set the data length for.
-    /// * `data_len` - The length of the data to set.
-    ///
-    /// # Returns
-    ///
-    /// * None
-    pub fn block_set_data_length(
-        &mut self,
-        block_offset: usize,
-        data_len: usize,
-    ) {
-        // Set the data length in the block
-        let start = block_offset;
-        let end = block_offset + LOG_BLOCK_HDR_DATA_LENGTH + 2;
-        self.buf[start..end].copy_from_slice(&(data_len as u16).to_le_bytes());
+        self.block_set_first_rec_group(block_offset, 0);
     }
 
     /// Reserves space in the log buffer and writes the data to it.
@@ -236,6 +414,34 @@ impl Log {
         Ok(LogWriteResult { start_lsn, end_lsn: self.lsn })
     }
 
+    /// Gets the current lsn.
+    ///
+    /// # Returns
+    ///
+    /// * The current log sequence number.
+    pub fn get_lsn(&self) -> Lsn {
+        self.lsn
+    }
+
+    /// Tries to establish a big enough margin of free space in the log buffer
+    /// such that new log entries can be concatenated without the need for a flush.
+    pub fn flush_margin(&mut self) {
+        let lsn = if self.buf_free > self.max_buf_free {
+            if self.n_pending_writes > 0 {
+                // A flush is already running. Hopefully, it will provide the necessary free space.
+                0
+            } else {
+                self.lsn
+            }
+        } else {
+            0
+        };
+
+        if lsn > 0 {
+            self.write_up_to(lsn, LogWait::LOG_NO_WAIT, false);
+        }
+    }
+
     pub fn group_write_buf(&self) {}
 
     /// Checks if the log is written upto the given LSN.
@@ -257,13 +463,13 @@ impl Log {
             let mtx = self.mutex.clone();
             let cond_var = self.flushed_event.clone();
             match log_wait {
-                LogWait::LOG_NO_WAIT => {
+                LogWait::LOG_WAIT => {
                     let _guard = cond_var
                         .wait_while(mtx.lock().unwrap(), |_| *flushed)
                         .unwrap();
                     return;
                 }
-                LogWait::LOG_WAIT => {
+                LogWait::LOG_NO_WAIT => {
                     return;
                 }
             }
@@ -401,31 +607,5 @@ impl Log {
         if self.n_pending_checkpoint_writes == 0 {
             self.complete_checkpoint();
         }
-    }
-
-    /// Store a 4-byte checksum in the trailer checksum field of the log block
-    /// before writing it to a log file.
-    /// This checksum is used during recovery to check the consistency of the log block.
-    pub fn block_store_checksum(&mut self, block_offset: usize) {
-        let checksum = self.block_calc_checksum(block_offset);
-        let start = block_offset + IB_FILE_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE;
-        let end = block_offset + IB_FILE_BLOCK_SIZE;
-        self.buf[start..end].copy_from_slice(&checksum.to_le_bytes());
-    }
-
-    /// Retrieve the checksum from the trailer checksum field of the log block.
-    ///
-    /// # Arguments
-    ///
-    /// * `block_offset` - The offset of the block in the log buffer.
-    ///
-    /// # Returns
-    ///
-    /// * The checksum for the block.
-    pub fn block_get_checksum(&self, block_offset: usize) -> u32 {
-        let start = block_offset + IB_FILE_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE;
-        let end = block_offset + IB_FILE_BLOCK_SIZE;
-        let checksum_bytes = &self.buf[start..end];
-        u32::from_le_bytes(checksum_bytes.try_into().unwrap())
     }
 }

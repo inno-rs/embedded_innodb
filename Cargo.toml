@@ -11,4 +11,4 @@ env_logger = "0.11"
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-tokio-uring = "0.4"
+tokio-uring = { version = "0.5.0" }
