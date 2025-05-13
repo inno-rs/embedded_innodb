@@ -208,3 +208,40 @@ pub fn xdes_set_bit(descr: &mut [u8], page_idx: usize, which: usize, val: bool) 
         descr[byte_off] &= !(1 << bit_in_byte);
     }
 }
+
+/// Count how many pages are currently in-use (free-bit == 0)
+pub fn xdes_get_n_used(descr: &[u8]) -> usize {
+    let mut used = 0;
+    for page_idx in 0..FSP_EXTENT_SIZE {
+        if !xdes_get_bit(descr, page_idx, XDES_FREE_BIT) {
+            used += 1;
+        }
+    }
+    used
+}
+
+/// Find the first page index where `which` bit is set, or None if none found
+/// It returns the option usize
+pub fn xdes_find_bit(descr: &[u8], which: usize) -> Option<usize> {
+    for page_idx in 0..FSP_EXTENT_SIZE {
+        if xdes_get_bit(descr, page_idx, which) {
+            return Some(page_idx);
+        }
+    }
+    None
+}
+
+/// Read the 4-byte descriptor state (FULL, FREE, FREE_FRAG...)
+pub fn xdes_get_state(descr: &[u8]) -> usize {
+    let bytes: [u8; 4] = descr[XDES_STATE..XDES_STATE + 4]
+        .try_into()
+        .expect("length checked");
+    u32::from_le_bytes(bytes) as usize
+}
+
+/// Write the 4-byte descriptor state
+pub fn xdes_set_state(descr: &mut [u8], state: usize /*, mtr: &mut Mtr */) {
+    let state_bytes = (state as u32).to_le_bytes();
+    descr[XDES_STATE..XDES_STATE + 4].copy_from_slice(&state_bytes);
+    // TODO: emit MTR log
+}
