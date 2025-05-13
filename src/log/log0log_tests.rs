@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::innodb::innodb0types::IB_FILE_BLOCK_SIZE;
     use crate::log::log0log::Log;
 
     #[test]
@@ -20,5 +21,19 @@ mod tests {
             // Check if the conversion is correct
             assert_eq!(block_no, 2);
         }
+    }
+
+    #[test]
+    fn test_block_store_checksum() {
+        let block_offset = 0;
+        let mut log = Log::new(IB_FILE_BLOCK_SIZE);
+        let checksum = log.block_calc_checksum(block_offset);
+
+        log.block_store_checksum(block_offset);
+
+        let retrieved_checksum = log.block_get_checksum(block_offset);
+
+        // Check if the checksum is stored correctly
+        assert_eq!(checksum, retrieved_checksum);
     }
 }
