@@ -12,6 +12,7 @@ mod innodb;
 mod fsp;
 mod log;
 mod os;
+mod srv;
 
 fn main() {
     println!("Hello, world!");
