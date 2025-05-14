@@ -3,7 +3,10 @@ use crate::data::data0types::{
     DTuple, DATA_ENGLISH, DATA_NOT_NULL, DATA_VARCHAR,
 };
 use crate::dict::dict0types::Index;
-use crate::fil::fil0types::{FIL_PAGE_DATA_END, FSEG_PAGE_DATA};
+use crate::fil::fil0types::{
+    SpaceId, FIL_PAGE_DATA_END, FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
+    FSEG_PAGE_DATA,
+};
 use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
 use crate::mtr::mtr0mtr::Mtr;
 use crate::rem::rem0rec::{
@@ -141,6 +144,42 @@ pub(crate) struct Page {
 impl Page {
     pub fn new(ptr: *mut u8) -> Self {
         Page { ptr }
+    }
+
+    /// Get the tablespace identifier of the page.
+    ///
+    /// # Returns
+    ///
+    /// * The tablespace identifier as a `SpaceId`.
+    pub fn page_get_space_id(&self) -> SpaceId {
+        unsafe {
+            let ptr = self.ptr.add(FIL_PAGE_SPACE_ID) as *const u16;
+            ptr.read_unaligned() as SpaceId
+        }
+    }
+
+    /// Get the file page offset of the page.
+    ///
+    /// # Returns
+    ///
+    /// * The file page offset as a `usize`.
+    pub fn page_get_fil_offset(&self) -> usize {
+        unsafe {
+            let ptr = self.ptr.add(FIL_PAGE_OFFSET) as *const u16;
+            ptr.read_unaligned() as usize
+        }
+    }
+
+    /// Get the page data as a mutable vector.
+    ///
+    /// # Returns
+    ///
+    /// * A mutable reference to the page data as a `Vec<u8>`.
+    pub fn page_get_as_mut_vector(&self) -> &mut Vec<u8> {
+        unsafe {
+            let page_ptr = self.ptr as *mut Vec<u8>;
+            &mut *page_ptr
+        }
     }
 
     /// Set the max transaction id on the page.

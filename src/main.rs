@@ -13,6 +13,7 @@ mod fsp;
 mod log;
 mod os;
 mod srv;
+mod mach;
 
 fn main() {
     println!("Hello, world!");
