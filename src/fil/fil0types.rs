@@ -8,6 +8,18 @@ pub const FSEG_HEADER_SIZE: usize = 10;
 /// Size of page trailer.
 pub const FIL_PAGE_DATA_END: usize = 8;
 
+/// Offset of the 4-byte page number in the page header
+pub const FIL_PAGE_OFFSET: usize = 4;
+
+/// Offset of the 8-byte page LSN in the page header
+pub const FIL_PAGE_LSN: usize = 16;
+
+/// SpaceId of the page.
+pub const FIL_PAGE_SPACE_ID: usize = 34;
+
+/// Number of bytes reserved at end of page for end-LSN/checksum
+pub const FIL_PAGE_END_LSN_CHKSUM: usize = 8;
+
 pub type SpaceId = u32;
 
 pub struct FilNode {

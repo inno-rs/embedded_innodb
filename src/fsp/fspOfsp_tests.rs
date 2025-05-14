@@ -1,7 +1,11 @@
 #[cfg(test)]
 mod tests {
-
+    use crate::fil::fil0types::{
+        FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET,
+        FIL_PAGE_SPACE_ID,
+    };
     use crate::fsp::fspOfsp::*;
+    use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
 
     #[test]
     fn test_init_file_page_low_zero_and_headers() {
@@ -98,7 +102,6 @@ mod tests {
         xdes_set_bit(&mut descr, 7, XDES_CLEAN_BIT, true);
         assert!(xdes_get_bit(&descr, 7, XDES_CLEAN_BIT));
     }
-
 
     #[test]
     fn test_xdes_get_n_used_and_find_bit() {

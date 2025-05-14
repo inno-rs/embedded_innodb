@@ -1,6 +1,10 @@
-
 //! On-disk layout constants for InnoDB FSP
 //!
+
+use crate::fil::fil0types::{
+    FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
+};
+use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
 
 /// Offset of the page data area inside a raw page
 pub const FIL_PAGE_DATA: usize = 38;
@@ -17,20 +21,8 @@ pub const FLST_BASE_NODE_SIZE: usize = 4 + 2 * FIL_ADDR_SIZE;
 /// Size of the list node linking multiple pages (bytes)
 pub const FLST_NODE_SIZE: usize = 2 * FIL_ADDR_SIZE;
 
-/// Default InnoDB page size (bytes)
-pub const UNIV_PAGE_SIZE: usize = 16384;
-
 /// Number of pages per extent in InnoDB
 pub const FSP_EXTENT_SIZE: usize = 64;
-
-/// Offset of the 4-byte page number in the page header
-pub const FIL_PAGE_OFFSET: usize = 4;
-/// Offset of the 8-byte page LSN in the page header
-pub const FIL_PAGE_LSN: usize = 24;
-/// Offset of the 4-byte space ID in the page header
-pub const FIL_PAGE_SPACE_ID: usize = 28;
-/// Number of bytes reserved at end of page for end-LSN/checksum
-pub const FIL_PAGE_END_LSN_CHKSUM: usize = 8;
 
 /// Compute how many bytes are needed to store the given number of bits
 #[inline]
@@ -71,8 +63,10 @@ pub const FSEG_FRAG_ARR_N_SLOTS: usize = FSP_EXTENT_SIZE / 2;
 pub const FSEG_FRAG_SLOT_SIZE: usize = 4;
 
 // Inode size and per-page count
-pub const FSEG_INODE_SIZE: usize = 16 + 3 * FLST_BASE_NODE_SIZE + FSEG_FRAG_ARR_N_SLOTS * FSEG_FRAG_SLOT_SIZE;
-pub const FSP_SEG_INODES_PER_PAGE: usize = (UNIV_PAGE_SIZE - FSEG_ARR_OFFSET - 10) / FSEG_INODE_SIZE;
+pub const FSEG_INODE_SIZE: usize =
+    16 + 3 * FLST_BASE_NODE_SIZE + FSEG_FRAG_ARR_N_SLOTS * FSEG_FRAG_SLOT_SIZE;
+pub const FSP_SEG_INODES_PER_PAGE: usize =
+    (UNIV_PAGE_SIZE - FSEG_ARR_OFFSET - 10) / FSEG_INODE_SIZE;
 pub const FSEG_MAGIC_N_VALUE: usize = 97937874;
 
 // Fillfactor and fragment limits
@@ -93,10 +87,9 @@ pub const XDES_FREE: usize = 1;
 pub const XDES_FREE_FRAG: usize = 2;
 pub const XDES_FULL_FRAG: usize = 3;
 pub const XDES_FSEG: usize = 4;
-pub const XDES_SIZE: usize = XDES_BITMAP + ut_bits_in_bytes(FSP_EXTENT_SIZE * XDES_BITS_PER_PAGE);
+pub const XDES_SIZE: usize =
+    XDES_BITMAP + ut_bits_in_bytes(FSP_EXTENT_SIZE * XDES_BITS_PER_PAGE);
 pub const XDES_ARR_OFFSET: usize = FSP_HEADER_OFFSET + FSP_HEADER_SIZE;
-
-
 
 /// In debug builds, mark the memory as invalid (for sanitizer/debug hooks).
 #[cfg(debug_assertions)]
@@ -109,14 +102,12 @@ fn univ_mem_invalid(frame: &mut [u8]) {
 #[cfg(not(debug_assertions))]
 fn univ_mem_invalid(_frame: &mut [u8]) {}
 
-
 // Page initialization routines
 /// Wraps `init_file_page_low` in a mini-transaction and logs the operation
 /// Direct port of InnoDB's `fsp_init_file_page_low`
 ///
 /// https://docs.google.com/document/d/17Cv1R1ELip8PYuCrQFgbkxe1KRfgsjWFyCje9bS9dRI/edit?tab=t.0#heading=h.kiodsa4o1rj7
 pub fn init_file_page_low(frame: &mut [u8], page_no: u32, space_id: u32) {
-
     univ_mem_invalid(frame);
 
     // -- Zero the entire page
@@ -145,7 +136,6 @@ pub fn init_file_page_low(frame: &mut [u8], page_no: u32, space_id: u32) {
         .copy_from_slice(&space_id.to_be_bytes());
 }
 
-
 // Wrapper of  method init_file_page_low().
 pub fn init_file_page(
     frame: &mut [u8],
@@ -157,12 +147,10 @@ pub fn init_file_page(
     // TODO: emit redo-log record using `mlog_write_initial_log_record`
 }
 
-
 /// Initialize one extent descriptor (40 bytes):
 /// - bytes 24..40: set every byte to 0xFF → all 64 pages “free & clean”
 /// - bytes 20..24: write the 4‐byte state = XDES_FREE (little‐endian)
 pub fn xdes_init(descr: &mut [u8]) {
-
     assert!(
         descr.len() >= XDES_SIZE,
         "extent-descriptor buffer must be at least {} bytes",
@@ -178,11 +166,8 @@ pub fn xdes_init(descr: &mut [u8]) {
 
     // Byte 20 -23(4 bytes) is the state of extent
     descr[off..off + 4].copy_from_slice(&state_bytes);
-     // TODO: emit corresponding MTR log records here
-
-
+    // TODO: emit corresponding MTR log records here
 }
-
 
 /// Read a single bit from the extent descriptor bitmap
 /// `page_idx` is 0..63, `which` is either XDES_FREE_BIT or XDES_CLEAN_BIT
@@ -198,7 +183,12 @@ pub fn xdes_get_bit(descr: &[u8], page_idx: usize, which: usize) -> bool {
 /// Set or clear a single bit in the extent descriptor bitmap
 ///
 /// TODO test pending
-pub fn xdes_set_bit(descr: &mut [u8], page_idx: usize, which: usize, val: bool) {
+pub fn xdes_set_bit(
+    descr: &mut [u8],
+    page_idx: usize,
+    which: usize,
+    val: bool,
+) {
     let bit = page_idx * XDES_BITS_PER_PAGE + which;
     let byte_off = XDES_BITMAP + (bit / 8);
     let bit_in_byte = bit % 8;
@@ -233,14 +223,16 @@ pub fn xdes_find_bit(descr: &[u8], which: usize) -> Option<usize> {
 
 /// Read the 4-byte descriptor state (FULL, FREE, FREE_FRAG...)
 pub fn xdes_get_state(descr: &[u8]) -> usize {
-    let bytes: [u8; 4] = descr[XDES_STATE..XDES_STATE + 4]
-        .try_into()
-        .expect("length checked");
+    let bytes: [u8; 4] =
+        descr[XDES_STATE..XDES_STATE + 4].try_into().expect("length checked");
     u32::from_le_bytes(bytes) as usize
 }
 
 /// Write the 4-byte descriptor state
-pub fn xdes_set_state(descr: &mut [u8], state: usize /*, mtr: &mut Mtr */) {
+pub fn xdes_set_state(
+    descr: &mut [u8],
+    state: usize, /*, mtr: &mut Mtr */
+) {
     let state_bytes = (state as u32).to_le_bytes();
     descr[XDES_STATE..XDES_STATE + 4].copy_from_slice(&state_bytes);
     // TODO: emit MTR log
