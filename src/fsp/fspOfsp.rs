@@ -237,3 +237,30 @@ pub fn xdes_set_state(
     descr[XDES_STATE..XDES_STATE + 4].copy_from_slice(&state_bytes);
     // TODO: emit MTR log
 }
+
+/// Allocates one free page from the given extent descriptor.
+/// Returns `Some(global_page_no)` or `None` if the extent is full.
+pub fn alloc_free_page(
+    descr: &mut [u8],
+    extent_no: u32,
+) -> Option<u32>{
+    // Find a first free page
+    /**
+     NOTE: ? on an Option is the idiomatic way in Rust to say “if this is missing,
+    bail out of my function with None.”
+    */
+    let page_idx = xdes_find_bit(descr, XDES_FREE_BIT)?;
+    // Mark it as used
+    xdes_set_bit(descr, page_idx, XDES_FREE_BIT, false);
+   // Update the extent state
+    let used = xdes_get_n_used(descr);
+    let new_state =  if used == FSP_EXTENT_SIZE {
+        XDES_FULL_FRAG
+    } else {
+        XDES_FREE_FRAG
+    };
+    xdes_set_state(descr, new_state);
+    // compute and return global page number
+    Some(extent_no*FSP_EXTENT_SIZE as u32 + page_idx as u32)
+
+}
