@@ -130,4 +130,62 @@ mod tests {
             assert_eq!(xdes_find_bit(&descr, XDES_FREE_BIT), None);
         }
     }
+
+    #[test]
+    fn test_alloc_free_page_basic_and_state() {
+        let mut descr = vec![0u8; XDES_SIZE];
+        // Initialize the descriptor (all-free)
+        xdes_init(&mut descr);
+
+        let extent_no = 5;
+        // First allocation should give page 0 of extent #5
+        let first = alloc_free_page(&mut descr, extent_no)
+            .expect("should allocate page 0");
+        assert_eq!(first, extent_no * FSP_EXTENT_SIZE as u32 + 0);
+
+        // After 1 page used, state must be FREE_FRAG
+        assert_eq!(
+            xdes_get_state(&descr),
+            XDES_FREE_FRAG as usize,
+            "state after one alloc"
+        );
+    }
+
+    #[test]
+    fn test_alloc_free_page_exhaustion_and_full_state() {
+        let mut descr = vec![0u8; XDES_SIZE];
+        xdes_init(&mut descr);
+
+        let extent_no = 7;
+        // Allocate all 64 pages
+        for idx in 0..FSP_EXTENT_SIZE {
+            let pg = alloc_free_page(&mut descr, extent_no)
+                .unwrap_or_else(|| panic!("alloc #{} failed", idx));
+            assert_eq!(
+                pg,
+                extent_no * FSP_EXTENT_SIZE as u32 + idx as u32,
+                "incorrect global page number"
+            );
+
+            // For all but the last page, state stays FREE_FRAG
+            if idx < FSP_EXTENT_SIZE - 1 {
+                assert_eq!(
+                    xdes_get_state(&descr),
+                    XDES_FREE_FRAG as usize,
+                    "state after alloc #{} should be FREE_FRAG",
+                    idx + 1
+                );
+            } else {
+                // After the last page, state flips to FULL_FRAG
+                assert_eq!(
+                    xdes_get_state(&descr),
+                    XDES_FULL_FRAG as usize,
+                    "state after last alloc should be FULL_FRAG"
+                );
+            }
+        }
+
+        // Now the extent is full; the next alloc returns None
+        assert!(alloc_free_page(&mut descr, extent_no).is_none());
+    }
 }

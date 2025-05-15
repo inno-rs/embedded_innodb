@@ -238,6 +238,16 @@ pub fn xdes_set_state(
     // TODO: emit MTR log
 }
 
+/// Returns true if all 64 pages are free.
+pub fn xdes_is_free(descr: &[u8]) -> bool {
+    xdes_get_state(descr) == XDES_FREE
+}
+
+/// Returns true if no pages are free.
+pub fn xdes_is_full(descr: &[u8]) -> bool {
+    xdes_get_state(descr) == XDES_FULL_FRAG
+}
+
 /// Allocates one free page from the given extent descriptor.
 /// Returns `Some(global_page_no)` or `None` if the extent is full.
 pub fn alloc_free_page(
