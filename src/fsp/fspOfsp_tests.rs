@@ -9,74 +9,72 @@ mod tests {
 
     #[test]
     fn test_init_file_page_low_zero_and_headers() {
-        // Using Rust Vec Macro. Making a slice of 16 KB where each entry is 165 (0xA5u8)
         let mut buf = vec![0xA5u8; UNIV_PAGE_SIZE];
+        let mut desc = ExtentDescriptor::new(&mut buf);
         let page_no: u32 = 42;
         let space_id: u32 = 7;
-        init_file_page_low(&mut buf, page_no, space_id);
 
-        // Verify page number at offset
+        desc.init_file_page_low(page_no, space_id);
+
+        // Page‐number (4 bytes, big‐endian)
         assert_eq!(
             &buf[FIL_PAGE_OFFSET..FIL_PAGE_OFFSET + 4],
             &page_no.to_be_bytes()
         );
 
-        // Verify first half of LSN area is zero
-        assert!(buf[FIL_PAGE_LSN..FIL_PAGE_SPACE_ID].iter().all(|&b| b == 0));
+        // LSN field (bytes FIL_PAGE_LSN .. FIL_PAGE_SPACE_ID) must be zero
+        assert!(buf[FIL_PAGE_LSN..FIL_PAGE_SPACE_ID]
+            .iter()
+            .all(|&b| b == 0));
 
-        // Verify space ID bytes (overlaps second half of LSN region)
+        // Space‐ID field
         assert_eq!(
             &buf[FIL_PAGE_SPACE_ID..FIL_PAGE_SPACE_ID + 4],
             &space_id.to_be_bytes()
         );
 
-        // Verify end-LSN/checksum trailer is zero
+        // End‐LSN/checksum trailer
         let trailer_start = UNIV_PAGE_SIZE - FIL_PAGE_END_LSN_CHKSUM;
-        assert!(
-            buf[trailer_start..trailer_start + FIL_PAGE_END_LSN_CHKSUM]
-                .iter()
-                .all(|&b| b == 0)
-        );
+        assert!(buf[trailer_start..trailer_start + FIL_PAGE_END_LSN_CHKSUM]
+            .iter()
+            .all(|&b| b == 0));
 
-        // Verify that all other bytes outside these regions are zero
+        // Everything else should also be zero
         for (i, &byte) in buf.iter().enumerate() {
-            let in_page_no = i >= FIL_PAGE_OFFSET && i < FIL_PAGE_OFFSET + 4;
-            let in_lsn_start = i >= FIL_PAGE_LSN && i < FIL_PAGE_SPACE_ID;
-            let in_space_id =
-                i >= FIL_PAGE_SPACE_ID && i < FIL_PAGE_SPACE_ID + 4;
-            let in_trailer = i >= trailer_start;
-            if in_page_no || in_lsn_start || in_space_id || in_trailer {
+            let in_page_no   = (FIL_PAGE_OFFSET..FIL_PAGE_OFFSET + 4).contains(&i);
+            let in_lsn       = (FIL_PAGE_LSN..FIL_PAGE_SPACE_ID).contains(&i);
+            let in_space_id  = (FIL_PAGE_SPACE_ID..FIL_PAGE_SPACE_ID + 4).contains(&i);
+            let in_trailer   = i >= trailer_start;
+            if in_page_no || in_lsn || in_space_id || in_trailer {
                 continue;
             }
             assert_eq!(
                 byte, 0,
-                "byte at offset {} should be zero, found 0x{:02x}",
-                i, byte
+                "byte at offset {} should be zero, found 0x{:02x}", i, byte
             );
         }
     }
 
     #[test]
     fn test_xdes_init() {
-        let mut descr = vec![0xAAu8; XDES_SIZE];
-        xdes_init(&mut descr);
+        let mut buf = vec![0xAAu8; XDES_SIZE];
+        let mut desc = ExtentDescriptor::new(&mut buf);
+        desc.xdes_init();
 
-        let expected_state = (XDES_FREE as u32).to_le_bytes();
-        assert_eq!(
-            &descr[XDES_STATE..XDES_STATE + 4],
-            &expected_state,
-            "state field incorrect"
-        );
+        // state == XDES_FREE_STATE
+        let mut state_bytes = [0u8; 4];
+        state_bytes.copy_from_slice(&buf[XDES_STATE..XDES_STATE + 4]);
+        assert_eq!(u32::from_le_bytes(state_bytes) as usize, XDES_FREE);
 
-        assert!(
-            descr[XDES_BITMAP..XDES_SIZE].iter().all(|&b| b == 0xFF),
-            "bitmap not fully initialized to 0xFF"
-        );
+        // bitmap bytes all 0xFF
+        assert!(buf[XDES_BITMAP..XDES_SIZE]
+            .iter()
+            .all(|&b| b == 0xFF));
 
-        // 5) Ensure bytes outside state+bitmap are untouched (still 0xAA)
-        for (i, &b) in descr.iter().enumerate() {
-            let in_state = i >= XDES_STATE && i < XDES_STATE + 4;
-            let in_bitmap = i >= XDES_BITMAP && i < XDES_SIZE;
+        // other bytes untouched
+        for (i, &b) in buf.iter().enumerate() {
+            let in_state  = (XDES_STATE..XDES_STATE + 4).contains(&i);
+            let in_bitmap = (XDES_BITMAP..XDES_SIZE).contains(&i);
             if in_state || in_bitmap {
                 continue;
             }
@@ -90,102 +88,84 @@ mod tests {
 
     #[test]
     fn test_xdes_get_set_bit() {
-        let mut descr = vec![0u8; XDES_SIZE];
-        // Free bit operations at page 5
-        assert!(!xdes_get_bit(&descr, 5, XDES_FREE_BIT));
-        xdes_set_bit(&mut descr, 5, XDES_FREE_BIT, true);
-        assert!(xdes_get_bit(&descr, 5, XDES_FREE_BIT));
-        xdes_set_bit(&mut descr, 5, XDES_FREE_BIT, false);
-        assert!(!xdes_get_bit(&descr, 5, XDES_FREE_BIT));
-        // Clean bit operations at page 7
-        assert!(!xdes_get_bit(&descr, 7, XDES_CLEAN_BIT));
-        xdes_set_bit(&mut descr, 7, XDES_CLEAN_BIT, true);
-        assert!(xdes_get_bit(&descr, 7, XDES_CLEAN_BIT));
+        let mut buf = vec![0u8; XDES_SIZE];
+        let mut desc = ExtentDescriptor::new(&mut buf);
+
+        // Free‐bit on page 5
+        assert!(!desc.get_bit(5, XDES_FREE_BIT));
+        desc.set_bit(5, XDES_FREE_BIT, true);
+        assert!(desc.get_bit(5, XDES_FREE_BIT));
+        desc.set_bit(5, XDES_FREE_BIT, false);
+        assert!(!desc.get_bit(5, XDES_FREE_BIT));
+
+        // Clean‐bit on page 7
+        assert!(!desc.get_bit(7, XDES_CLEAN_BIT));
+        desc.set_bit(7, XDES_CLEAN_BIT, true);
+        assert!(desc.get_bit(7, XDES_CLEAN_BIT));
     }
 
     #[test]
-    fn test_xdes_get_n_used_and_find_bit() {
-        #[test]
-        fn test_xdes_get_n_used_and_find_bit() {
-            let mut descr = vec![0u8; XDES_SIZE];
-            // Initialize all as free
-            xdes_init(&mut descr);
-            // No pages are used
-            assert_eq!(xdes_get_n_used(&descr), 0);
-            // First free page is index 0
-            assert_eq!(xdes_find_bit(&descr, XDES_FREE_BIT), Some(0));
+    fn test_used_count_and_find_bit() {
+        let mut buf = vec![0u8; XDES_SIZE];
+        let mut desc = ExtentDescriptor::new(&mut buf);
 
-            // Mark page 0 as used
-            xdes_set_bit(&mut descr, 0, XDES_FREE_BIT, false);
-            // Now one used page
-            assert_eq!(xdes_get_n_used(&descr), 1);
-            // Next free page is index 1
-            assert_eq!(xdes_find_bit(&descr, XDES_FREE_BIT), Some(1));
+        // all free after init
+        desc.xdes_init();
+        assert_eq!(desc.used_count(), 0);
+        assert_eq!(desc.find_bit(XDES_FREE_BIT), Some(0));
 
-            // If all pages marked used, find_bit returns None
-            for idx in 1..FSP_EXTENT_SIZE {
-                xdes_set_bit(&mut descr, idx, XDES_FREE_BIT, false);
-            }
-            assert_eq!(xdes_get_n_used(&descr), FSP_EXTENT_SIZE);
-            assert_eq!(xdes_find_bit(&descr, XDES_FREE_BIT), None);
+        // mark page 0 used
+        desc.set_bit(0, XDES_FREE_BIT, false);
+        assert_eq!(desc.used_count(), 1);
+        assert_eq!(desc.find_bit(XDES_FREE_BIT), Some(1));
+
+        // mark all remaining used
+        for i in 1..FSP_EXTENT_SIZE {
+            desc.set_bit(i, XDES_FREE_BIT, false);
         }
+        assert_eq!(desc.used_count(), FSP_EXTENT_SIZE);
+        assert_eq!(desc.find_bit(XDES_FREE_BIT), None);
     }
 
     #[test]
-    fn test_alloc_free_page_basic_and_state() {
-        let mut descr = vec![0u8; XDES_SIZE];
-        // Initialize the descriptor (all-free)
-        xdes_init(&mut descr);
+    fn test_alloc_page_basic_and_state() {
+        let mut buf = vec![0u8; XDES_SIZE];
+        let mut desc = ExtentDescriptor::new(&mut buf);
+        desc.xdes_init();
 
         let extent_no = 5;
-        // First allocation should give page 0 of extent #5
-        let first = alloc_free_page(&mut descr, extent_no)
-            .expect("should allocate page 0");
-        assert_eq!(first, extent_no * FSP_EXTENT_SIZE as u32 + 0);
+        let first = desc.alloc_page(extent_no)
+            .expect("should get a page");
+        assert_eq!(first, extent_no * FSP_EXTENT_SIZE as u32);
 
-        // After 1 page used, state must be FREE_FRAG
-        assert_eq!(
-            xdes_get_state(&descr),
-            XDES_FREE_FRAG as usize,
-            "state after one alloc"
-        );
+        // after one alloc, descriptor must be fragmented
+        assert_eq!(desc.state(), XDES_FREE_FRAG);
     }
 
     #[test]
-    fn test_alloc_free_page_exhaustion_and_full_state() {
-        let mut descr = vec![0u8; XDES_SIZE];
-        xdes_init(&mut descr);
+    fn test_alloc_page_exhaustion_and_full_state() {
+        let mut buf = vec![0u8; XDES_SIZE];
+        let mut desc = ExtentDescriptor::new(&mut buf);
+        desc.xdes_init();
 
         let extent_no = 7;
-        // Allocate all 64 pages
-        for idx in 0..FSP_EXTENT_SIZE {
-            let pg = alloc_free_page(&mut descr, extent_no)
-                .unwrap_or_else(|| panic!("alloc #{} failed", idx));
-            assert_eq!(
-                pg,
-                extent_no * FSP_EXTENT_SIZE as u32 + idx as u32,
-                "incorrect global page number"
-            );
+        // allocate all 64 pages
+        for i in 0..FSP_EXTENT_SIZE {
+            let pg = desc.alloc_page(extent_no)
+                .unwrap_or_else(|| panic!("alloc #{} failed", i));
+            assert_eq!(pg, extent_no * FSP_EXTENT_SIZE as u32 + i as u32);
 
-            // For all but the last page, state stays FREE_FRAG
-            if idx < FSP_EXTENT_SIZE - 1 {
-                assert_eq!(
-                    xdes_get_state(&descr),
-                    XDES_FREE_FRAG as usize,
-                    "state after alloc #{} should be FREE_FRAG",
-                    idx + 1
-                );
+            // until the last, state remains FREE_FRAG
+            if i < FSP_EXTENT_SIZE - 1 {
+                assert_eq!(desc.state(), XDES_FREE_FRAG);
             } else {
-                // After the last page, state flips to FULL_FRAG
-                assert_eq!(
-                    xdes_get_state(&descr),
-                    XDES_FULL_FRAG as usize,
-                    "state after last alloc should be FULL_FRAG"
-                );
+                // after last, state flips to FULL_FRAG
+                assert_eq!(desc.state(), XDES_FULL_FRAG);
             }
         }
-
-        // Now the extent is full; the next alloc returns None
-        assert!(alloc_free_page(&mut descr, extent_no).is_none());
+        // now full: next alloc → None
+        assert!(desc.alloc_page(extent_no).is_none());
     }
 }
+
+
