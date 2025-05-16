@@ -14,6 +14,7 @@ mod log;
 mod os;
 mod srv;
 mod mach;
+mod fut;
 
 fn main() {
     println!("Hello, world!");
