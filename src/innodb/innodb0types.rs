@@ -10,3 +10,15 @@ pub const UNIV_SQL_NULL: usize = usize::MAX;
 
 pub type Lsn = u64;
 pub const IB_FILE_BLOCK_SIZE: usize = 512;
+
+pub type SpaceId = u32;
+pub type PageNo = u32;
+pub type TxnId = u64;
+
+#[derive(Hash, Clone, Copy, Eq, PartialEq)]
+pub struct PageId {
+    /// The space id of the page.
+    space_id: SpaceId,
+    /// The page number of the page.
+    page_no: PageNo,
+}

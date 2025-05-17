@@ -50,3 +50,5 @@ pub struct Column {
     /// Type of the column.
     pub d_type: DType,
 }
+
+pub struct Table {}
