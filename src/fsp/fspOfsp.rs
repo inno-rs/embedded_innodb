@@ -111,7 +111,8 @@ impl<'a> ExtentDescriptor<'a> {
 
     /// No-op in non-debug builds
     #[cfg(not(debug_assertions))]
-    fn univ_mem_invalid(_frame: &mut [u8]) {}
+    fn univ_mem_invalid(&mut self) {}
+
 
 
     pub fn init_file_page_low(&mut self, page_no: u32, space_id: u32) {
