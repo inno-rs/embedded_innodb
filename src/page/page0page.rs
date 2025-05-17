@@ -446,7 +446,7 @@ impl Page {
         mtr: Option<Mtr>,
     ) -> Page {
         let ptr = buf.getFrame();
-        let page = Page::new(ptr);
+        let page = Page::new( ptr);
 
         if !mtr.is_none() {
             page.page_create_write_log(buf, mtr.unwrap());

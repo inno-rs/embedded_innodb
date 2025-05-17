@@ -1,3 +1,4 @@
+pub(crate) use crate::innodb::innodb0types::SpaceId;
 use crate::os::os0file::OsFile;
 
 /** Start of the data on the page */
@@ -19,8 +20,6 @@ pub const FIL_PAGE_SPACE_ID: usize = 34;
 
 /// Number of bytes reserved at end of page for end-LSN/checksum
 pub const FIL_PAGE_END_LSN_CHKSUM: usize = 8;
-
-pub type SpaceId = u32;
 
 pub struct FilNode {
     /// Path fo the file.
