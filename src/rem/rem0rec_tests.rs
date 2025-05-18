@@ -94,4 +94,7 @@ mod tests {
             assert_eq!(heap_no_val, result);
         }
     }
+
+    #[test]
+    fn test_rec_to_string() {}
 }

@@ -3,6 +3,7 @@ use crate::dict::dict0types::Index;
 use crate::innodb::innodb0types::{UNIV_PAGE_SIZE, UNIV_SQL_NULL};
 use crate::page::page0page::Page;
 use log::info;
+use std::ptr::{null, null_mut};
 use std::{ptr, slice};
 
 /// Info bit denoting the predefined minimum record:
@@ -18,6 +19,10 @@ pub const REC_STATUS_INFIMUM: usize = 2;
 pub const REC_STATUS_SUPREMUM: usize = 3;
 
 pub const REC_N_EXTRA_BYTES: usize = 6;
+
+/// Maximum length of the data in the physical record if the offsets are in 1-byte format.
+pub const REC_1BYTE_OFFS_LIMIT: usize = 0x7F;
+
 /***
 The record header is 6 bytes long and contains the following fields:
 
@@ -76,6 +81,12 @@ pub const REC_INFO_BITS_SHIFT: usize = 4;
 /// The following masks are used to filter the SQL null bit from the one byte and two byte offsets.
 pub const REC_1BYTE_SQL_NULL_MASK: usize = 0x80;
 
+/// Record data enum.
+pub enum RecordData {
+    Data(String),
+    SqlNullData(),
+}
+
 #[derive(PartialEq, Debug, Copy, Clone)]
 pub struct Record {
     ptr: *mut u8,
@@ -88,6 +99,43 @@ impl Record {
 
     pub fn get_ptr(&self) -> *const u8 {
         self.ptr
+    }
+
+    /// Copies the first n fields of the physical record to a new physical record.
+    ///
+    /// # Arguments
+    ///
+    /// `index`: The index associated with the record.
+    /// `n_fields`: Number of fields to copy.
+    ///
+    /// # Return
+    ///
+    /// Vector containing the copied record.
+    pub fn rec_copy_prefix_to_buf(
+        &self,
+        index: &Index,
+        n_fields: usize,
+    ) -> Vec<u8> {
+        let area_start = REC_N_EXTRA_BYTES + n_fields;
+        let area_end = self.rec_get_field_start_offs(n_fields);
+
+        let prefix_length = area_start + area_end;
+
+        let mut buf: Vec<u8> = vec![0; prefix_length];
+
+        unsafe {
+            buf.as_mut_ptr()
+                .copy_from(self.ptr.sub(area_start), prefix_length);
+        }
+
+        let rec = Record::new(buf.as_mut_ptr());
+        rec.rec_set_n_fields(n_fields);
+
+        buf
+    }
+
+    pub fn rec_copy(&self) -> Record {
+        Record::new(null_mut())
     }
 
     /// Aligns the record pointer to the specified offset.
@@ -195,10 +243,13 @@ impl Record {
                 if field.dfield_is_null() {
                     let dtype = field.dfield_get_type();
                     let length = dtype.dtype_get_sql_null_size();
-                    // Write an SQL null field full of zeros.
-                    unsafe {
-                        let ptr = self.ptr.add(end_offset);
-                        ptr::write_bytes(ptr, 0, length);
+
+                    if length != 0 {
+                        // Write an SQL null field full of zeros.
+                        unsafe {
+                            let ptr = self.ptr.add(end_offset);
+                            ptr::write_bytes(ptr, 0, length);
+                        }
                     }
 
                     end_offset += length;
@@ -392,6 +443,18 @@ impl Record {
         }
     }
 
+    /// Reads the start offset the data field in the record.
+    /// The start of the SQL null field is the end offset of the previous non-null field,
+    /// or 0. If n is the number of last field + 1,
+    /// then the end offset of the last field is returned.
+    pub fn rec_get_field_start_offs(&self, field_no: usize) -> usize {
+        if field_no == 0 {
+            0
+        } else {
+            self.rec_1_get_field_start_offs(field_no)
+        }
+    }
+
     /// Sets the field end for the nth field if the record is stored in the 1-byte format.
     ///
     /// # Arguments
@@ -502,6 +565,15 @@ impl Record {
         0
     }
 
+    /// This function returns the data size of a physical record which is the sum of field lengths. SQL null fields are counted as lengths of zero. The value returned by the function is difference between record origin and record end.
+    ///
+    /// # Returns
+    ///
+    ///
+    pub fn rec_get_data_size(&self) -> usize {
+        self.rec_1_get_field_start_offs(self.rec_get_n_fields())
+    }
+
     /// Gets the data of the nth field in the physical record.
     ///
     /// # Arguments
@@ -512,12 +584,92 @@ impl Record {
     ///
     /// * The data of the nth field as a String.
     /// * `None` if the field number is out of range.
-    pub fn rec_get_data(&self, n_field: usize) -> Option<String> {
+    pub fn rec_get_data(&self, n_field: usize) -> Option<RecordData> {
         let (offset, length) = self.rec_get_nth_field_offs(n_field);
         println!("rec_get_data: offset={}, length={}", offset, length);
+
+        if length == UNIV_SQL_NULL {
+            return Some(RecordData::SqlNullData());
+        }
+
         unsafe {
             let bytes = slice::from_raw_parts(self.ptr.add(offset), length);
-            std::str::from_utf8(bytes).map(|s| s.to_string()).ok()
+            let data = std::str::from_utf8(bytes)
+                .map(|s| s.to_string())
+                .ok()
+                .unwrap();
+            Some(RecordData::Data(data))
         }
+    }
+
+    /// Converts a physical record to string.
+    ///
+    pub fn rec_to_string(&self) -> String {
+        let n_fields = self.rec_get_n_fields();
+        let info_bits = self.rec_get_info_bits();
+
+        let mut output_builder = String::new();
+        output_builder.push_str(&format!(
+            "PHYSICAL RECORD: n_fields {}; {}-byte offsets; info bits {}",
+            n_fields, n_fields, info_bits
+        ));
+
+        for n_field in 0..n_fields {
+            output_builder.push_str(&format!(" {}: ", n_field));
+
+            let data = self.rec_get_data(n_field);
+            match data {
+                None => {
+                    panic!("rec_to_string: data out of range");
+                }
+                Some(d) => match d {
+                    RecordData::Data(data) => output_builder
+                        .push_str(&format!(" {}; len: {} ", data, data.len())),
+                    RecordData::SqlNullData() => {
+                        output_builder
+                            .push_str(&format!(" SQL NULL, len: {}", 5));
+                    }
+                },
+            }
+        }
+
+        output_builder
+    }
+
+    /// Returns the extra size of a physical record if we know its data size and number of fields.
+    ///
+    ///  # Arguments
+    ///
+    /// * `data_size`: Total size of all the data fields.
+    /// * `n_fields`: Number of fields.
+    /// * `n_ext` Number of external fields.
+    ///
+    /// # Return
+    ///
+    /// Total extra size of the record.
+    fn rec_get_converted_extra_size(
+        data_size: usize,
+        n_fields: usize,
+        n_ext: usize,
+    ) -> usize {
+        if n_ext == 0 && data_size <= REC_1BYTE_OFFS_LIMIT {
+            return REC_N_EXTRA_BYTES + n_fields;
+        }
+
+        todo!("implement for 2 byte offset")
+    }
+
+    /// Returns the total size of the physical record.
+    pub fn rec_offs_size(&self) -> usize {
+        let n_field = self.rec_get_n_fields();
+        let mut end_offset_n_field = self.rec_1_get_field_end_info(n_field);
+
+        if end_offset_n_field & REC_1BYTE_SQL_NULL_MASK
+            == REC_1BYTE_SQL_NULL_MASK
+        {
+            end_offset_n_field &= !REC_1BYTE_SQL_NULL_MASK;
+        }
+
+        REC_N_EXTRA_BYTES + n_field + end_offset_n_field
     }
 }

@@ -12,6 +12,7 @@ use crate::mtr::mtr0mtr::Mtr;
 use crate::rem::rem0rec::{
     Record, REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM,
 };
+use crate::ut::ut0dbg::ut_ad;
 use crate::utils::TxnId;
 use log::info;
 
@@ -125,6 +126,11 @@ pub const PAGE_SAME_REC: usize = 2;
 pub const PAGE_SAME_PAGE: usize = 3;
 pub const PAGE_NO_DIRECTION: usize = 4;
 
+/// The maximum and the minimum number of records owned by a directory slot.
+/// The number may drop below the minimum in the first and last slot in the directory.
+pub const PAGE_DIR_SLOT_MAX_N_OWNED: usize = 8;
+pub const PAGE_DIR_SLOT_MIN_N_OWNED: usize = 4;
+
 pub const PAGE_SIZE: usize = 16 * 1024;
 
 /*	PAGE DIRECTORY */
@@ -142,8 +148,27 @@ pub(crate) struct Page {
 }
 
 impl Page {
+    /// Creates a new Page instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `ptr`: A raw pointer to the page data.
+    ///
+    /// # Returns
+    ///
+    /// * A new `Page` instance.
     pub fn new(ptr: *mut u8) -> Self {
         Page { ptr }
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn page_rec_check(&self, rec: Record) -> bool {
+        ut_ad!(
+            self.page_offset(rec) <= self.page_header_get_field(PAGE_HEAP_TOP)
+        );
+        ut_ad!(self.page_offset(rec) >= PAGE_DATA);
+
+        true
     }
 
     /// Get the tablespace identifier of the page.
@@ -155,6 +180,22 @@ impl Page {
         unsafe {
             let ptr = self.ptr.add(FIL_PAGE_SPACE_ID) as *const u16;
             ptr.read_unaligned() as SpaceId
+        }
+    }
+
+    /// Set the tablespace identifier of the page.
+    ///
+    /// # Arguments
+    ///
+    /// * `space_id`: The tablespace identifier to set as a `SpaceId`.
+    ///
+    /// # Returns
+    ///
+    /// * `()`: This function does not return a value.
+    pub fn page_set_space_id(&self, space_id: SpaceId) {
+        unsafe {
+            let ptr = self.ptr.add(FIL_PAGE_SPACE_ID) as *mut u16;
+            ptr.write_unaligned(space_id as u16);
         }
     }
 
@@ -187,9 +228,11 @@ impl Page {
     /// # Arguments
     ///
     /// * `max_trx_id`: The maximum transaction id to set.
-    /// * `Mtr`: An optional transaction object.
+    /// * `mtr`: An optional transaction object.
     ///
-    /// Returns: ()
+    /// # Returns
+    ///
+    /// * `()`: This function does not return a value.
     pub fn set_max_trx_id(&self, max_trx_id: TxnId, mtr: Option<Mtr>) {
         let page = self.ptr;
         /* It is not necessary to write this change to the redo log as
@@ -225,7 +268,7 @@ impl Page {
     ///
     /// # Returns
     /// The amount of free space in bytes.
-    pub fn page_get_free_space_of_empty(&self) -> usize {
+    pub fn page_get_free_space_of_empty() -> usize {
         // UNIV_PAGE_SIZE = Page Size
         // PAGE_SUPREMUM_END = Offset of the supremum record end.
         // This is where everything's related to the header ends.
@@ -284,6 +327,57 @@ impl Page {
         }
     }
 
+    /// Set the header of the free list.
+    ///
+    /// # Arguments
+    ///
+    /// * `record`: The record to set as the head of the free list.
+    ///
+    /// # Returns
+    ///
+    /// * `()`: This function does not return a value.
+    pub fn page_header_set_page_free(&self, record: Record) {
+        let offset = self.page_offset(record);
+        unsafe {
+            let ptr = self.ptr.add(PAGE_HEADER + PAGE_FREE) as *mut u16;
+            ptr.write_unaligned(offset as u16)
+        }
+    }
+
+    /// Get the head of the free list.
+    ///
+    /// # Returns
+    ///
+    /// * `Option<Record>`: The head record of the free list if it exists, or `None` if the free list is empty.
+    pub fn page_header_get_page_free(&self) -> Option<Record> {
+        let offset = self.page_header_get_field(PAGE_FREE);
+        if offset == 0 {
+            None
+        } else {
+            unsafe { Some(Record::new(self.ptr.add(offset))) }
+        }
+    }
+
+    /// Retrieves the number of records in the page.
+    ///
+    /// # Returns
+    ///
+    /// * The number of records in the page as a `usize`.
+    pub fn page_get_n_recs(&self) -> usize {
+        self.page_header_get_field(PAGE_N_RECS)
+    }
+
+    /// Allocates memory from the page heap.
+    ///
+    /// # Arguments
+    ///
+    /// * `need`: The amount of memory needed in bytes.
+    ///
+    /// # Returns
+    ///
+    /// * This function currently has no implementation and returns nothing.
+    pub fn page_mem_alloc_heap(&self, need: usize) {}
+
     /// Checks if the current page is a leaf node.
     ///
     /// # Returns
@@ -295,6 +389,14 @@ impl Page {
         level == 0
     }
 
+    /// Retrieves the middle record from the page.
+    ///
+    /// This method calculates the middle position based on the number of records
+    /// and then traverses the records to find the one at that position.
+    ///
+    /// # Returns
+    ///
+    /// * A `Record` object representing the middle record in the page.
     pub fn page_get_middle_rec(&self) -> Record {
         let middle = (self.page_header_get_field(PAGE_N_RECS)
             + PAGE_HEAP_NO_USER_LOW)
@@ -371,11 +473,27 @@ impl Page {
         self.page_header_get_field(PAGE_N_DIR_SLOTS) as SlotId
     }
 
-    pub fn page_dir_get_n_owned(&self, slot: usize) -> SlotId {
+    /// Retrieves the number of records owned by a specific slot in the page directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `slot`: The slot ID to get the number of owned records for.
+    ///
+    /// # Returns
+    ///
+    /// * The number of records owned by the specified slot as a `SlotId`.
+    pub fn page_dir_get_n_owned(&self, slot: SlotId) -> SlotId {
         let page_dir = unsafe { self.ptr.add(PAGE_HEADER as usize) };
         let slot_ptr = unsafe { page_dir.add(slot as usize) };
         let n_owned = unsafe { *(slot_ptr as *const u16) };
         n_owned as SlotId
+    }
+
+    pub fn page_dir_set_n_owned(&self, slot: SlotId, n_owned: SlotId) {
+        unsafe {
+            let n_owned_ptr = self.ptr.add(PAGE_HEADER + slot) as *mut u16;
+            n_owned_ptr.write_unaligned(n_owned as u16);
+        }
     }
 
     /// Finds the owner slot of a given record in the page directory.
@@ -428,6 +546,35 @@ impl Page {
         }
     }
 
+    /// Get the number of records in the heap.
+    ///
+    /// This method retrieves the number of records in the heap by reading the PAGE_N_HEAP
+    /// field from the page header and applying a bitmask to get only the lower 15 bits.
+    ///
+    /// # Returns
+    ///
+    /// * The number of records in the heap as a `usize`.
+    pub fn page_dir_get_n_heap(&self) -> usize {
+        self.page_header_get_field(PAGE_N_HEAP) & 0x7fff
+    }
+
+    /// Sets the number of records in the heap.
+    ///
+    /// This method sets the number of records in the heap while preserving
+    /// the high bit (0x8000) of the previous value.
+    ///
+    /// # Arguments
+    ///
+    /// * `n_recs`: The new number of records to set.
+    ///
+    /// # Returns
+    ///
+    /// * This function does not return a value.
+    pub fn page_dir_set_n_heap(&self, n_recs: usize) {
+        let prev_val = self.page_dir_get_n_heap();
+        self.page_header_set_field(PAGE_N_HEAP, n_recs | (0x8000 & prev_val));
+    }
+
     /// Create a B-tree index page.
     ///
     /// # Parameters
@@ -446,7 +593,7 @@ impl Page {
         mtr: Option<Mtr>,
     ) -> Page {
         let ptr = buf.getFrame();
-        let page = Page::new( ptr);
+        let page = Page::new(ptr);
 
         if !mtr.is_none() {
             page.page_create_write_log(buf, mtr.unwrap());
@@ -504,7 +651,7 @@ impl Page {
         page.page_header_set_field(PAGE_N_DIR_SLOTS, 2);
         page.page_header_set_field(PAGE_HEAP_TOP, PAGE_SUPREMUM_END);
         page.page_header_set_field(PAGE_N_HEAP, PAGE_HEAP_NO_USER_LOW);
-        page.page_header_set_field(PAGE_FREE, u16::MAX as usize);
+        page.page_header_set_field(PAGE_FREE, 0);
         page.page_header_set_field(PAGE_GARBAGE, 0);
         page.page_header_set_field(PAGE_LAST_INSERT, u16::MAX as usize);
         page.page_header_set_field(PAGE_DIRECTION, PAGE_NO_DIRECTION);
@@ -634,7 +781,110 @@ impl Page {
     /// - `buf`: The buffer block associated with the page.
     /// - `mtr`: The transaction object.
     ///
+    /// # Returns
+    ///
+    /// * `()`: This function does not return a value.
     pub fn page_create_write_log(&self, buf: &BufBlock, mtr: Mtr) {
         unimplemented!()
+    }
+
+    /// Sets the pointer to the next record on the page.
+    ///
+    /// # Arguments
+    ///
+    /// * `rec`: The record whose next pointer will be set.
+    /// * `next_rec`: An optional record that will be set as the next record. If None, the next pointer will be set to 0.
+    ///
+    /// # Returns
+    ///
+    /// * This function does not return a value.
+    pub fn page_set_next_rec(&self, rec: Record, next_rec: Option<Record>) {
+        ut_ad!(self.page_rec_is_supremum(rec));
+        ut_ad!(next_rec.is_some() && rec != next_rec.unwrap());
+
+        let offset = next_rec.map_or(0, |r| self.page_offset(r));
+        rec.rec_set_next_offs(offset);
+    }
+
+    /// Add a record to the free list.
+    ///
+    /// # Arguments
+    ///
+    /// `rec`: The record to be freed.
+    ///
+    /// # Returns
+    ///
+    /// None
+    pub fn page_mem_free(&self, rec: Record) {
+        // Get the head of the free list. None if empty.
+        let free_rec = self.page_header_get_page_free();
+
+        self.page_set_next_rec(rec, free_rec);
+
+        // Make the head of the free list point to the newly freed up record.
+        self.page_header_set_page_free(rec);
+
+        // Update the total garbage present on the page.
+        let garbage = self.page_header_get_field(PAGE_GARBAGE);
+        let total_garbage = garbage + rec.rec_offs_size();
+        self.page_header_set_field(PAGE_GARBAGE, total_garbage);
+
+        // Reduce the total number of records present on the page.
+        self.page_header_set_field(PAGE_N_RECS, self.page_n_get_recs() - 1);
+    }
+
+    /// Calculates the space reserved for directory slots of a given number of records.
+    /// The exact value is a fraction number (n * PAGE_DIR_SLOT_SIZE) / PAGE_DIR_SLOT_MIN_N_OWNED,
+    /// and it rounded upwards to an integer.
+    ///
+    /// # Arguments
+    ///
+    /// * `n_recs`: The number of records for which to calculate the reserved space.
+    ///
+    /// # Returns
+    ///
+    /// * The amount of space reserved for directory slots in bytes.
+    pub fn page_dir_calc_reserved_space(n_recs: usize) -> usize {
+        (PAGE_DIR_SLOT_SIZE * n_recs + PAGE_DIR_SLOT_MIN_N_OWNED - 1)
+            / PAGE_DIR_SLOT_MIN_N_OWNED
+    }
+
+    /// Calculate the combined maximum size of records that can be inserted on top of the heap record.
+    ///
+    /// # Arguments
+    ///
+    /// * `n_recs`: The number of records to consider when calculating the maximum insert size.
+    ///
+    /// # Returns
+    ///
+    /// * The maximum size in bytes that can be inserted on top of the heap record.
+    pub fn page_get_max_insert_size(&self, n_recs: usize) -> usize {
+        let occupied = self.page_header_get_field(PAGE_HEAP_TOP)
+            - PAGE_SUPREMUM_END
+            + Self::page_dir_calc_reserved_space(
+                n_recs + self.page_dir_get_n_heap() - 2,
+            );
+
+        let free_space = Self::page_get_free_space_of_empty();
+
+        if occupied > free_space { 0 } else { free_space - occupied }
+    }
+
+    /// Sets the pointer to the next record on the page.
+    pub fn page_rec_set_next(&self, rec: Record, next_rec: Option<Record>) {
+        ut_ad!(self.page_rec_check(rec));
+        ut_ad!(!self.page_rec_is_supremum(rec));
+        ut_ad!(next_rec.is_none() || rec != next_rec.unwrap());
+
+        ut_ad!(
+            next_rec.is_none() || self.page_rec_is_infimum(next_rec.unwrap())
+        );
+
+        let offset = match next_rec {
+            None => 0,
+            Some(next) => self.page_offset(next),
+        };
+
+        rec.rec_set_next_offs(offset);
     }
 }
