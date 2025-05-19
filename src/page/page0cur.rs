@@ -4,13 +4,14 @@ use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::{Page, PAGE_DIR_SLOT_MIN_N_OWNED, PAGE_N_RECS};
 use crate::rem::rem0rec::Record;
 use crate::ut::ut0dbg::ut_ad;
+use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
 
 /// A cursor structure for navigating through records in a page.
-/// 
+///
 /// This cursor is used to traverse, insert, and delete records on a page.
 /// It maintains a reference to the current record, the page, and the index.
-struct PageCur {
+pub struct PageCur {
     /// The index to which the cursor belongs
     index: Arc<Mutex<Index>>,
     /// The record to which the cursor points
@@ -33,7 +34,7 @@ impl PageCur {
     /// # Returns
     ///
     /// * A new `PageCur` instance.
-    fn new(index: Arc<Mutex<Index>>, rec: Record, block: BufBlock) -> Self {
+    pub fn new(index: Arc<Mutex<Index>>, rec: Record, block: BufBlock) -> Self {
         let frame = block.getFrame();
         PageCur { index, rec, block, page: Page::new(frame) }
     }
@@ -43,7 +44,7 @@ impl PageCur {
     /// # Returns
     ///
     /// * The record to which the cursor points.
-    fn page_cur_get_rec(&self) -> Record {
+    pub fn page_cur_get_rec(&self) -> Record {
         self.rec.clone()
     }
 
@@ -65,7 +66,7 @@ impl PageCur {
     /// # Returns
     ///
     /// * `()`: This function does not return a value.
-    fn page_cur_set_before_first(&mut self) {
+    pub fn page_cur_set_before_first(&mut self) {
         self.rec = self.page.page_get_infimum_rec();
     }
 
@@ -78,7 +79,7 @@ impl PageCur {
     /// # Returns
     ///
     /// * `()`: This function does not return a value.
-    fn page_cur_set_after_last(&mut self) {
+    pub fn page_cur_set_after_last(&mut self) {
         self.rec = self.page.page_get_supremum_rec();
     }
 
@@ -88,7 +89,7 @@ impl PageCur {
     ///
     /// * `true` if the cursor is before the first user record, `false` otherwise.
     ///
-    fn page_cur_is_before_first(&self) -> bool {
+    pub fn page_cur_is_before_first(&self) -> bool {
         self.page.page_rec_is_infimum(self.rec)
     }
 
@@ -97,7 +98,7 @@ impl PageCur {
     /// # Returns
     ///
     /// * `true` if the cursor is after the last user record, `false` otherwise.
-    fn page_cur_is_after_last(&self) -> bool {
+    pub fn page_cur_is_after_last(&self) -> bool {
         self.page.page_rec_is_supremum(self.rec)
     }
 
@@ -243,7 +244,8 @@ impl PageCur {
 
         let rec_size = rec.rec_get_data_size();
 
-        let insert_rec = rec.rec_copy();
+        let mut insert_rec = Record::new(null_mut());
+        rec.rec_copy(&mut insert_rec);
 
         /* 4. Insert the record in the linked list of records. */
         let next_rec = self.rec.rec_get_next().unwrap();
