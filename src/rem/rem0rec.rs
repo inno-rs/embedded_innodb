@@ -81,6 +81,9 @@ pub const REC_INFO_BITS_SHIFT: usize = 4;
 /// The following masks are used to filter the SQL null bit from the one byte and two byte offsets.
 pub const REC_1BYTE_SQL_NULL_MASK: usize = 0x80;
 
+/// Bit to specify that the column is stored externally.
+pub const REC_OFFS_EXTERNAL: usize = 1 << 30;
+
 /// Record data enum.
 pub enum RecordData {
     Data(String),
@@ -134,8 +137,16 @@ impl Record {
         buf
     }
 
-    pub fn rec_copy(&self) -> Record {
-        Record::new(null_mut())
+    pub fn rec_copy(&self, copy_to: &mut Record) {
+        let data_size = self.rec_get_data_size();
+        let extra_len = REC_N_EXTRA_BYTES + self.rec_get_n_fields();
+
+        unsafe {
+            copy_to
+                .ptr
+                .sub(extra_len)
+                .copy_from(self.ptr.sub(extra_len), data_size + extra_len);
+        }
     }
 
     /// Aligns the record pointer to the specified offset.
