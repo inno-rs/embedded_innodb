@@ -454,12 +454,78 @@ impl Page {
         }
     }
 
+    /// Add a slot to the page directory.
+    /// But it does not set the record pointers in the added slots or update n_owned values.
+    /// The caller is responsible for the change.
+    ///
+    /// # Parameters
+    /// - `slot`: The position at which to add the new slot in the page directory.
+    ///
+    /// # Returns
+    /// - None
+    pub fn page_dir_add_slot(&self, slot: SlotId) {
+        let n_slots = self.page_dir_get_n_slots();
+
+        ut_ad!(slot < n_slots);
+
+        /* Update the page header */
+        self.page_header_set_field(PAGE_N_DIR_SLOTS, n_slots + 1);
+
+        let slot_ptr = self.page_dir_get_nth_slot(n_slots);
+
+        /* Move slots up */
+        unsafe {
+            slot_ptr.copy_from(
+                slot_ptr.add(PAGE_DIR_SLOT_SIZE),
+                (n_slots - 1 - slot) * PAGE_DIR_SLOT_SIZE,
+            );
+        }
+    }
+
+    /// Splits a directory slot that owns too many records.
+    /// This method divides the records owned by the slot into two approximately equal parts,
+    /// adds a new slot, and updates the ownership information.
+    ///
+    /// # Parameters
+    /// - `slot`: The slot ID of the directory slot to split.
+    ///
+    /// # Returns
+    /// - None
+    pub fn page_dir_split_slot(&self, slot: SlotId) {
+        ut_ad!(slot > 0);
+
+        let n_owned = self.page_dir_get_n_owned(slot);
+        ut_ad!(n_owned == PAGE_DIR_SLOT_MIN_N_OWNED + 1);
+
+        /* 1. We loop
+        to find a record approximately in the middle of the records owned by the slot. */
+        let prev_slot = slot - 1;
+        let mut rec = self.page_dir_slot_get_rec(prev_slot);
+
+        for i in 0..(n_owned / 2) {
+            rec = rec.rec_get_next().unwrap();
+        }
+
+        /* 2. Add a slot immediately below the slot to be split. */
+        self.page_dir_add_slot(slot - 1);
+
+        /* The added slot is now the slot, and the old slot is slot + 1. */
+        let new_slot = slot;
+
+        /* 3. Store appropriate values in the new slot. */
+        self.page_dir_slot_set_rec(new_slot, rec);
+        self.page_dir_set_n_owned(new_slot, n_owned / 2);
+
+        /* 4. Finally, we update the number of record-field of the original slot.*/
+        self.page_dir_set_n_owned(slot, n_owned - (n_owned / 2));
+    }
+
     /// Retrieves the number of records in the page.
+    /// This is an alias for `page_get_n_recs`.
     ///
     /// # Returns
     ///
     /// - The number of records in the page as a `usize`.
-    ///
     pub fn page_n_get_recs(&self) -> usize {
         self.page_header_get_field(PAGE_N_RECS)
     }
@@ -469,8 +535,8 @@ impl Page {
     /// # Returns
     ///
     /// - The number of slots in the page directory as a `SlotId`.
-    pub fn page_dir_get_n_slots(&self) -> SlotId {
-        self.page_header_get_field(PAGE_N_DIR_SLOTS) as SlotId
+    pub fn page_dir_get_n_slots(&self) -> usize {
+        self.page_header_get_field(PAGE_N_DIR_SLOTS)
     }
 
     /// Retrieves the number of records owned by a specific slot in the page directory.
@@ -489,6 +555,14 @@ impl Page {
         n_owned as SlotId
     }
 
+    /// Sets the number of records owned by a specific slot in the page directory.
+    ///
+    /// # Parameters
+    /// - `slot`: The slot ID to set the number of owned records for.
+    /// - `n_owned`: The number of records to be owned by the specified slot.
+    ///
+    /// # Returns
+    /// - None
     pub fn page_dir_set_n_owned(&self, slot: SlotId, n_owned: SlotId) {
         unsafe {
             let n_owned_ptr = self.ptr.add(PAGE_HEADER + slot) as *mut u16;
@@ -536,7 +610,7 @@ impl Page {
     ///
     /// - A pointer to the nth slot in the page directory.
     ///
-    pub fn page_dir_get_nth_slot(&self, slot_id: SlotId) -> *mut u8 {
+    fn page_dir_get_nth_slot(&self, slot_id: SlotId) -> *mut u8 {
         unsafe {
             self.ptr.add(
                 UNIV_PAGE_SIZE
@@ -573,6 +647,22 @@ impl Page {
     pub fn page_dir_set_n_heap(&self, n_recs: usize) {
         let prev_val = self.page_dir_get_n_heap();
         self.page_header_set_field(PAGE_N_HEAP, n_recs | (0x8000 & prev_val));
+    }
+
+    /// Calculates the space reserved for directory slots of a given number of records.
+    /// The exact value is a fraction number (n * PAGE_DIR_SLOT_SIZE) / PAGE_DIR_SLOT_MIN_N_OWNED,
+    /// and it rounded upwards to an integer.
+    ///
+    /// # Arguments
+    ///
+    /// * `n_recs`: The number of records for which to calculate the reserved space.
+    ///
+    /// # Returns
+    ///
+    /// * The amount of space reserved for directory slots in bytes.
+    pub fn page_dir_calc_reserved_space(n_recs: usize) -> usize {
+        (PAGE_DIR_SLOT_SIZE * n_recs + PAGE_DIR_SLOT_MIN_N_OWNED - 1)
+            / PAGE_DIR_SLOT_MIN_N_OWNED
     }
 
     /// Create a B-tree index page.
@@ -833,22 +923,6 @@ impl Page {
         self.page_header_set_field(PAGE_N_RECS, self.page_n_get_recs() - 1);
     }
 
-    /// Calculates the space reserved for directory slots of a given number of records.
-    /// The exact value is a fraction number (n * PAGE_DIR_SLOT_SIZE) / PAGE_DIR_SLOT_MIN_N_OWNED,
-    /// and it rounded upwards to an integer.
-    ///
-    /// # Arguments
-    ///
-    /// * `n_recs`: The number of records for which to calculate the reserved space.
-    ///
-    /// # Returns
-    ///
-    /// * The amount of space reserved for directory slots in bytes.
-    pub fn page_dir_calc_reserved_space(n_recs: usize) -> usize {
-        (PAGE_DIR_SLOT_SIZE * n_recs + PAGE_DIR_SLOT_MIN_N_OWNED - 1)
-            / PAGE_DIR_SLOT_MIN_N_OWNED
-    }
-
     /// Calculate the combined maximum size of records that can be inserted on top of the heap record.
     ///
     /// # Arguments
@@ -871,6 +945,13 @@ impl Page {
     }
 
     /// Sets the pointer to the next record on the page.
+    ///
+    /// # Parameters
+    /// - `rec`: The record whose next pointer will be set.
+    /// - `next_rec`: An optional record that will be set as the next record. If None, the next pointer will be set to 0.
+    ///
+    /// # Returns
+    /// - None
     pub fn page_rec_set_next(&self, rec: Record, next_rec: Option<Record>) {
         ut_ad!(self.page_rec_check(rec));
         ut_ad!(!self.page_rec_is_supremum(rec));
