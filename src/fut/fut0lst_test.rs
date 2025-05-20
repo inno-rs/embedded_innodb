@@ -3,6 +3,7 @@
 
 #[cfg(test)]
 mod tests {
+    use std::ptr::write;
     use super::*;
     use crate::fut::fut0lst::*;
 
@@ -93,4 +94,85 @@ mod tests {
         assert_eq!(buf[0], 0);
         assert_eq!(buf[7], 0);
     }
+
+    #[test]
+    fn test_write_first_last() {
+        // Make a base-node buffer of exactly the right size
+        let mut base = vec![0u8; FLST_LAST + FIL_ADDR_SIZE];
+        let first = FilAddr { page_no: 0x01020304, byte_off: 0x0506 };
+        let last  = FilAddr { page_no: 0x0A0B0C0D, byte_off: 0x0E0F };
+
+        first.write_first(&mut base);
+        last.write_last(&mut base);
+
+        // Reading back via the read methods should yield the same
+        assert_eq!(FilAddr::first(&base), first);
+        assert_eq!(FilAddr::last(&base),  last);
+
+        // Ensure nothing else clobbered
+        for i in 0..FLST_FIRST {
+            assert_eq!(base[i], 0);
+        }
+        for i in FLST_FIRST+FIL_ADDR_SIZE..FLST_LAST {
+            assert_eq!(base[i], 0);
+        }
+        for i in FLST_LAST+FIL_ADDR_SIZE..base.len() {
+            assert_eq!(base[i], 0);
+        }
+    }
+
+    #[test]
+    fn test_write_prev_next() {
+        // List-node buffer of exactly 12 bytes
+        let mut node = vec![0xAAu8; FIL_ADDR_SIZE * 2];
+        let prev = FilAddr { page_no: 0x40414243, byte_off: 0x4455 };
+        let next = FilAddr { page_no: 0x60616263, byte_off: 0x6475 };
+
+        prev.write_prev(&mut node);
+        next.write_next(&mut node);
+
+
+        // Read back
+        assert_eq!(FilAddr::prev(&node), prev);
+        assert_eq!(FilAddr::next(&node), next);
+
+        // Check that bytes outside prev/next were untouched
+        // prev occupies 0..6, next 6..12, so nothing else to check here
+        // but we can assert they didn’t revert to 0:
+        assert_eq!(node[0], (prev.page_no.to_le_bytes())[0]);
+        assert_eq!(node[6], (next.page_no.to_le_bytes())[0]);
+    }
+
+
+    fn add_last_empty() {
+        let mut base = vec![0u8; FLST_LAST + FIL_ADDR_SIZE];
+        let mut node = vec![0u8; FIL_ADDR_SIZE*2];
+        let addr = FilAddr { page_no: 1, byte_off: 2 };
+        addr.add_last(&mut base, &mut node, None);
+        assert_eq!(FilAddr::len(&base), 1);
+        assert_eq!(FilAddr::first(&base), addr);
+        assert_eq!(FilAddr::last(&base), addr);
+        assert_eq!(FilAddr::prev(&node), FilAddr::NULL);
+        assert_eq!(FilAddr::next(&node), FilAddr::NULL);
+    }
+
+    #[test]
+    fn add_last_two() {
+        let mut base = vec![0u8; FLST_LAST + FIL_ADDR_SIZE];
+        let mut n1 = vec![0u8; FIL_ADDR_SIZE*2];
+        let mut n2 = vec![0u8; FIL_ADDR_SIZE*2];
+        let a1 = FilAddr{ page_no: 10, byte_off: 20 };
+        let a2 = FilAddr{ page_no: 30, byte_off: 40 };
+        a1.add_last(&mut base, &mut n1, None);
+        a2.add_last(&mut base, &mut n2, Some(&mut n1));
+        assert_eq!(FilAddr::len(&base), 2);
+        assert_eq!(FilAddr::prev(&n1), FilAddr::NULL);
+        assert_eq!(FilAddr::next(&n1), a2);
+        assert_eq!(FilAddr::prev(&n2), a1);
+        assert_eq!(FilAddr::next(&n2), FilAddr::NULL);
+    }
+
+
+
+
 }
