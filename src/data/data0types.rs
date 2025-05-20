@@ -99,12 +99,12 @@ pub const DATA_ENGLISH: usize = 4;
 ├──────────────┬─────────────────────────────────────┤
 │  Field       │  Role / Controls                    │
 ├──────────────┼─────────────────────────────────────┤
-│ m_type        │  ▸ Storage **category**              │
+│ m_type       │  ▸ Storage **category**              │
 │              │     - DATA_INT, DATA_VARCHAR, etc.  │
 │              │  ▸ Selects encoding layout          │
 │              │  ▸ Affects variable vs fixed        │
 ├──────────────┼─────────────────────────────────────┤
-│ pr_type       │  ▸ **Flags and attributes**          │
+│ pr_type      │  ▸ **Flags and attributes**          │
 │              │     - Nullable (DATA_NOT_NULL)      │
 │              │     - Unsigned (DATA_UNSIGNED)      │
 │              │     - Charset/binary (DATA_BINARY)  │

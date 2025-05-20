@@ -972,6 +972,11 @@ impl Page {
     }
 
     pub fn page_rec_find_owner_rec(&self, rec: Record) -> Record {
-        todo!()
+        let mut cur = rec;
+        while cur.rec_get_n_owned() == 0 {
+            cur = cur.rec_get_next().unwrap();
+        }
+
+        rec
     }
 }
