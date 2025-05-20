@@ -1,3 +1,5 @@
+use derive_builder::Builder;
+
 /** Flags ORed to the precise data type */
 
 /** This is ORed to the precise type when the column is declared as NOT nullptr. */
@@ -55,6 +57,7 @@ pub struct DType {
 }
 
 /// Structure for an SQL data tuple of fields (logical record).
+#[derive(Builder)]
 pub struct DTuple {
     /// Info bits of an index record: the default is 0;
     /// this field is used if an index record is built from a data tuple.
@@ -62,6 +65,7 @@ pub struct DTuple {
     /// Number of fields in the dtuple.
     pub n_fields: usize,
     /// Fields of the dtuple.
+    #[builder(default, setter(each = "add_field"))]
     pub fields: Vec<DField>,
 }
 

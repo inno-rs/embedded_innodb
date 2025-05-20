@@ -2,11 +2,40 @@
 mod tests {
     use super::super::page0page::Page;
     use crate::buf::buf0types::{BufBlock, Frame};
+    use crate::data::data0types::{DField, DTupleBuilder};
     use crate::dict::dict0types::Index;
     use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
+    use crate::mtr::mtr0mtr::Mtr;
     use crate::page::page0page::*;
     use crate::rem::rem0rec::{Record, RecordData};
+    use rstest::{fixture, rstest};
     use std::alloc::{alloc_zeroed, Layout};
+
+    struct PageFixture {
+        index: Index,
+        frame: Frame,
+        buf_block: BufBlock,
+        mtr: Option<Mtr>,
+        page: Page,
+    }
+
+    impl PageFixture {
+        fn new() -> PageFixture {
+            let index = Index::new();
+            let frame = get_raw_block();
+            let buf_block = BufBlock::new(frame);
+            let mtr = None;
+            let page = Page::page_create(&index, &buf_block, mtr);
+
+            PageFixture { index, frame, buf_block, mtr: None, page }
+        }
+    }
+
+    impl Drop for PageFixture {
+        fn drop(&mut self) {
+            free_raw_block(self.frame);
+        }
+    }
 
     fn get_raw_block() -> Frame {
         let layout =
@@ -20,13 +49,14 @@ mod tests {
         unsafe { std::alloc::dealloc(frame, layout) }
     }
 
-    #[test]
-    fn test_page_create() {
-        let index = Index::new();
-        let frame = get_raw_block();
-        let buf_block = BufBlock::new(frame);
-        let mtr = None;
-        let page = Page::page_create(&index, &buf_block, mtr);
+    #[fixture]
+    fn page_fixture() -> PageFixture {
+        PageFixture::new()
+    }
+
+    #[rstest]
+    fn test_page_create(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
 
         let infimum_rec = page.page_get_infimum_rec();
         let extract_data = |rec: Record| -> String {
@@ -83,32 +113,18 @@ mod tests {
         assert_eq!(page.page_get_supremum_rec().rec_get_next_offs(), 0);
 
         assert!(page.page_header_get_page_free().is_none());
-
-        // Free the allocated memory
-        free_raw_block(frame);
     }
 
-    #[test]
-    fn test_page_get_n_recs() {
-        let index = Index::new();
-        let frame = get_raw_block();
-        let buf_block = BufBlock::new(frame);
-        let mtr = None;
-        let page = Page::page_create(&index, &buf_block, mtr);
+    #[rstest]
+    fn test_page_get_n_recs(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
 
         assert_eq!(page.page_n_get_recs(), 0);
-
-        // Free the allocated memory
-        free_raw_block(frame);
     }
 
-    #[test]
-    fn test_page_get_next_record() {
-        let index = Index::new();
-        let frame = get_raw_block();
-        let buf_block = BufBlock::new(frame);
-        let mtr = None;
-        let page = Page::page_create(&index, &buf_block, mtr);
+    #[rstest]
+    fn test_page_get_next_record(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
 
         let infimum_rec = page.page_get_infimum_rec();
         let supremum_rec = infimum_rec.rec_get_next().unwrap();
@@ -118,67 +134,44 @@ mod tests {
         assert!(page.page_rec_is_supremum(supremum_rec));
 
         assert_eq!(supremum_next, None);
-
-        // Free the allocated memory
-        free_raw_block(frame);
     }
 
-    #[test]
-    fn test_page_rec_is_user_record() {
-        let index = Index::new();
-        let frame = get_raw_block();
-        let buf_block = BufBlock::new(frame);
-        let mtr = None;
-        let page = Page::page_create(&index, &buf_block, mtr);
+    #[rstest]
+    fn test_page_rec_is_user_record(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
 
         let infimum_rec = page.page_get_infimum_rec();
         let supremum_rec = infimum_rec.rec_get_next().unwrap();
 
         assert!(!page.page_rec_is_user_rec(infimum_rec));
         assert!(!page.page_rec_is_user_rec(supremum_rec));
-
-        // Free the allocated memory
-        free_raw_block(frame);
     }
 
-    #[test]
-    fn test_page_dir_find_owner_slot() {
-        let index = Index::new();
-        let frame = get_raw_block();
-        let buf_block = BufBlock::new(frame);
-        let mtr = None;
-        let page = Page::page_create(&index, &buf_block, mtr);
+    #[rstest]
+    fn test_page_dir_find_owner_slot(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
 
         let infimum_rec = page.page_get_infimum_rec();
         let supremum_rec = infimum_rec.rec_get_next().unwrap();
 
         assert_eq!(page.page_dir_find_owner_slot(infimum_rec), 0);
         assert_eq!(page.page_dir_find_owner_slot(supremum_rec), 1);
-
-        // Free the allocated memory
-        free_raw_block(frame);
     }
 
-    #[test]
-    fn test_page_set_max_trx_id() {
-        let frame = get_raw_block();
-        let page = Page::new(frame);
+    #[rstest]
+    fn test_page_set_max_trx_id(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
         let max_trx_id: crate::utils::TxnId = 2352325;
-        let mtr = None; // Assuming Mtr is not used in this test
 
-        page.set_max_trx_id(max_trx_id, mtr);
+        page.set_max_trx_id(max_trx_id, None);
 
         let retrieved_max_trx_id = page.get_max_trx_id();
         assert_eq!(retrieved_max_trx_id, max_trx_id);
-
-        // Free the allocated memory
-        free_raw_block(frame);
     }
 
-    #[test]
-    fn test_page_set_header_field() {
-        let frame = get_raw_block();
-        let page = Page::new(frame);
+    #[rstest]
+    fn test_page_set_header_field(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
 
         {
             let field_offset: usize = PAGE_N_DIR_SLOTS;
@@ -299,9 +292,6 @@ mod tests {
             let retrieved_value = page.page_header_get_field(field_offset);
             assert_eq!(retrieved_value, value);
         }
-
-        // Free the allocated memory
-        free_raw_block(frame);
     }
 
     #[test]
@@ -318,21 +308,33 @@ mod tests {
         assert_eq!(16191, Page::page_get_free_space_of_empty());
     }
 
-    #[test]
-    fn test_page_get_max_insert_size() {
+    #[rstest]
+    fn test_page_get_max_insert_size(page_fixture: PageFixture) {
         // Empty page
         {
-            let index = Index::new();
-            let frame = get_raw_block();
-            let buf_block = BufBlock::new(frame);
-            let mtr = None;
-            let page = Page::page_create(&index, &buf_block, mtr);
+            let page = &page_fixture.page;
 
             let size = page.page_get_max_insert_size(1);
             assert_eq!(size, 16190);
-
-            // Free the allocated memory
-            free_raw_block(frame);
         }
+    }
+
+    #[rstest]
+    fn test_page_dir_add_slot(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
+
+        assert_eq!(2, page.page_dir_get_n_slots());
+
+        page.page_dir_add_slot(1);
+
+        assert_eq!(3, page.page_dir_get_n_slots());
+
+        page.page_dir_add_slot(0);
+
+        assert_eq!(4, page.page_dir_get_n_slots());
+
+        page.page_dir_add_slot(3);
+
+        assert_eq!(5, page.page_dir_get_n_slots());
     }
 }
