@@ -41,7 +41,7 @@ pub const DATA_DECIMAL: usize = 11;
 /** English language character string: only used for InnoDB's own system tables */
 pub const DATA_ENGLISH: usize = 4;
 
-#[derive(Clone)]
+#[derive(Clone, Builder)]
 pub struct DType {
     /// Main data type.
     pub m_type: u8,
@@ -70,13 +70,14 @@ pub struct DTuple {
 }
 
 /// Structure for an SQL data field.
-#[derive(Clone)]
+#[derive(Clone, Builder)]
 pub struct DField {
     /// Pointer to the data of the field.
     pub data: *const u8,
     /// Data length; UNIV_SQL_NULL if SQL null.
     pub len: usize,
     /// true=externally stored, false=local.
+    #[builder(default = false)]
     pub ext: bool,
     /// Type of data.
     pub field_type: DType,

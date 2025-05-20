@@ -458,11 +458,6 @@ impl Page {
     /// But it does not set the record pointers in the added slots or update n_owned values.
     /// The caller is responsible for the change.
     ///
-    /// # Parameters
-    /// - `slot`: The position at which to add the new slot in the page directory.
-    ///
-    /// # Returns
-    /// - None
     pub fn page_dir_add_slot(&self, slot: SlotId) {
         let n_slots = self.page_dir_get_n_slots();
 
@@ -483,14 +478,6 @@ impl Page {
     }
 
     /// Splits a directory slot that owns too many records.
-    /// This method divides the records owned by the slot into two approximately equal parts,
-    /// adds a new slot, and updates the ownership information.
-    ///
-    /// # Parameters
-    /// - `slot`: The slot ID of the directory slot to split.
-    ///
-    /// # Returns
-    /// - None
     pub fn page_dir_split_slot(&self, slot: SlotId) {
         ut_ad!(slot > 0);
 
@@ -521,11 +508,11 @@ impl Page {
     }
 
     /// Retrieves the number of records in the page.
-    /// This is an alias for `page_get_n_recs`.
     ///
     /// # Returns
     ///
     /// - The number of records in the page as a `usize`.
+    ///
     pub fn page_n_get_recs(&self) -> usize {
         self.page_header_get_field(PAGE_N_RECS)
     }
@@ -555,14 +542,6 @@ impl Page {
         n_owned as SlotId
     }
 
-    /// Sets the number of records owned by a specific slot in the page directory.
-    ///
-    /// # Parameters
-    /// - `slot`: The slot ID to set the number of owned records for.
-    /// - `n_owned`: The number of records to be owned by the specified slot.
-    ///
-    /// # Returns
-    /// - None
     pub fn page_dir_set_n_owned(&self, slot: SlotId, n_owned: SlotId) {
         unsafe {
             let n_owned_ptr = self.ptr.add(PAGE_HEADER + slot) as *mut u16;
@@ -945,13 +924,6 @@ impl Page {
     }
 
     /// Sets the pointer to the next record on the page.
-    ///
-    /// # Parameters
-    /// - `rec`: The record whose next pointer will be set.
-    /// - `next_rec`: An optional record that will be set as the next record. If None, the next pointer will be set to 0.
-    ///
-    /// # Returns
-    /// - None
     pub fn page_rec_set_next(&self, rec: Record, next_rec: Option<Record>) {
         ut_ad!(self.page_rec_check(rec));
         ut_ad!(!self.page_rec_is_supremum(rec));
