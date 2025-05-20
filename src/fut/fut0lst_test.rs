@@ -172,6 +172,67 @@ mod tests {
         assert_eq!(FilAddr::next(&n2), FilAddr::NULL);
     }
 
+    fn remove_only_node() {
+        let mut base = vec![0u8; 16*1024];
+        let mut node = vec![0u8; FIL_ADDR_SIZE * 2];
+
+        // imagine we’d already done add_last:
+        // me is the addr of the node.
+        let me = FilAddr { page_no: 7, byte_off: 123 };
+        me.write_first(&mut base);
+        me.write_last(&mut base);
+        me.write_len(&mut base, 1);
+        // node.prev = NULL, node.next = NULL
+        FilAddr::NULL.write_prev(&mut node);
+        FilAddr::NULL.write_next(&mut node);
+
+        // Now remove it:
+        me.remove(&mut base, &node, None, None);
+
+        assert_eq!(FilAddr::len(&base), 0);
+        assert_eq!(FilAddr::first(&base), FilAddr::NULL);
+        assert_eq!(FilAddr::last(&base),  FilAddr::NULL);
+    }
+
+    #[test]
+    fn remove_middle_node() {
+        // 1) Prepare a full-page buffer and three node buffers (each 12 bytes)
+        let mut base  = vec![0u8; 16*1024];
+        let mut n1    = vec![0u8; FIL_ADDR_SIZE * 2];
+        let mut n2    = vec![0u8; FIL_ADDR_SIZE * 2];
+        let mut n3    = vec![0u8; FIL_ADDR_SIZE * 2];
+
+        // 2) Define addresses for each node
+        let addr1 = FilAddr { page_no: 1, byte_off: 10 };
+        let addr2 = FilAddr { page_no: 2, byte_off: 20 };
+        let addr3 = FilAddr { page_no: 3, byte_off: 30 };
+
+        // 3) Build the list: [addr1] → [addr2] → [addr3]
+        addr1.add_last(&mut base, &mut n1, None);
+        addr2.add_last(&mut base, &mut n2, Some(&mut n1));
+        addr3.add_last(&mut base, &mut n3, Some(&mut n2));
+        // Now: len=3, first=addr1, last=addr3
+
+        // 4) Remove the middle node (addr2)
+        addr2.remove(
+            &mut base,
+            &n2,
+            Some(&mut n1),
+            Some(&mut n3),
+        );
+
+        // 5) Assertions:
+        // - length decremented
+        assert_eq!(FilAddr::len(&base), 2);
+        // - first and last remain the same
+        assert_eq!(FilAddr::first(&base), addr1);
+        assert_eq!(FilAddr::last (&base), addr3);
+        // - n1.next now points to addr3
+        assert_eq!(FilAddr::next(&n1), addr3);
+        // - n3.prev now points to addr1
+        assert_eq!(FilAddr::prev(&n3), addr1);
+    }
+
 
 
 

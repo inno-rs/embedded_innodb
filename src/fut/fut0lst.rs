@@ -1,5 +1,3 @@
-
-
 /*
 The fut0lst module (in C++ fut0lst.h, here ported to fut0lst.rs) is simply InnoDB’s on-disk intrusive doubly-linked-list library. Its job is to give you a uniform, low-level way to:
 
@@ -31,33 +29,29 @@ Traverse forward or backward through the chain.
 
 */
 // On-disk list-node constants specific to this module
-pub const FIL_ADDR_PAGE: usize = 0;                    // page_no at buf[offset+0..offset+4]
-pub const FIL_ADDR_BYTE: usize = 4;                    // byte_off at buf[offset+4..offset+6]
-pub const FIL_ADDR_SIZE: usize = 6;                // total size for a FilAddr
+pub const FIL_ADDR_PAGE: usize = 0; // page_no at buf[offset+0..offset+4]
+pub const FIL_ADDR_BYTE: usize = 4; // byte_off at buf[offset+4..offset+6]
+pub const FIL_ADDR_SIZE: usize = 6; // total size for a FilAddr
 
-pub const FLST_LEN: usize = 0;                         // length field at buf[0..4] of a base node
-pub const FLST_FIRST: usize = 4;                       // first pointer at buf[4..10]
-pub const FLST_LAST: usize = FLST_FIRST + FIL_ADDR_SIZE;  // last pointer at buf[10..16]
+pub const FLST_LEN: usize = 0; // length field at buf[0..4] of a base node
+pub const FLST_FIRST: usize = 4; // first pointer at buf[4..10]
+pub const FLST_LAST: usize = FLST_FIRST + FIL_ADDR_SIZE; // last pointer at buf[10..16]
 
-pub const FLST_PREV: usize = 0;                        // prev pointer at buf[0..6] of a node
-pub const FLST_NEXT: usize = FIL_ADDR_SIZE;            // next pointer at buf[6..12] of a node
+pub const FLST_PREV: usize = 0; // prev pointer at buf[0..6] of a node
+pub const FLST_NEXT: usize = FIL_ADDR_SIZE; // next pointer at buf[6..12] of a node
 
 /// A 6-byte on-disk pointer: 4 bytes page number + 2 bytes byte offset.
 ///
 /// Read more here https://docs.google.com/document/d/17Cv1R1ELip8PYuCrQFgbkxe1KRfgsjWFyCje9bS9dRI/edit?tab=t.0#heading=h.z4emgsn9c5v6
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FilAddr {
-    pub page_no:  u32,
+    pub page_no: u32,
     pub byte_off: u16,
 }
 
 impl FilAddr {
     /// All-0xFF page_no means “null pointer”
-    pub const NULL: FilAddr = FilAddr {
-        page_no: u32::MAX,
-        byte_off: 0,
-    };
-
+    pub const NULL: FilAddr = FilAddr { page_no: u32::MAX, byte_off: 0 };
 
     /// Write this 6-byte FilAddr into `buf[offset..offset+FIL_ADDR_SIZE]`
     pub fn write(self, buf: &mut [u8], offset: usize) {
@@ -68,10 +62,12 @@ impl FilAddr {
         );
 
         // 1) write the 4-byte little-endian page_no
-        buf[offset + FIL_ADDR_PAGE .. offset + FIL_ADDR_PAGE + 4].copy_from_slice(&self.page_no.to_le_bytes());
+        buf[offset + FIL_ADDR_PAGE..offset + FIL_ADDR_PAGE + 4]
+            .copy_from_slice(&self.page_no.to_le_bytes());
 
         // 2) write the 2-byte little-endian byte_off
-        buf[offset + FIL_ADDR_BYTE .. offset + FIL_ADDR_BYTE + 2].copy_from_slice(&self.byte_off.to_le_bytes());
+        buf[offset + FIL_ADDR_BYTE..offset + FIL_ADDR_BYTE + 2]
+            .copy_from_slice(&self.byte_off.to_le_bytes());
     }
 
     /// Write the 4-byte length in a base-node. Below is the base node diagram
@@ -90,33 +86,38 @@ impl FilAddr {
         // Convert the usize (we assume it fits in u32) into 4 little‐endian bytes
         let bytes = (len as u32).to_le_bytes();
         // Copy those bytes into base[FLST_LEN..FLST_LEN+4]
-        base[FLST_LEN .. FLST_LEN + 4].copy_from_slice(&bytes);
+        base[FLST_LEN..FLST_LEN + 4].copy_from_slice(&bytes);
     }
 
-
     /// Write the 6-byte “first” pointer in a base-node
-    pub fn write_first(self, base: &mut [u8]) { self.write(base, FLST_FIRST) }
+    pub fn write_first(self, base: &mut [u8]) {
+        self.write(base, FLST_FIRST)
+    }
 
     /// Write the 6-byte “last” pointer in a base-node
-    pub fn write_last(self, base: &mut [u8]) { self.write(base, FLST_LAST) }
+    pub fn write_last(self, base: &mut [u8]) {
+        self.write(base, FLST_LAST)
+    }
 
     /// Write the 6-byte “prev” pointer in a list-node
-    pub fn write_prev(self, node: &mut [u8]) { self.write(node, FLST_PREV) }
+    pub fn write_prev(self, node: &mut [u8]) {
+        self.write(node, FLST_PREV)
+    }
 
     /// Write the 6-byte “next” pointer in a list-node
-    pub fn write_next(self, node: &mut [u8]) { self.write(node, FLST_NEXT) }
-
-
+    pub fn write_next(self, node: &mut [u8]) {
+        self.write(node, FLST_NEXT)
+    }
 
     /// Read a FilAddr from `buf[offset..offset+6]`.
     pub fn read(buf: &[u8], offset: usize) -> FilAddr {
         let page_no = u32::from_le_bytes(
-            buf[offset + FIL_ADDR_PAGE .. offset + FIL_ADDR_PAGE + 4]
+            buf[offset + FIL_ADDR_PAGE..offset + FIL_ADDR_PAGE + 4]
                 .try_into()
                 .unwrap(),
         );
         let byte_off = u16::from_le_bytes(
-            buf[offset + FIL_ADDR_BYTE .. offset + FIL_ADDR_BYTE + 2]
+            buf[offset + FIL_ADDR_BYTE..offset + FIL_ADDR_BYTE + 2]
                 .try_into()
                 .unwrap(),
         );
@@ -125,11 +126,8 @@ impl FilAddr {
 
     /// In a **base-node** (the list head), read the 4-byte length.
     pub fn len(base: &[u8]) -> usize {
-        u32::from_le_bytes(
-            base[FLST_LEN .. FLST_LEN + 4]
-                .try_into()
-                .unwrap(),
-        ) as usize
+        u32::from_le_bytes(base[FLST_LEN..FLST_LEN + 4].try_into().unwrap())
+            as usize
     }
 
     /// In a **base-node**, read the 6-byte “first” pointer.
@@ -152,7 +150,6 @@ impl FilAddr {
         FilAddr::read(node, FLST_NEXT)
     }
 
-
     /// Append *this* node to the tail of the list in `base`.
     ///
     /// - `new_node_buf` must be the 12-byte PREV/NEXT area for this node
@@ -164,7 +161,7 @@ impl FilAddr {
         prev_node_buf: Option<&mut [u8]>,
     ) {
         // 1) list state
-        let len       = FilAddr::len(base);
+        let len = FilAddr::len(base);
         let last_addr = FilAddr::last(base);
 
         // 1) init new node's back-pointer
@@ -193,5 +190,48 @@ impl FilAddr {
         // 4) set LAST and bump LEN
         self.write_last(base);
         self.write_len(base, len + 1);
+    }
+
+    /// Remove *this* node from the intrusive list in `base`.
+    /// Can remove the item from anywhere in the list.
+    /// - `node_buf` is the 12-byte PREV/NEXT area for this node.
+    /// - `prev_node_buf` is `Some(&mut [u8])` of the previous neighbor, if any.
+    /// - `next_node_buf` is `Some(&mut [u8])` of the next neighbor, if any.
+    pub fn remove(
+        self,
+        base: &mut [u8],
+        node_buf: &[u8],
+        prev_node_buf: Option<&mut [u8]>,
+        next_node_buf: Option<&mut [u8]>,
+    ) {
+        // 1) load list state
+        let len = FilAddr::len(base);
+        let prev_addr = FilAddr::prev(node_buf);
+        let next_addr = FilAddr::next(node_buf);
+
+        // 2) patch the previous neighbor (or FIRST in base)
+        if prev_addr != FilAddr::NULL {
+            let prev_buf = prev_node_buf
+                .expect("prev_node_buf required when prev != NULL");
+            // old-prev.next = my next
+            next_addr.write_next(prev_buf);
+        } else {
+            // I was the first node → update base.FIRST = my next
+            next_addr.write_first(base);
+        }
+
+        // 3) patch the next neighbor (or LAST in base)
+        if next_addr != FilAddr::NULL {
+            let next_buf = next_node_buf
+                .expect("next_node_buf required when next != NULL");
+            // old-next.prev = my prev
+            prev_addr.write_prev(next_buf);
+        } else {
+            // I was the last node → update base.LAST = my prev
+            prev_addr.write_last(base);
+        }
+
+        // 4) decrement the stored length
+        self.write_len(base, len - 1);
     }
 }
