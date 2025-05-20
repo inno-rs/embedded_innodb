@@ -1,4 +1,4 @@
-use crate::data::data0types::DTuple;
+use crate::data::data0types::{DField, DTuple};
 use crate::dict::dict0types::Index;
 use crate::innodb::innodb0types::{UNIV_PAGE_SIZE, UNIV_SQL_NULL};
 use crate::page::page0page::Page;
@@ -251,35 +251,38 @@ impl Record {
                 let field = d_tuple.dtuple_get_nth_field(i);
                 let ored_offset: usize;
 
-                if field.dfield_is_null() {
-                    let dtype = field.dfield_get_type();
-                    let length = dtype.dtype_get_sql_null_size();
+                match field.dfield_is_null() {
+                    true => {
+                        let dtype = field.dfield_get_type();
+                        let length = dtype.dtype_get_sql_null_size();
 
-                    if length != 0 {
-                        // Write an SQL null field full of zeros.
+                        if length != 0 {
+                            // Write an SQL null field full of zeros.
+                            unsafe {
+                                let ptr = self.ptr.add(end_offset);
+                                ptr::write_bytes(ptr, 0, length);
+                            }
+                        }
+
+                        end_offset += length;
+
+                        ored_offset = end_offset | REC_1BYTE_SQL_NULL_MASK;
+                    }
+                    false => {
+                        /* If the data is not an SQL nullptr, store it. */
+                        let length = field.dfield_get_len();
                         unsafe {
                             let ptr = self.ptr.add(end_offset);
-                            ptr::write_bytes(ptr, 0, length);
+                            ptr::copy_nonoverlapping(
+                                field.dfield_get_data(),
+                                ptr,
+                                length,
+                            );
                         }
+
+                        end_offset += length;
+                        ored_offset = end_offset;
                     }
-
-                    end_offset += length;
-
-                    ored_offset = end_offset | REC_1BYTE_SQL_NULL_MASK;
-                } else {
-                    /* If the data is not an SQL nullptr, store it. */
-                    let length = field.dfield_get_len();
-                    unsafe {
-                        let ptr = self.ptr.add(end_offset);
-                        ptr::copy_nonoverlapping(
-                            field.dfield_get_data(),
-                            ptr,
-                            length,
-                        );
-                    }
-
-                    end_offset += length;
-                    ored_offset = end_offset;
                 }
 
                 self.rec_1_set_field_end_info(i, ored_offset);

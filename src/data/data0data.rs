@@ -3,6 +3,15 @@ use crate::innodb::innodb0types::UNIV_SQL_NULL;
 use log::info;
 
 impl DTuple {
+    /// Creates a new tuple with the specified number of fields.
+    ///
+    /// # Arguments
+    ///
+    /// * `number_of_fields` - The number of fields to allocate in the tuple.
+    ///
+    /// # Returns
+    ///
+    /// * A new DTuple instance with the specified number of fields.
     pub fn new(number_of_fields: usize) -> Self {
         let d_fields =
             vec![DField::new(std::ptr::null_mut()); number_of_fields];
@@ -23,6 +32,11 @@ impl DTuple {
         self.info_bits = self.info_bits;
     }
 
+    /// Gets the info bits of the tuple.
+    ///
+    /// # Returns
+    ///
+    /// * The info bits of the tuple.
     pub fn dtuple_get_info_bits(&self) -> usize {
         info!("Getting info bits: {}", self.info_bits);
         self.info_bits
@@ -84,6 +98,15 @@ impl DTuple {
 }
 
 impl DField {
+    /// Creates a new data field with the specified data pointer.
+    ///
+    /// # Arguments
+    ///
+    /// * `data_ptr` - Pointer to the data for this field.
+    ///
+    /// # Returns
+    ///
+    /// * A new DField instance with the specified data pointer.
     pub fn new(data_ptr: *mut u8) -> Self {
         DField {
             data: data_ptr,
@@ -146,17 +169,67 @@ impl DField {
         self.len
     }
 
+    /// Gets the data type of the field.
+    ///
+    /// # Returns
+    ///
+    /// * A clone of the field's data type.
     pub fn dfield_get_type(&self) -> DType {
         self.field_type.clone()
     }
 
-    /// Determine if the field is an SQL nullptr.
+    /// Determines if the field is an SQL nullptr.
+    ///
+    /// # Returns
+    ///
+    /// * `true` if the field is NULL, `false` otherwise.
     pub fn dfield_is_null(&self) -> bool {
         self.len == UNIV_SQL_NULL
+    }
+
+    /// Determines if the field is stored externally.
+    ///
+    /// # Returns
+    ///
+    /// * `true` if the field is stored externally, `false` otherwise.
+    pub fn dfield_is_ext(&self) -> bool {
+        self.ext
+    }
+
+    /// Compares two data fields for binary equality.
+    ///
+    /// # Arguments
+    ///
+    /// * `field1` - The first field to compare.
+    /// * `field2` - The second field to compare.
+    ///
+    /// # Returns
+    ///
+    /// * `true` if the fields have identical data, `false` otherwise.
+    pub fn dfield_data_are_binary_equal(
+        field1: &DField,
+        field2: &DField,
+    ) -> bool {
+        let len = field1.dfield_get_len();
+
+        len == field2.dfield_get_len()
+            && (field1.dfield_get_len() == UNIV_SQL_NULL
+                || unsafe {
+                    std::slice::from_raw_parts(field1.dfield_get_data(), len)
+                        == std::slice::from_raw_parts(
+                            field2.dfield_get_data(),
+                            len,
+                        )
+                })
     }
 }
 
 impl DType {
+    /// Gets the size of an SQL NULL value for this data type.
+    ///
+    /// # Returns
+    ///
+    /// * The size of an SQL NULL value for this data type.
     pub fn dtype_get_sql_null_size(&self) -> usize {
         // The size of SQL NULL is 0
         0
