@@ -684,6 +684,9 @@ impl Record {
             end_offset_n_field &= !REC_1BYTE_SQL_NULL_MASK;
         }
 
+        // The offset of the n-field end is measured from the record start.
+        // Before the record starts
+        // we have metadata about the record.
         REC_N_EXTRA_BYTES + n_field + end_offset_n_field
     }
 }
