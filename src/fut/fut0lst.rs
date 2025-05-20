@@ -74,6 +74,40 @@ impl FilAddr {
         buf[offset + FIL_ADDR_BYTE .. offset + FIL_ADDR_BYTE + 2].copy_from_slice(&self.byte_off.to_le_bytes());
     }
 
+    /// Write the 4-byte length in a base-node. Below is the base node diagram
+    /// First and Last are the pointers to first list node and  last list node
+    /// ┌─────────────────────────────────────┐
+    // │ bytes 0..4 │ bytes 4..10 │ bytes 10..16 │
+    // │   LEN      │   FIRST     │    LAST      │
+    // └─────────────────────────────────────┘
+    /// Write the 4‐byte list‐length (LE u32) into a base‐node at offset FLST_LEN.
+    pub fn write_len(self, base: &mut [u8], len: usize) {
+        // In debug builds, ensure we have room for 4 bytes at FLST_LEN
+        debug_assert!(
+            base.len() >= FLST_LEN + 4,
+            "buffer too small for write_len"
+        );
+        // Convert the usize (we assume it fits in u32) into 4 little‐endian bytes
+        let bytes = (len as u32).to_le_bytes();
+        // Copy those bytes into base[FLST_LEN..FLST_LEN+4]
+        base[FLST_LEN .. FLST_LEN + 4].copy_from_slice(&bytes);
+    }
+
+
+    /// Write the 6-byte “first” pointer in a base-node
+    pub fn write_first(self, base: &mut [u8]) { self.write(base, FLST_FIRST) }
+
+    /// Write the 6-byte “last” pointer in a base-node
+    pub fn write_last(self, base: &mut [u8]) { self.write(base, FLST_LAST) }
+
+    /// Write the 6-byte “prev” pointer in a list-node
+    pub fn write_prev(self, node: &mut [u8]) { self.write(node, FLST_PREV) }
+
+    /// Write the 6-byte “next” pointer in a list-node
+    pub fn write_next(self, node: &mut [u8]) { self.write(node, FLST_NEXT) }
+
+
+
     /// Read a FilAddr from `buf[offset..offset+6]`.
     pub fn read(buf: &[u8], offset: usize) -> FilAddr {
         let page_no = u32::from_le_bytes(
@@ -116,5 +150,48 @@ impl FilAddr {
     /// In a **list-node**, read the 6-byte “next” pointer.
     pub fn next(node: &[u8]) -> FilAddr {
         FilAddr::read(node, FLST_NEXT)
+    }
+
+
+    /// Append *this* node to the tail of the list in `base`.
+    ///
+    /// - `new_node_buf` must be the 12-byte PREV/NEXT area for this node
+    /// - `prev_node_buf` is `Some(&mut [u8])` of the old last node, or `None` if empty
+    pub fn add_last(
+        self,
+        base: &mut [u8],
+        new_node_buf: &mut [u8],
+        prev_node_buf: Option<&mut [u8]>,
+    ) {
+        // 1) list state
+        let len       = FilAddr::len(base);
+        let last_addr = FilAddr::last(base);
+
+        // 1) init new node's back-pointer
+        if len == 0 {
+            // empty list → no prev
+            FilAddr::NULL.write_prev(new_node_buf);
+        } else {
+            // non-empty → prev = old tail
+            let last_addr = FilAddr::last(base);
+            last_addr.write_prev(new_node_buf);
+        }
+        FilAddr::NULL.write_next(new_node_buf);
+
+        // 3) patch base or old-last
+        if len == 0 {
+            // empty list → update FIRST
+            self.write_first(base);
+        } else {
+            // nonempty → patch old-last.next = me
+            let old_last_buf = prev_node_buf
+                .expect("prev_node_buf required for nonempty list");
+            // Update the next pointer of the old_last_buf
+            self.write_next(old_last_buf);
+        }
+
+        // 4) set LAST and bump LEN
+        self.write_last(base);
+        self.write_len(base, len + 1);
     }
 }
