@@ -1,11 +1,26 @@
 use derive_builder::Builder;
 
-/** Flags ORed to the precise data type */
-
-/** This is ORed to the precise type when the column is declared as NOT nullptr. */
-pub const DATA_NOT_NULL: usize = 256;
-
-/* The 'MAIN TYPE' of a column */
+/*
+The 'MAIN TYPE' of a column
++------+-------------------+--------------------------------------------+
+| Code | Macro             | Meaning                                    |
++------+-------------------+--------------------------------------------+
+|  1   | DATA_VARCHAR      | Variable-length character string           |
+|  2   | DATA_CHAR         | Fixed-length character string              |
+|  3   | DATA_FIXBINARY    | Fixed-length binary string                 |
+|  4   | DATA_BINARY       | Variable-length binary string              |
+|  5   | DATA_BLOB         | Large binary object (BLOB, TEXT, etc.)     |
+|  6   | DATA_INT          | Integer (1–8 bytes)                        |
+|  7   | DATA_SYS_CHILD    | Pointer to child page (non-leaf node)      |
+|  8   | DATA_SYS          | System column (e.g., trx_id, roll_ptr)     |
+|  9   | DATA_FLOAT        | Single-precision floating point             |
+| 10   | DATA_DOUBLE       | Double-precision floating point             |
+| 11   | DATA_DECIMAL      | ASCII string-encoded decimal value         |
+| 12   | DATA_VARCLIENT    | Variable-length char for client use        |
+| 13   | DATA_CLIENT       | Charset string (any char/varchar variant)  |
+| 13   | DATA_MTYPE_MAX    | Maximum value used for mtype               |
++------+-------------------+--------------------------------------------+
+*/
 
 /// Character varying of the latin1_swedish_ci charset-collection.
 pub const DATA_VARCHAR: usize = 1;
@@ -38,8 +53,85 @@ pub const DATA_DOUBLE: usize = 10;
 /// Decimal number stored as an ASCII string.
 pub const DATA_DECIMAL: usize = 11;
 
+pub const DATA_VARCLIENT: usize = 12;
+
+pub const DATA_CLIENT: usize = 13;
+
+pub const DATA_MTYPE_MAX: usize = 63;
+
+/// Precise data types
+
+/// Row id.
+pub const DATA_ROW_ID: usize = 0;
+pub const DATA_ROW_ID_LEN: usize = 6;
+
+/// Transaction id.
+pub const DATA_TRX_ID: usize = 1;
+pub const DATA_TRX_ID_LEN: usize = 6;
+
+/// Rollback pointer.
+pub const DATA_ROLL_PTR: usize = 2;
+pub const DATA_ROLL_PTR_LEN: usize = 7;
+
+/// Number of sys columns
+pub const DATA_SYS_COLS: usize = 3;
+
+/** Flags ORed to the precise data type */
+
+/** This is ORed to the precise type when the column is declared as NOT nullptr. */
+pub const DATA_NOT_NULL: usize = 256;
+
+/// Unsigned integer
+pub const DATA_UNSIGNED: usize = 512;
+
+/// Binary string
+pub const DATA_BINARY_TYPE: usize = 1024;
+
+/// Data custom type
+pub const DATA_CUSTOM_TYPE: usize = 2048;
+
 /** English language character string: only used for InnoDB's own system tables */
 pub const DATA_ENGLISH: usize = 4;
+
+/*
+┌────────────────────────────────────────────────────┐
+│                    dtype_t                         │
+├──────────────┬─────────────────────────────────────┤
+│  Field       │  Role / Controls                    │
+├──────────────┼─────────────────────────────────────┤
+│ m_type       │  ▸ Storage **category**              │
+│              │     - DATA_INT, DATA_VARCHAR, etc.  │
+│              │  ▸ Selects encoding layout          │
+│              │  ▸ Affects variable vs fixed        │
+├──────────────┼─────────────────────────────────────┤
+│ pr_type      │  ▸ **Flags and attributes**          │
+│              │     - Nullable (DATA_NOT_NULL)      │
+│              │     - Unsigned (DATA_UNSIGNED)      │
+│              │     - Charset/binary (DATA_BINARY)  │
+│              │     - MySQL type ID (<< 24)         │
+│              │  ▸ Affects indexing, comparison     │
+├──────────────┼─────────────────────────────────────┤
+│ len          │  ▸ Max **length in bytes**           │
+│              │  ▸ For fixed: exact size            │
+│              │  ▸ For varchar/blob: max byte size  │
+└──────────────┴─────────────────────────────────────┘
+
+Example: 
+
+Column: VARCHAR(255) CHARACTER SET utf8mb4 NOT NULL
+
+m_type   = DATA_VARCHAR
+pr_type  = DATA_NOT_NULL | DATA_MBMINMAXLEN | (4 << 8) | (MYSQL_TYPE_VARCHAR << 24)
+len     = 1020  (255 × 4 bytes for utf8mb4)
+
+
+Column Definition → dtype_t → Record Format
+   │                 │            │
+   ├── CHAR(10) ─────┘            └── 10 bytes, fixed, no prefix
+   ├── VARCHAR(500)              → 1–2 byte length prefix + data
+   ├── INT UNSIGNED NOT NULL     → 4 bytes, unsigned, no null bit
+   └── TEXT                      → 20-byte external pointer
+*/
 
 #[derive(Clone, Builder)]
 pub struct DType {

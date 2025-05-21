@@ -327,6 +327,10 @@ impl Page {
         }
     }
 
+    pub unsafe fn page_header_get_ptr(&self, field: usize) -> *mut u8 {
+        unsafe { self.ptr.add(self.page_header_get_field(field)) }
+    }
+
     /// Set the header of the free list.
     ///
     /// # Arguments
@@ -376,7 +380,33 @@ impl Page {
     /// # Returns
     ///
     /// * This function currently has no implementation and returns nothing.
-    pub fn page_mem_alloc_heap(&self, need: usize) {}
+    pub fn page_mem_alloc_heap(&self, need: usize) -> Option<Record> {
+        let available_space = self.page_get_max_insert_size(1);
+
+        if available_space >= need {
+            unsafe {
+                let block = self.page_header_get_ptr(PAGE_HEAP_TOP);
+
+                /* 1. Update the page header to point to the new heap top.  */
+                self.page_header_set_field(
+                    PAGE_HEAP_TOP,
+                    self.page_header_get_field(PAGE_HEAP_TOP) + need,
+                );
+
+                /* 2. Update the heap no in the page header. */
+                let heap_no = self.page_dir_get_n_heap();
+                self.page_dir_set_n_heap(heap_no + 1);
+
+                /* 3. Create a record from the block, and update its heap no. */
+                let record = Record::new(block);
+                record.rec_set_heap_no(heap_no);
+
+                return Some(record);
+            }
+        }
+
+        None
+    }
 
     /// Checks if the current page is a leaf node.
     ///
@@ -939,5 +969,14 @@ impl Page {
         };
 
         rec.rec_set_next_offs(offset);
+    }
+
+    pub fn page_rec_find_owner_rec(&self, rec: Record) -> Record {
+        let mut cur = rec;
+        while cur.rec_get_n_owned() == 0 {
+            cur = cur.rec_get_next().unwrap();
+        }
+
+        rec
     }
 }

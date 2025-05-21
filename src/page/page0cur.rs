@@ -1,7 +1,9 @@
 use crate::buf::buf0types::BufBlock;
 use crate::dict::dict0types::Index;
 use crate::mtr::mtr0mtr::Mtr;
-use crate::page::page0page::{Page, PAGE_DIR_SLOT_MIN_N_OWNED, PAGE_N_RECS};
+use crate::page::page0page::{
+    Page, PAGE_DIR_SLOT_MAX_N_OWNED, PAGE_DIR_SLOT_MIN_N_OWNED, PAGE_N_RECS,
+};
 use crate::rem::rem0rec::Record;
 use crate::ut::ut0dbg::ut_ad;
 use std::ptr::null_mut;
@@ -34,7 +36,11 @@ impl PageCur {
     /// # Returns
     ///
     /// * A new `PageCur` instance.
-    pub fn new(index: Arc<Mutex<Index>>, rec: Record, block: BufBlock) -> Self {
+    pub fn new(
+        index: Arc<Mutex<Index>>,
+        rec: Record,
+        block: BufBlock,
+    ) -> Self {
         let frame = block.getFrame();
         PageCur { index, rec, block, page: Page::new(frame) }
     }
@@ -239,12 +245,28 @@ impl PageCur {
     ///   - Inserts the record in the linked list of records
     ///   - Updates the page header to increment the record count
     ///   - Sets the n_owned field in the inserted record to zero
-    pub fn page_cur_insert_rec_low(&self, rec: Record, mtr: &Mtr) {
+    pub fn page_cur_insert_rec_low(&self, rec: Record, mtr: Option<Mtr>) {
         ut_ad!(!self.page.page_rec_is_supremum(self.rec));
 
-        let rec_size = rec.rec_get_data_size();
+        /* 1. Get the size of the physical record. */
+        let rec_size = rec.rec_offs_size();
 
-        let mut insert_rec = Record::new(null_mut());
+        /* 2. Find a suitable space from page memory management. */
+        let mut insert_rec_opt: Option<Record> = None;
+
+        let free_list = self.page.page_header_get_page_free();
+        match free_list {
+            Some(head) => {
+                todo!("found some element in the free list, utilize it.")
+            }
+            None => {
+                insert_rec_opt = self.page.page_mem_alloc_heap(rec_size);
+            }
+        }
+
+        let mut insert_rec = insert_rec_opt.unwrap();
+
+        /* 3. Copy the record. */
         rec.rec_copy(&mut insert_rec);
 
         /* 4. Insert the record in the linked list of records. */
@@ -260,5 +282,23 @@ impl PageCur {
         /* 5. Set the n_owned field in the inserted record to zero and set the heap no field.*/
 
         insert_rec.rec_set_n_owned(0);
+
+        /* 7. It remains to update the owner record. */
+        let owner_rec = self.page.page_rec_find_owner_rec(insert_rec);
+        let n_owned = owner_rec.rec_get_n_owned();
+
+        owner_rec.rec_set_n_owned(n_owned + 1);
+
+        /* 8. Now we have incremented the n_owner fields of owner record.
+        If the number exceeds PAGE_DIR_SLOT_MAX_N_OWNED,
+        we have to split the corresponding directory slot. */
+
+        if n_owned == PAGE_DIR_SLOT_MAX_N_OWNED {
+            self.page.page_dir_split_slot(
+                self.page.page_dir_find_owner_slot(owner_rec),
+            );
+        }
+
+        /* 9. Write the log record of the insert. */
     }
 }
