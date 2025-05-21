@@ -137,6 +137,15 @@ impl Record {
         buf
     }
 
+    /// Copies the content of this record to another record.
+    ///
+    /// # Arguments
+    ///
+    /// * `copy_to` - The destination record to copy to.
+    ///
+    /// # Returns
+    ///
+    /// * `()` - This function does not return a value.
     pub fn rec_copy(&self, copy_to: &mut Record) {
         let data_size = self.rec_get_data_size();
         let extra_len = REC_N_EXTRA_BYTES + self.rec_get_n_fields();
@@ -216,7 +225,7 @@ impl Record {
         Some(prev_rec)
     }
 
-    /// Builds a physical record out of a data tuple, and stores it in the record.
+    /// Builds a physical record out of a data tuple and stores it in the record.
     ///
     /// # Arguments
     ///
@@ -224,10 +233,14 @@ impl Record {
     /// * `d_tuple`: The data tuple to convert.
     /// * `n_ext`: The number of external fields.
     ///
+    /// # Returns
+    ///
+    /// * A new Record instance containing the converted data tuple.
+    ///
     pub fn rec_convert_dtuple_to_rec(
         &self,
         index: &Index,
-        mut d_tuple: DTuple,
+        d_tuple: &DTuple,
         n_ext: usize,
     ) -> Record {
         info!("rec_convert_dtuple_to_rec");
@@ -457,10 +470,19 @@ impl Record {
         }
     }
 
-    /// Reads the start offset the data field in the record.
+    /// Reads the start offset of the data field in the record.
+    ///
     /// The start of the SQL null field is the end offset of the previous non-null field,
     /// or 0. If n is the number of last field + 1,
     /// then the end offset of the last field is returned.
+    ///
+    /// # Arguments
+    ///
+    /// * `field_no` - The field number to get the start offset for.
+    ///
+    /// # Returns
+    ///
+    /// * The start offset of the specified field in the record.
     pub fn rec_get_field_start_offs(&self, field_no: usize) -> usize {
         if field_no == 0 {
             0
@@ -570,6 +592,19 @@ impl Record {
         (offset, next_offset - offset)
     }
 
+    /// Gets the nth field from the record.
+    ///
+    /// # Arguments
+    ///
+    /// * `n_field` - The field number to retrieve.
+    ///
+    /// # Returns
+    ///
+    /// * A value representing the field (currently always returns 0).
+    ///
+    /// # Panics
+    ///
+    /// * If the field number is out of range.
     pub fn rec_get_nth_field(&self, n_field: usize) -> usize {
         let fields_count = self.rec_get_n_fields();
         if n_field >= fields_count {
@@ -579,11 +614,14 @@ impl Record {
         0
     }
 
-    /// This function returns the data size of a physical record which is the sum of field lengths. SQL null fields are counted as lengths of zero. The value returned by the function is difference between record origin and record end.
+    /// Returns the data size of a physical record which is the sum of field lengths.
+    ///
+    /// SQL null fields are counted as lengths of zero. The value returned by the function 
+    /// is the difference between record origin and record end.
     ///
     /// # Returns
     ///
-    ///
+    /// * The total data size of the record in bytes.
     pub fn rec_get_data_size(&self) -> usize {
         self.rec_1_get_field_start_offs(self.rec_get_n_fields())
     }
@@ -616,8 +654,14 @@ impl Record {
         }
     }
 
-    /// Converts a physical record to string.
+    /// Converts a physical record to a human-readable string representation.
     ///
+    /// This function formats the record with information about the number of fields,
+    /// offset size, info bits, and the content of each field.
+    ///
+    /// # Returns
+    ///
+    /// * A string representation of the record.
     pub fn rec_to_string(&self) -> String {
         let n_fields = self.rec_get_n_fields();
         let info_bits = self.rec_get_info_bits();
@@ -673,7 +717,13 @@ impl Record {
         todo!("implement for 2 byte offset")
     }
 
-    /// Returns the total size of the physical record.
+    /// Returns the total size of the physical record in bytes.
+    ///
+    /// This includes both the data size and the extra bytes used for record metadata.
+    ///
+    /// # Returns
+    ///
+    /// * The total size of the record in bytes.
     pub fn rec_offs_size(&self) -> usize {
         let n_field = self.rec_get_n_fields();
         let mut end_offset_n_field = self.rec_1_get_field_end_info(n_field);

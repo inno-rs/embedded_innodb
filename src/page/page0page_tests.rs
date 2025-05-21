@@ -326,15 +326,12 @@ mod tests {
         assert_eq!(2, page.page_dir_get_n_slots());
 
         page.page_dir_add_slot(1);
-
         assert_eq!(3, page.page_dir_get_n_slots());
 
         page.page_dir_add_slot(0);
-
         assert_eq!(4, page.page_dir_get_n_slots());
 
         page.page_dir_add_slot(3);
-
         assert_eq!(5, page.page_dir_get_n_slots());
-    }
+    }    
 }
