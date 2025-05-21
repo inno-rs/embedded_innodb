@@ -1,4 +1,4 @@
-use crate::buf::buf0types::BufBlock;
+use crate::buf::buf0types::{BufBlock, Frame};
 use crate::data::data0types::{
     DTuple, DATA_ENGLISH, DATA_NOT_NULL, DATA_VARCHAR,
 };
@@ -143,6 +143,7 @@ pub const PAGE_DIR: usize = FIL_PAGE_DATA_END;
 /// We define a slot in the page directory as two bytes.
 pub const PAGE_DIR_SLOT_SIZE: usize = 2;
 
+#[derive(Copy, Clone)]
 pub(crate) struct Page {
     ptr: *mut u8,
 }
@@ -704,7 +705,7 @@ impl Page {
         let mut infimum_d_tuple = DTuple::new(1);
         infimum_d_tuple.dtuple_set_info_bits(REC_STATUS_INFIMUM);
 
-        let infimum_field = infimum_d_tuple.dtuple_get_nth_field(0);
+        let infimum_field = infimum_d_tuple.dtuple_get_nth_field_mut(0);
 
         infimum_field.dfield_set_data(
             "infimumr".as_ptr(),
@@ -716,7 +717,7 @@ impl Page {
         println!("heap_top: {}", heap_top as usize);
         let infimum_rec = Record::new(heap_top).rec_convert_dtuple_to_rec(
             index,
-            infimum_d_tuple,
+            &infimum_d_tuple,
             0,
         );
         println!("infimum no of fields: {}", infimum_rec.rec_get_n_fields());
@@ -729,7 +730,7 @@ impl Page {
         let mut supremum_tuple = DTuple::new(1);
         supremum_tuple.dtuple_set_info_bits(REC_STATUS_SUPREMUM);
 
-        let supremum_field = supremum_tuple.dtuple_get_nth_field(0);
+        let supremum_field = supremum_tuple.dtuple_get_nth_field_mut(0);
         supremum_field.dfield_set_data(
             "supremumr".as_ptr(),
             9, /* size of supremum string*/
@@ -739,7 +740,7 @@ impl Page {
         let heap_top = unsafe { ptr.add(PAGE_SUPREMUM) };
         let supremum_rec = Record::new(heap_top).rec_convert_dtuple_to_rec(
             index,
-            supremum_tuple,
+            &supremum_tuple,
             0,
         );
         println!("supremum no of fields: {}", supremum_rec.rec_get_n_fields());
@@ -898,7 +899,7 @@ impl Page {
     ///
     /// * This function does not return a value.
     pub fn page_set_next_rec(&self, rec: Record, next_rec: Option<Record>) {
-        ut_ad!(self.page_rec_is_supremum(rec));
+        ut_ad!(!self.page_rec_is_supremum(rec));
         ut_ad!(next_rec.is_some() && rec != next_rec.unwrap());
 
         let offset = next_rec.map_or(0, |r| self.page_offset(r));

@@ -40,9 +40,9 @@ impl PageCur {
         index: Arc<Mutex<Index>>,
         rec: Record,
         block: BufBlock,
+        page: Page,
     ) -> Self {
-        let frame = block.getFrame();
-        PageCur { index, rec, block, page: Page::new(frame) }
+        PageCur { index, rec, block, page }
     }
 
     /// Gets the record to which the cursor points.
@@ -245,7 +245,11 @@ impl PageCur {
     ///   - Inserts the record in the linked list of records
     ///   - Updates the page header to increment the record count
     ///   - Sets the n_owned field in the inserted record to zero
-    pub fn page_cur_insert_rec_low(&self, rec: Record, mtr: Option<Mtr>) {
+    pub fn page_cur_insert_rec_low(
+        &self,
+        rec: Record,
+        mtr: Option<Mtr>,
+    ) -> Option<Record> {
         ut_ad!(!self.page.page_rec_is_supremum(self.rec));
 
         /* 1. Get the size of the physical record. */
@@ -300,5 +304,7 @@ impl PageCur {
         }
 
         /* 9. Write the log record of the insert. */
+
+        insert_rec_opt
     }
 }

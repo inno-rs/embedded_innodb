@@ -18,6 +18,7 @@ mod srv;
 mod trx;
 mod utils;
 mod ut;
+mod tests;
 
 fn main() {
     println!("Hello, world!");

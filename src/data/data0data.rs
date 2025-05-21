@@ -51,10 +51,32 @@ impl DTuple {
     /// # Returns
     ///
     /// * The nth field of the tuple.
-    pub fn dtuple_get_nth_field(&mut self, n: usize) -> &mut DField {
+    pub fn dtuple_get_nth_field_mut(&mut self, n: usize) -> &mut DField {
         info!("Getting field number: {}", n);
         if n < self.n_fields {
             self.fields.get_mut(n).unwrap()
+        } else {
+            panic!("Field number out of range");
+        }
+    }
+
+    /// Retrieve the nth field from the tuple (immutable reference).
+    ///
+    /// # Arguments
+    ///
+    /// * `n` - The index of the field to retrieve.
+    ///
+    /// # Returns
+    ///
+    /// * The nth field of the tuple.
+    ///
+    /// # Panics
+    ///
+    /// * If the field number is out of range.
+    pub fn dtuple_get_nth_field(&self, n: usize) -> &DField {
+        info!("Getting field number: {}", n);
+        if n < self.n_fields {
+            self.fields.get(n).unwrap()
         } else {
             panic!("Field number out of range");
         }
