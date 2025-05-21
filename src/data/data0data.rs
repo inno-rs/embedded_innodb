@@ -134,7 +134,7 @@ impl DField {
             data: data_ptr,
             len: 0,
             ext: false,
-            field_type: DType {
+            dtype: DType {
                 m_type: 0,
                 len: 0,
                 pr_type: 0,
@@ -177,9 +177,9 @@ impl DField {
     ///
     pub fn set_type(&mut self, m_type: usize, pr_type: usize, len: usize) {
         info!("Setting type: {} {} {}", m_type, pr_type, len);
-        self.field_type.m_type = m_type as u8;
-        self.field_type.pr_type = pr_type;
-        self.field_type.len = len as u16;
+        self.dtype.m_type = m_type as u16;
+        self.dtype.pr_type = pr_type;
+        self.dtype.len = len as u16;
     }
 
     /// Get length of field data.
@@ -197,7 +197,7 @@ impl DField {
     ///
     /// * A clone of the field's data type.
     pub fn dfield_get_type(&self) -> DType {
-        self.field_type.clone()
+        self.dtype.clone()
     }
 
     /// Determines if the field is an SQL nullptr.

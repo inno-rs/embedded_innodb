@@ -1,10 +1,17 @@
 #[cfg(test)]
 mod tests {
-    use crate::tests::test0utils::create_dtuples;
-    
+    use crate::tests::test0utils::{create_dtuples, FieldType};
+
     #[test]
     fn test_create_data_tuple() {
-        let dtuples = create_dtuples(1);
+        let dtuples = create_dtuples(
+            1,
+            vec![
+                FieldType::String,
+                FieldType::String,
+                FieldType::StringNull,
+            ],
+        );
 
         let dtuple = &dtuples.first().unwrap().dtuple;
 

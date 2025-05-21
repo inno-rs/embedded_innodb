@@ -6,7 +6,7 @@ mod tests {
     use crate::page::page0cur::PageCur;
     use crate::page::page0page::Page;
     use crate::rem::rem0rec::Record;
-    use crate::tests::test0utils::create_dtuples;
+    use crate::tests::test0utils::{create_dtuples, FieldType};
     use rstest::{fixture, rstest};
     use std::alloc::{alloc_zeroed, Layout};
     use std::sync::{Arc, Mutex};
@@ -59,7 +59,7 @@ mod tests {
     fn page_cur_fixture() -> PageCurFixture {
         PageCurFixture::new()
     }
-    
+
     #[rstest]
     #[ignore]
     fn test_page_cur_get_rec(page_cur_fixture: PageCurFixture) {
@@ -72,7 +72,7 @@ mod tests {
     #[rstest]
     fn test_page_cur_insert_low(page_cur_fixture: PageCurFixture) {
         {
-            let dtuples = create_dtuples(1);
+            let dtuples = create_dtuples(1, vec![FieldType::String]);
             let owning_dtuple = dtuples.first().unwrap();
             let mut temp_mem = vec![0; UNIV_PAGE_SIZE];
             let rec: Record;
@@ -97,7 +97,7 @@ mod tests {
 
             let rec = new_rec.unwrap();
 
-            assert_eq!(rec.rec_get_n_fields(), 3);
+            assert_eq!(rec.rec_get_n_fields(), 1);
         }
     }
 }

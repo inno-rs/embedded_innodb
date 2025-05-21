@@ -119,7 +119,7 @@ fn cmp_rec_rec(
             }
         }
 
-        if m_type == DATA_FLOAT as u8 {
+        if m_type == DATA_FLOAT as u16 {
             let ret = cmp_whole_field(
                 m_type as usize,
                 pr_type,
