@@ -18,7 +18,7 @@ The 'MAIN TYPE' of a column
 | 11   | DATA_DECIMAL      | ASCII string-encoded decimal value         |
 | 12   | DATA_VARCLIENT    | Variable-length char for client use        |
 | 13   | DATA_CLIENT       | Charset string (any char/varchar variant)  |
-| 13   | DATA_MTYPE_MAX    | Maximum value used for mtype               |
+| 63   | DATA_MTYPE_MAX    | Maximum value used for mtype               |
 +------+-------------------+--------------------------------------------+
 */
 
@@ -116,7 +116,7 @@ pub const DATA_ENGLISH: usize = 4;
 │              │  ▸ For varchar/blob: max byte size  │
 └──────────────┴─────────────────────────────────────┘
 
-Example: 
+Example:
 
 Column: VARCHAR(255) CHARACTER SET utf8mb4 NOT NULL
 
@@ -136,7 +136,7 @@ Column Definition → dtype_t → Record Format
 #[derive(Clone, Builder)]
 pub struct DType {
     /// Main data type.
-    pub m_type: u8,
+    pub m_type: u16,
     /// Length of the column in bytes.
     pub len: u16,
     /// Precise type; user data type, charset code,
@@ -172,5 +172,118 @@ pub struct DField {
     #[builder(default = false)]
     pub ext: bool,
     /// Type of data.
-    pub field_type: DType,
+    pub dtype: DType,
 }
+
+// Compile-time constants for each DType
+pub const DTYPE_VARCHAR: DType = DType {
+    m_type: DATA_VARCHAR as u16,
+    pr_type: 0,
+    len: 0,
+    mb_min_len: 0,
+    mb_max_len: 0,
+};
+
+pub const DTYPE_CHAR: DType = DType {
+    m_type: DATA_CHAR as u16,
+    pr_type: 0,
+    len: 0,
+    mb_min_len: 0,
+    mb_max_len: 0,
+};
+
+pub const DTYPE_FIXBINARY: DType = DType {
+    m_type: DATA_FIXBINARY as u16,
+    pr_type: DATA_BINARY_TYPE,
+    len: 0,
+    mb_min_len: 0,
+    mb_max_len: 0,
+};
+
+pub const DTYPE_BINARY: DType = DType {
+    m_type: DATA_BINARY as u16,
+    pr_type: DATA_BINARY_TYPE,
+    len: 0,
+    mb_min_len: 0,
+    mb_max_len: 0,
+};
+
+pub const DTYPE_BLOB: DType = DType {
+    m_type: DATA_BLOB as u16,
+    pr_type: 0,
+    len: 0,
+    mb_min_len: 0,
+    mb_max_len: 0,
+};
+
+pub const DTYPE_INT: DType = DType {
+    m_type: DATA_INT as u16,
+    pr_type: 0,
+    len: 4,
+    mb_min_len: 0,
+    mb_max_len: 0,
+};
+
+pub const DTYPE_INT_UNSIGNED: DType = DType {
+    m_type: DATA_INT as u16,
+    pr_type: DATA_UNSIGNED,
+    len: 0,
+    mb_min_len: 0,
+    mb_max_len: 0,
+};
+
+pub const DTYPE_SYS_CHILD: DType = DType {
+    m_type: DATA_SYS_CHILD as u16,
+    pr_type: 0,
+    len: 4,
+    mb_min_len: 0,
+    mb_max_len: 0,
+};
+
+pub const DTYPE_SYS: DType = DType {
+    m_type: DATA_SYS as u16,
+    pr_type: 0,
+    len: 0,
+    mb_min_len: 0,
+    mb_max_len: 0,
+};
+
+pub const DTYPE_FLOAT: DType = DType {
+    m_type: DATA_FLOAT as u16,
+    pr_type: 0,
+    len: 4,
+    mb_min_len: 0,
+    mb_max_len: 0,
+};
+
+pub const DTYPE_DOUBLE: DType = DType {
+    m_type: DATA_DOUBLE as u16,
+    pr_type: 0,
+    len: 8,
+    mb_min_len: 0,
+    mb_max_len: 0,
+};
+
+pub const DTYPE_DECIMAL: DType = DType {
+    m_type: DATA_DECIMAL as u16,
+    pr_type: 0,
+    len: 0,
+    mb_min_len: 0,
+    mb_max_len: 0,
+};
+
+pub const DTYPE_VARCLIENT: DType = DType {
+    m_type: DATA_VARCLIENT as u16,
+    pr_type: 0,
+    len: 0,
+    mb_min_len: 0,
+    mb_max_len: 0,
+};
+
+pub const DTYPE_CLIENT: DType = DType {
+    m_type: DATA_CLIENT as u16,
+    pr_type: DATA_BINARY_TYPE,
+    len: 0,
+    mb_min_len: 0,
+    mb_max_len: 0,
+};
