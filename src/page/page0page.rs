@@ -293,7 +293,7 @@ impl Page {
     ///
     /// # Returns
     /// A `Record` object representing the supremum record.
-    ///    
+    ///
     pub fn page_get_supremum_rec(&self) -> Record {
         let ptr = unsafe { self.ptr.add(PAGE_SUPREMUM) };
         Record::new(ptr)
@@ -695,6 +695,11 @@ impl Page {
         let ptr = buf.getFrame();
         let page = Page::new(ptr);
 
+        ut_ad!(
+            page.ptr as usize % UNIV_PAGE_SIZE == 0,
+            "page needs to be aligned to UNIV_PAGE_SIZE"
+        );
+
         if !mtr.is_none() {
             page.page_create_write_log(buf, mtr.unwrap());
         }
@@ -744,6 +749,7 @@ impl Page {
             0,
         );
         println!("supremum no of fields: {}", supremum_rec.rec_get_n_fields());
+        println!("supremum position: {}", supremum_rec.get_ptr() as usize);
         supremum_rec.rec_set_n_owned(1);
         // supremum_rec.rec_set_heap_no(1);
 
@@ -767,6 +773,14 @@ impl Page {
         page.page_dir_slot_set_rec(0, infimum_rec);
         page.page_dir_slot_set_rec(1, supremum_rec);
 
+        println!(
+            "infimum position: {}",
+            page.page_get_infimum_rec().get_ptr() as usize
+        );
+        println!(
+            "supremum position: {}",
+            page.page_get_supremum_rec().get_ptr() as usize
+        );
         // Set the infimum record to point to the supremum record.
         page.page_get_infimum_rec().rec_set_next_offs(PAGE_SUPREMUM);
         // Set the supremum record to point to the infimum record.
@@ -822,9 +836,9 @@ impl Page {
     }
 
     /// Checks if the given record is a user record.
-    ///   
+    ///
     /// # Parameters
-    ///     
+    ///
     /// - `rec`: The record to check.
     ///
     /// # Returns

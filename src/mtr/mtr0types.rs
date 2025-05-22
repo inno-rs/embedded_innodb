@@ -92,7 +92,7 @@ pub enum MlogType {
     MLOG_UNDO_HDR_DISCARD = 23,
 }
 
-#[derive(Display)]
+#[derive(Display, Clone, Eq, PartialEq)]
 pub enum MtrState {
     /// Undefined state.
     MTR_UNDEFINED = 0,

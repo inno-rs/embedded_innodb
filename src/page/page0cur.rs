@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 /// It maintains a reference to the current record, the page, and the index.
 pub struct PageCur {
     /// The index to which the cursor belongs
-    index: Arc<Mutex<Index>>,
+    index: Arc<Index>,
     /// The record to which the cursor points
     rec: Record,
     /// The buffer block containing the page
@@ -37,7 +37,7 @@ impl PageCur {
     ///
     /// * A new `PageCur` instance.
     pub fn new(
-        index: Arc<Mutex<Index>>,
+        index: Arc<Index>,
         rec: Record,
         block: BufBlock,
         page: Page,
