@@ -5,8 +5,12 @@ use crate::data::data0types::{
 };
 use crate::dict::dict0types::Index;
 use crate::innodb::innodb0types::{UNIV_PAGE_SIZE, UNIV_SQL_NULL};
+use crate::page::page0cur::PageCur;
 use crate::page::page0page::Page;
+use crate::rem::rem0rec::Record;
+use std::alloc::{alloc_zeroed, Layout};
 use std::ptr::null;
+use std::sync::Arc;
 
 /// A structure that owns both the data vectors and the DTuple that references them.
 ///
@@ -34,9 +38,18 @@ pub struct OwningDField {
 /// of the OwningPage instance.
 pub struct OwningPage {
     /// Vector containing the raw page memory
-    pub page_mem: Vec<u8>,
+    pub page_mem: *mut u8,
     /// The Page structure that references the memory in page_mem
     pub page: Page,
+    pub buf_block: BufBlock,
+}
+
+impl Drop for OwningPage {
+    fn drop(&mut self) {
+        let layout =
+            Layout::from_size_align(UNIV_PAGE_SIZE, UNIV_PAGE_SIZE).unwrap();
+        unsafe { std::alloc::dealloc(self.page_mem, layout) }
+    }
 }
 
 /// Enum representing different field types that can be used in test data.
@@ -61,6 +74,35 @@ pub enum FieldType {
     Double,
 }
 
+pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
+    let dtuples = create_dtuples(n, fields);
+
+    let owning_page = create_raw_page();
+    let buf_block = owning_page.buf_block.clone();
+
+    let page_cur = PageCur::new(
+        Arc::new(Index::new()),
+        owning_page.page.page_get_infimum_rec(),
+        buf_block,
+        owning_page.page,
+    );
+
+    for owning_dtuple in dtuples {
+        unsafe {
+            let mut temp_mem = vec![0; UNIV_PAGE_SIZE];
+            let ptr = temp_mem.as_mut_ptr().add(1000);
+            let rec = Record::new(ptr);
+
+            let index = Index::new();
+            rec.rec_convert_dtuple_to_rec(&index, &owning_dtuple.dtuple, 0);
+
+            page_cur.page_cur_insert_rec_low(rec, None);
+        }
+    }
+
+    owning_page
+}
+
 /// Creates a new empty page for testing purposes.
 ///
 /// This function allocates memory for a page of size `UNIV_PAGE_SIZE`, initializes it,
@@ -70,13 +112,17 @@ pub enum FieldType {
 ///
 /// An `OwningPage` instance containing the newly created page and its memory.
 pub fn create_raw_page() -> OwningPage {
-    let mut raw_memory = vec![0; UNIV_PAGE_SIZE];
+    let layout =
+        Layout::from_size_align(UNIV_PAGE_SIZE, UNIV_PAGE_SIZE).unwrap();
+    let mem = unsafe { alloc_zeroed(layout) };
+
     let index = Index::new();
-    let buf_block = BufBlock::new(raw_memory.as_mut_ptr());
+    let buf_block = BufBlock::new(mem);
 
     OwningPage {
-        page_mem: raw_memory,
+        page_mem: mem,
         page: Page::page_create(&index, &buf_block, None),
+        buf_block,
     }
 }
 

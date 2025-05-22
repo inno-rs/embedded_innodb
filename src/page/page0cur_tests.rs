@@ -9,7 +9,7 @@ mod tests {
     use crate::tests::test0utils::{create_dtuples, FieldType};
     use rstest::{fixture, rstest};
     use std::alloc::{alloc_zeroed, Layout};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     fn get_raw_block() -> Frame {
         let layout =
@@ -39,7 +39,7 @@ mod tests {
             PageCurFixture {
                 ptr: frame,
                 page_cur: PageCur::new(
-                    Arc::new(Mutex::new(Index::new())),
+                    Arc::new(Index::new()),
                     infimum_rec,
                     buf_block,
                     page,

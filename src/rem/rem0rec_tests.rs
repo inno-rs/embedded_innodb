@@ -2,6 +2,7 @@
 mod tests {
     use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
     use crate::rem::rem0rec::*;
+    use crate::tests::test0utils::{create_records, FieldType};
     use std::alloc::{alloc, dealloc, Layout};
 
     fn get_new_rec() -> (Record, Layout, *mut u8) {
@@ -124,7 +125,41 @@ mod tests {
     }
 
     #[test]
-    fn test_rec_to_string() {}
+    fn test_linked_list_of_empty_page() {
+        let owning_page = create_records(0, vec![FieldType::String]);
+        let page = owning_page.page;
+
+        assert_eq!(page.page_n_get_recs(), 0);
+
+        let infimum_rec = page.page_get_infimum_rec();
+        let next_rec = infimum_rec.rec_get_next().unwrap();
+
+        // There are no more elements after supremum.
+        assert!(next_rec.rec_get_next().is_none());
+
+        let supremum_rec = page.page_get_supremum_rec();
+        assert!(supremum_rec.rec_get_next().is_none());
+
+        assert_eq!(next_rec, supremum_rec);
+    }
+
+    #[test]
+    fn test_linked_list_of_multiple_records() {
+        let owning_page = create_records(10, vec![FieldType::String]);
+        let page = owning_page.page;
+
+        assert_eq!(page.page_n_get_recs(), 10);
+
+        let mut count = 0;
+        let mut cur_rec = Some(page.page_get_infimum_rec());
+        while cur_rec.is_some() {
+            count += 1;
+            cur_rec = cur_rec.unwrap().rec_get_next();
+        }
+
+        // 10 + 2 (infimum & supremum)
+        assert_eq!(count, 12);
+    }
 
     #[test]
     fn test_rec_copy() {
