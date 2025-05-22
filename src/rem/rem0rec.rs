@@ -196,7 +196,7 @@ impl Record {
 
             let page_ptr = self.page_align();
             let next_ptr = page_ptr.add(offset);
-            Some(Record::new(next_ptr as *mut u8))
+            Some(Record::new(next_ptr ))
         }
     }
 

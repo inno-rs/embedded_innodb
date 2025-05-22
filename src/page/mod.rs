@@ -1,4 +1,4 @@
 pub mod page0page;
 mod page0page_tests;
-mod page0cur;
+pub mod page0cur;
 mod page0cur_tests;
