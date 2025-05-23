@@ -1,9 +1,48 @@
 //! On-disk layout constants for InnoDB FSP
 //!
+//! ┌───────────────────────────────────────────────────────────────────────────────┐
+// │                              InnoDB 16 KB Page                               │
+// │                               (16 384 bytes)                                 │
+// ├───────────────┬──────────────────────────────┬───────────────────────────────┤
+// │ Off 0..37      │ Off 38..149                   │ Off 150..16383                │
+// │ 38 bytes       │ 112 bytes                     │ 16 234 bytes (rest of page)   │
+// │               ┌──────────────────────────────┐                               │
+// │               │      FSP Header Region      │   Page payload, B‐trees, etc.│
+// │               │ ┌───────────┬───────────┬───┐ │                               │
+// │               │ │ space_id │ space_sz │…  │ │                               │
+// │               │ ├───────────┼───────────┼───┤ │                               │
+// │               │ │ LIST #1   │ LIST #2   │…  │ │                               │
+// │               │ │ (16 B each)            …  │ │                               │
+// │               │ │            NEXT_SEG_ID    │ │                               │
+// │               │ └────────────────────────────┘ │                               │
+// ├───────────────┴────────────────────────────────┴───────────────────────────────┤
+// │ Off 150..189     Off 190..229     Off 230..269     …    Off 150+40N..189+40N  │
+// │ Extent Desc 0    Extent Desc 1    Extent Desc 2    …    Extent Desc N         │
+// │ (40 bytes each, packed back-to-back)                                             │
+// └───────────────────────────────────────────────────────────────────────────────┘
+//!Page-offset	Length	Field	Description
+// 0..37	38 B	Generic page header	InnoDB’s universal per-page fields (LSN, page number, etc.)
+// 38..41	4 B	space_id	Tablespace identifier (LE u32)
+// 42..45	4 B	not_used	Reserved (zero)
+// 46..49	4 B	space_size	Total number of pages in this space (LE u32)
+// 50..53	4 B	free_limit	Maximum pages to allocate (initially = space_size)
+// 54..57	4 B	space_flags	Flags (zero on init)
+// 58..61	4 B	frag_n_used	Fragment-allocation counter (zero on init)
+// 62..77	16 B	FREE list head	(len:4, first:6, last:6) for completely free extents
+// 78..93	16 B	FREE_FRAG list head	for partially free extents
+// 94..109	16 B	FULL_FRAG list head	for fully used extents
+// 110..113	4 B	next_segment_id	Counter for new segments (zero on init)
+// 114..117	4 B	(padding/reserved)	Unused on init
+// 118..133	16 B	SEG_INODES_FULL list head	for “full” segment‐inode pages
+// 134..149	16 B	SEG_INODES_FREE list head	for “free” segment‐inode pages
+// 150..16383	16 368 B	Page body	Remainder of the 16 KB page (payload, free space, etc.)
+//!
+//!
 
 use crate::fil::fil0types::{
     FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
 };
+use crate::fut::fut0lst::flst_init;
 use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
 
 /// Offset of the page data area inside a raw page
@@ -90,6 +129,56 @@ pub const XDES_FSEG: usize = 4;
 pub const XDES_SIZE: usize =
     XDES_BITMAP + ut_bits_in_bytes(FSP_EXTENT_SIZE * XDES_BITS_PER_PAGE);
 pub const XDES_ARR_OFFSET: usize = FSP_HEADER_OFFSET + FSP_HEADER_SIZE;
+
+
+
+/// A full 16 KiB page buffer (e.g. page 0 of a space).
+pub struct PageFrame<'a> {
+    buf: &'a mut [u8],
+}
+
+impl<'a> PageFrame<'a> {
+    /// Wrap a raw 16 KiB buffer.
+    pub fn new(buf: &'a mut [u8]) -> Self {
+        assert!(
+            buf.len() >= UNIV_PAGE_SIZE,
+            "PageFrame needs a full UNIV_PAGE_SIZE buffer"
+        );
+        PageFrame { buf }
+    }
+
+    /// Initialize the FSP header in this page (port of FSP::header_init).
+    pub fn header_init(&mut self, space_id: u32, space_size: u32) {
+        let start = FSP_HEADER_OFFSET; // Byte 38
+        let end   = start + FSP_HEADER_SIZE; // Byte 150 (Total 112 Bytes)
+        self.buf[start..end].fill(0);
+        self.buf[start + FSP_SPACE_ID .. start + FSP_SPACE_ID + 4] // Byte 38 to Byte 41
+            .copy_from_slice(&space_id.to_le_bytes());
+        self.buf[start + FSP_SIZE .. start + FSP_SIZE + 4] // Byte 46 to 49
+            .copy_from_slice(&space_size.to_le_bytes());
+        self.buf[start + FSP_FREE_LIMIT .. start + FSP_FREE_LIMIT + 4] // Byte 50 to 53
+            .copy_from_slice(&space_size.to_le_bytes());
+
+        // Flags and frag_n_used are already zeroed
+
+        // Below are 5 linked list
+        let heads = [
+            FSP_FREE, // free list Byte 62-77 [38 + 24 -- 38+24+16]
+            FSP_FREE_FRAG, // partially free extents // Byte 78-93
+            FSP_FULL_FRAG, // list of full extents // Byte 94-109
+            FSP_SEG_INODES_FULL, // or “full” segment‐inode pages
+            FSP_SEG_INODES_FREE, // for “free” segment‐inode pages
+        ];
+        for &off in &heads {
+            let abs = start + off;
+            flst_init(&mut self.buf[abs..abs + FLST_BASE_NODE_SIZE]);
+        }
+
+        self.buf[start + FSP_SEG_ID .. start + FSP_SEG_ID + 4]
+            .copy_from_slice(&0u32.to_le_bytes());
+    }
+}
+
 
 
 pub struct ExtentDescriptor<'a> {

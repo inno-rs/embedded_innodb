@@ -233,6 +233,20 @@ mod tests {
         assert_eq!(FilAddr::prev(&n3), addr1);
     }
 
+    #[test]
+    fn test_flst_init() {
+        // 1) Prepare a full-page buffer (16 KiB)
+        let mut base = vec![0u8; 16*1024];
+
+        // 2) Initialize the base-node as an empty list
+        flst_init(&mut base);
+
+        // 3) Verify it’s empty
+        assert_eq!(FilAddr::len(&base),   0,    "length should be zero");
+        assert_eq!(FilAddr::first(&base), FilAddr::NULL, "first should be NULL");
+        assert_eq!(FilAddr::last(&base),  FilAddr::NULL, "last should be NULL");
+    }
+
 
 
 

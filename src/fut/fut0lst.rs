@@ -197,6 +197,7 @@ impl FilAddr {
     /// - `node_buf` is the 12-byte PREV/NEXT area for this node.
     /// - `prev_node_buf` is `Some(&mut [u8])` of the previous neighbor, if any.
     /// - `next_node_buf` is `Some(&mut [u8])` of the next neighbor, if any.
+    ///
     pub fn remove(
         self,
         base: &mut [u8],
@@ -234,4 +235,23 @@ impl FilAddr {
         // 4) decrement the stored length
         self.write_len(base, len - 1);
     }
+}
+
+/// /// Initialize the base-node in `base` as an empty intrusive list:
+// ///  - LEN = 0
+// ///  - FIRST = NULL
+// ///  - LAST  = NULL
+
+pub fn flst_init(base: &mut [u8]) {
+    // 1) zero length
+    write_len(base, 0);
+    // 2) set FIRST = NULL
+    FilAddr::NULL.write_first(base);
+    // 3) set LAST  = NULL
+    FilAddr::NULL.write_last(base);
+}
+
+pub fn write_len(base: &mut [u8], len: usize) {
+    let bytes = (len as u32).to_be_bytes();
+    base[FLST_LEN..FLST_LEN+4].copy_from_slice(&bytes);
 }
