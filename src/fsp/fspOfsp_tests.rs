@@ -5,6 +5,7 @@ mod tests {
         FIL_PAGE_SPACE_ID,
     };
     use crate::fsp::fspOfsp::*;
+    use crate::fut::fut0lst::*;
     use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
 
     #[test]
@@ -165,6 +166,92 @@ mod tests {
         }
         // now full: next alloc → None
         assert!(desc.alloc_page(extent_no).is_none());
+    }
+
+    #[test]
+
+    fn test_header_init_sets_all_fields() {
+        // Prepare a dummy 16 KiB page filled with non-zero to catch untouch regions
+        let mut frame = vec![0xFFu8; UNIV_PAGE_SIZE];
+        let mut desc = PageFrame::new(&mut frame);
+        let sid = 1234;
+        let sz  = 5678;
+
+        // Invoke header_init
+        desc.header_init(sid, sz);
+
+        // 1) space_id written correctly
+        let span = FSP_HEADER_OFFSET + FSP_SPACE_ID;
+        assert_eq!(
+            &frame[span .. span + 4],
+            &sid.to_le_bytes(),
+            "space_id mismatch"
+        );
+
+        // 2) space_size
+        let span = FSP_HEADER_OFFSET + FSP_SIZE;
+        assert_eq!(
+            &frame[span .. span + 4],
+            &sz.to_le_bytes(),
+            "space_size mismatch"
+        );
+
+        // 3) free_limit = space_size
+        let span = FSP_HEADER_OFFSET + FSP_FREE_LIMIT;
+        assert_eq!(
+            &frame[span .. span + 4],
+            &sz.to_le_bytes(),
+            "free_limit mismatch"
+        );
+
+        // 4) flags and frag_n_used remain zero
+        let fspan = FSP_HEADER_OFFSET + FSP_SPACE_FLAGS;
+        assert!(frame[fspan .. fspan + 4].iter().all(|&b| b == 0));
+        let fspan = FSP_HEADER_OFFSET + FSP_FRAG_N_USED;
+        assert!(frame[fspan .. fspan + 4].iter().all(|&b| b == 0));
+
+        // 5) each of the five list-heads is initialized empty
+        let lists = [
+            FSP_FREE,
+            FSP_FREE_FRAG,
+            FSP_FULL_FRAG,
+            FSP_SEG_INODES_FULL,
+            FSP_SEG_INODES_FREE,
+        ];
+        for &rel_off in &lists {
+            let abs_off = FSP_HEADER_OFFSET + rel_off;
+            let slice  = &frame[abs_off .. abs_off + FLST_BASE_NODE_SIZE];
+
+            // length == 0
+            assert_eq!(
+                FilAddr::len(slice),
+                0,
+                "list at rel_off {} length not zero",
+                rel_off
+            );
+
+            // first == NULL, last == NULL
+            assert_eq!(
+                FilAddr::first(slice),
+                FilAddr::NULL,
+                "list at rel_off {} first not NULL",
+                rel_off
+            );
+            assert_eq!(
+                FilAddr::last(slice),
+                FilAddr::NULL,
+                "list at rel_off {} last not NULL",
+                rel_off
+            );
+        }
+
+        // 6) next_segment_id == 0
+        let span = FSP_HEADER_OFFSET + FSP_SEG_ID;
+        assert_eq!(
+            &frame[span .. span + 4],
+            &0u32.to_le_bytes(),
+            "next_segment_id not zero"
+        );
     }
 }
 
