@@ -18,7 +18,24 @@ pub type TxnId = u64;
 #[derive(Hash, Clone, Copy, Eq, PartialEq)]
 pub struct PageId {
     /// The space id of the page.
-    space_id: SpaceId,
+    pub space_id: SpaceId,
     /// The page number of the page.
-    page_no: PageNo,
+    pub page_no: PageNo,
+}
+
+/// InnoDB error codes.
+/// Most of the error codes are internal to the engine and will not be seen by user applications.
+/// The partial error codes reflect the substate of an operation within InnoDB.
+pub enum DbErr {
+    /// A successful result.
+    DbSuccess,
+    /// Internal error cannot proceed.
+    DbPanic,
+
+    /* Following are the error codes. */
+    /// This is a generic error code.
+    /// It is used to classify error conditions that can't be represented by other codes.
+    DbError,
+    /// Tablespace does not exist or is being deleted right now.
+    DbTablespaceDeleted,
 }

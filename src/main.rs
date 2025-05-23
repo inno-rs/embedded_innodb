@@ -19,6 +19,7 @@ mod trx;
 mod utils;
 mod ut;
 mod tests;
+mod sync;
 
 fn main() {
     println!("Hello, world!");

@@ -293,7 +293,7 @@ impl Page {
     ///
     /// # Returns
     /// A `Record` object representing the supremum record.
-    ///    
+    ///
     pub fn page_get_supremum_rec(&self) -> Record {
         let ptr = unsafe { self.ptr.add(PAGE_SUPREMUM) };
         Record::new(ptr)
@@ -836,9 +836,9 @@ impl Page {
     }
 
     /// Checks if the given record is a user record.
-    ///   
+    ///
     /// # Parameters
-    ///     
+    ///
     /// - `rec`: The record to check.
     ///
     /// # Returns
