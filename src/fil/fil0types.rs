@@ -1,6 +1,8 @@
 pub(crate) use crate::innodb::innodb0types::SpaceId;
 use crate::os::os0file::OsFile;
 use intrusive_collections::{intrusive_adapter, LinkedList, LinkedListLink};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /** Start of the data on the page */
 pub const FSEG_PAGE_DATA: usize = 38;
@@ -24,25 +26,25 @@ pub const FIL_PAGE_END_LSN_CHKSUM: usize = 8;
 
 pub struct FilNode {
     /// Path fo the file.
-    name: String,
+    pub name: String,
     /// true if the file is open.
-    open: bool,
+    pub open: bool,
     /// OsFile handle.
-    f_handle: Option<OsFile>,
+    pub f_handle: Option<OsFile>,
     /// Size of the file in database pages, 0 if unknown.
-    size_in_pages: usize,
+    pub size_in_pages: usize,
     /// Count of the pending i/o on this file. Closing of the file is not allowed if > 0.
-    n_pending: usize,
+    pub n_pending: usize,
     /// Count of pending flushes on the file. Closing of the file is not allowed if > 0.
-    n_pending_flushes: usize,
+    pub n_pending_flushes: usize,
     /// Whenever we write to file, we increment this counter.
-    modification_counter: usize,
-    /// Up to what modification_counter we have flushed the modifications to disk.
-    flush_counter: usize,
+    pub modification_counter: usize,
+    /// Up to what modification_counter, we have flushed the modifications to disk.
+    pub flush_counter: usize,
     /// Node for a linked list of files.
-    chain: LinkedListLink,
+    pub chain: LinkedListLink,
     /// LinkedList for LRU.
-    lru: LinkedListLink,
+    pub lru: LinkedListLink,
 }
 
 impl FilNode {
@@ -127,6 +129,20 @@ impl FilType {
     }
 }
 
+/// Container for a FilNode that includes intrusive collection links.
+/// This container allows FilNode to be stored in linked lists while maintaining
+/// reference counting for safe memory management.
+pub struct FilNodeContainer {
+    /// Node for a linked list of files.
+    pub chain: LinkedListLink,
+    /// LinkedList for LRU.
+    pub lru: LinkedListLink,
+    /// FilNode struct.
+    pub fil_node: Rc<RefCell<FilNode>>,
+}
+
+intrusive_adapter!(pub FilNodeAdapter = Box<FilNodeContainer>: FilNodeContainer { chain: LinkedListLink });
+
 pub struct FilSpace {
     /// space name = the path to the first file in it.
     pub name: String,
@@ -147,7 +163,22 @@ pub struct FilSpace {
     pub flags: usize,
 
     /// Chain of file nodes.
-    pub chain: LinkedList<FileNodeAdapter>,
+    pub chain: LinkedList<FilNodeAdapter>,
 }
 
-intrusive_adapter!(pub FileNodeAdapter = Box<FilNode>: FilNode { chain: LinkedListLink });
+/// Container for a FilSpace that includes intrusive collection links.
+/// This container allows FilSpace to be stored in linked lists while maintaining
+/// reference counting for safe memory management. It also tracks whether the space
+/// is in the unflushed spaces list for efficient management of file operations.
+pub struct FilSpaceContainer {
+    /// List of spaces with at least one unflushed file we have written to.
+    pub unflushed_spaces: LinkedListLink,
+    /// Is FilSpace present in the unflushed spaces list?
+    pub is_in_unflushed_spaces: bool,
+
+    /// List of all spaces.
+    pub space_list: LinkedListLink,
+
+    /// FilSpace struct.
+    pub fil_space: Rc<RefCell<FilSpace>>,
+}
