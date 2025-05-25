@@ -2,7 +2,7 @@
 mod tests {
     use crate::buf::buf0types::{BufBlock, Frame};
     use crate::dict::dict0types::Index;
-    use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
+    use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
     use crate::mtr::mtr0mtr::Mtr;
     use crate::page::page0cur::PageCur;
     use crate::page::page0page::Page;
@@ -34,13 +34,13 @@ mod tests {
         fn new() -> PageCurFixture {
             let frame = get_raw_block();
             let buf_block = BufBlock::new(frame);
-            let index = Index::new();
+            let index = Index::new(PageId::dummy());
             let page = Page::page_create(&index, &buf_block, None);
             let infimum_rec = page.page_get_infimum_rec();
             PageCurFixture {
                 ptr: frame,
                 page_cur: PageCur::new(
-                    Arc::new(Index::new()),
+                    Arc::new(Index::new(PageId::dummy())),
                     infimum_rec,
                     buf_block,
                     page,
@@ -83,7 +83,7 @@ mod tests {
 
             let rec: Record = orphan_record.get_record();
 
-            let index = Index::new();
+            let index = Index::new(PageId::dummy());
             rec.rec_convert_dtuple_to_rec(&index, &owning_dtuple.dtuple, 0);
 
             assert_eq!(page_cur_fixture.page.page_n_get_recs(), 0);

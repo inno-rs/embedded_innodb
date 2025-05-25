@@ -3,7 +3,7 @@ mod tests {
     use super::super::page0page::Page;
     use crate::buf::buf0types::{BufBlock, Frame};
     use crate::dict::dict0types::Index;
-    use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
+    use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
     use crate::mtr::mtr0mtr::Mtr;
     use crate::page::page0page::*;
     use crate::rem::rem0rec::{Record, RecordData};
@@ -20,7 +20,7 @@ mod tests {
 
     impl PageFixture {
         fn new() -> PageFixture {
-            let index = Index::new();
+            let index = Index::new(PageId{ space_id: 0, page_no: 0 });
             let frame = get_raw_block();
             let buf_block = BufBlock::new(frame);
             let mtr = None;
