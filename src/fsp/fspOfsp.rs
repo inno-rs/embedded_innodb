@@ -42,7 +42,7 @@
 use crate::fil::fil0types::{
     FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
 };
-use crate::fut::fut0lst::flst_init;
+use crate::fut::fut0lst::{flst_init, FilAddr};
 use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
 
 /// Offset of the page data area inside a raw page
@@ -182,6 +182,33 @@ impl<'a> PageFrame<'a> {
 
         self.buf[start + FSP_SEG_ID..start + FSP_SEG_ID + 4]
             .copy_from_slice(&0u32.to_le_bytes());
+    }
+
+    pub fn alloc_free_extent(&mut self) -> Option<u32> {
+        let first = FilAddr::first(&self.buf[FSP_HEADER_OFFSET + FSP_FREE..]);
+        if first == FilAddr::NULL {
+            return None;
+        }
+
+        let extent_off = first.byte_off as usize;
+    
+        {
+            let xdes_buf = &mut self.buf[extent_off..extent_off + XDES_SIZE];
+            let mut xdes = ExtentDescriptor::new(xdes_buf);
+            xdes.xdes_init();
+            xdes.set_state(XDES_FREE_FRAG);
+        }
+        
+        let free_head = &mut self.buf[FSP_HEADER_OFFSET + FSP_FREE..];
+        let free_frag_head = &mut self.buf[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
+        let xdes_buf = &mut self.buf[extent_off..extent_off + XDES_SIZE];
+     
+
+        first.remove(free_head, xdes_buf, None, None);
+        first.add_last(free_frag_head, xdes_buf, None);
+
+        let index = (extent_off - XDES_ARR_OFFSET) / XDES_SIZE;
+        Some(index as u32)
     }
 }
 
