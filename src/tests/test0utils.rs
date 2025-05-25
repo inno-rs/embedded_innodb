@@ -8,7 +8,7 @@ use crate::innodb::innodb0types::{UNIV_PAGE_SIZE, UNIV_SQL_NULL};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0cur::PageCur;
 use crate::page::page0page::Page;
-use crate::rem::rem0rec::Record;
+use crate::rem::rem0rec::OrphanRecord;
 use std::alloc::{alloc_zeroed, Layout};
 use std::ptr::null;
 use std::sync::Arc;
@@ -90,16 +90,16 @@ pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
 
     let mut mtr = Mtr::new();
     for owning_dtuple in dtuples {
-        unsafe {
-            let mut temp_mem = vec![0; UNIV_PAGE_SIZE];
-            let ptr = temp_mem.as_mut_ptr().add(1000);
-            let rec = Record::new(ptr);
+        let mut orphan_record = OrphanRecord::new(
+            vec![0; UNIV_PAGE_SIZE],
+            owning_dtuple.dtuple.n_fields,
+        );
+        let rec = orphan_record.get_record();
 
-            let index = Index::new();
-            rec.rec_convert_dtuple_to_rec(&index, &owning_dtuple.dtuple, 0);
+        let index = Index::new();
+        rec.rec_convert_dtuple_to_rec(&index, &owning_dtuple.dtuple, 0);
 
-            page_cur.page_cur_insert_rec_low(rec, &mut mtr);
-        }
+        page_cur.page_cur_insert_rec_low(rec, &mut mtr);
     }
 
     owning_page

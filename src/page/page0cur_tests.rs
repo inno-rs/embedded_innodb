@@ -6,7 +6,7 @@ mod tests {
     use crate::mtr::mtr0mtr::Mtr;
     use crate::page::page0cur::PageCur;
     use crate::page::page0page::Page;
-    use crate::rem::rem0rec::Record;
+    use crate::rem::rem0rec::{OrphanRecord, Record};
     use crate::tests::test0utils::{create_dtuples, FieldType};
     use rstest::{fixture, rstest};
     use std::alloc::{alloc_zeroed, Layout};
@@ -76,19 +76,15 @@ mod tests {
             let mut mtr = Mtr::new();
             let dtuples = create_dtuples(1, vec![FieldType::String]);
             let owning_dtuple = dtuples.first().unwrap();
-            let mut temp_mem = vec![0; UNIV_PAGE_SIZE];
-            let rec: Record;
-            unsafe {
-                let ptr = temp_mem.as_mut_ptr().add(1000);
-                rec = Record::new(ptr);
+            let n_fields = owning_dtuple.dtuple.n_fields;
 
-                let index = Index::new();
-                rec.rec_convert_dtuple_to_rec(
-                    &index,
-                    &owning_dtuple.dtuple,
-                    0,
-                );
-            }
+            let mut orphan_record =
+                OrphanRecord::new(vec![0; UNIV_PAGE_SIZE], n_fields);
+
+            let rec: Record = orphan_record.get_record();
+
+            let index = Index::new();
+            rec.rec_convert_dtuple_to_rec(&index, &owning_dtuple.dtuple, 0);
 
             assert_eq!(page_cur_fixture.page.page_n_get_recs(), 0);
             let new_rec = page_cur_fixture

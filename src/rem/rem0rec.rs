@@ -91,6 +91,48 @@ pub enum RecordData {
     SqlNullData(),
 }
 
+/// Sometimes we need records that don't have a backing page.
+/// In such cases, we can create a block of memory with the appropriate size using the n_fields,
+/// and total size information.
+/// When the OrphanRecord is destroyed, the backing memory is also destroyed.
+pub struct OrphanRecord {
+    data: Vec<u8>,
+    n_fields: usize,
+}
+
+impl OrphanRecord {
+    /// Creates a new OrphanRecord with the provided data and number of fields.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - A vector of bytes that will serve as the backing memory for the record.
+    /// * `n_fields` - The number of fields in the record.
+    ///
+    /// # Returns
+    ///
+    /// A new OrphanRecord instance.
+    pub fn new(data: Vec<u8>, n_fields: usize) -> Self {
+        OrphanRecord { data, n_fields }
+    }
+
+    /// Returns a Record instance that points to the appropriate location within the backing memory.
+    ///
+    /// This method calculates the correct offset in the backing memory
+    /// where the record data should start,
+    /// taking into account the extra bytes needed for record metadata and field offsets.
+    ///
+    /// # Returns
+    ///
+    /// A Record instance pointing to the record data within the backing memory.
+    pub fn get_record(&mut self) -> Record {
+        unsafe {
+            Record::new(
+                self.data.as_mut_ptr().add(REC_N_EXTRA_BYTES + self.n_fields),
+            )
+        }
+    }
+}
+
 #[derive(PartialEq, Debug, Copy, Clone)]
 pub struct Record {
     ptr: *mut u8,
