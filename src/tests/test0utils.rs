@@ -4,7 +4,7 @@ use crate::data::data0types::{
     DTYPE_DOUBLE, DTYPE_FLOAT, DTYPE_INT, DTYPE_INT_UNSIGNED, DTYPE_VARCHAR,
 };
 use crate::dict::dict0types::Index;
-use crate::innodb::innodb0types::{UNIV_PAGE_SIZE, UNIV_SQL_NULL};
+use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE, UNIV_SQL_NULL};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0cur::PageCur;
 use crate::page::page0page::Page;
@@ -81,7 +81,7 @@ pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
     let buf_block = owning_page.buf_block.clone();
 
     let page_cur = PageCur::new(
-        Arc::new(Index::new()),
+        Arc::new(Index::new(PageId::dummy())),
         owning_page.page.page_get_infimum_rec(),
         buf_block,
         owning_page.page,
@@ -95,7 +95,7 @@ pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
         );
         let rec = orphan_record.get_record();
 
-        let index = Index::new();
+        let index = Index::new(PageId::dummy());
         rec.rec_convert_dtuple_to_rec(&index, &owning_dtuple.dtuple, 0);
 
         page_cur.page_cur_insert_rec_low(rec, &mut mtr);
@@ -117,7 +117,7 @@ pub fn create_raw_page() -> OwningPage {
         Layout::from_size_align(UNIV_PAGE_SIZE, UNIV_PAGE_SIZE).unwrap();
     let mem = unsafe { alloc_zeroed(layout) };
 
-    let index = Index::new();
+    let index = Index::new(PageId::dummy());
     let buf_block = BufBlock::new(mem);
 
     OwningPage {

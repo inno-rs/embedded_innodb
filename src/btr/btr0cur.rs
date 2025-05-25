@@ -4,7 +4,8 @@ use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
 use crate::fsp::fspOfsp::Fsp;
 use crate::innodb::innodb0types::DbErr;
-use crate::innodb::innodb0types::DbErr::{DbFail, DbTooBigRecord};
+use crate::innodb::innodb0types::DbErr::{DbFail, DbSuccess, DbTooBigRecord};
+use crate::lock::lock0lock::LockSys;
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0cur::PageCur;
 use crate::page::page0page::Page;
@@ -12,6 +13,15 @@ use crate::rem::rem0rec::Record;
 use crate::ut::ut0dbg::ut_ad;
 use std::ptr::null_mut;
 use std::sync::{Arc, RwLock};
+
+/// Flag indicating that undo logging should be skipped for this operation.
+pub const BTR_NO_UNDO_LOG: usize = 1;
+
+/// Flag indicating that record lock checking should be skipped for this operation.
+pub const BTR_NO_LOCKING_FLAG: usize = 2;
+
+/// Flag indicating that system fields should be preserved during the operation.
+pub const BTR_KEEP_SYS_FLAG: usize = 4;
 
 /// Represents a path in the B-tree traversal.
 ///
@@ -29,20 +39,22 @@ pub struct Path {
 /// BTreeCursor provides methods for traversing, searching, and modifying records
 /// within a B-tree index structure. It maintains the current position within the
 /// B-tree and provides operations relative to that position.
-pub struct BTreeCursor {
+pub struct BTreeCursor<'a> {
     /// The index being accessed by this cursor.
-    index: Arc<RwLock<Index>>,
+    index: &'a Index,
     /// File segment manager for handling space allocation.
     fsp: Arc<RwLock<Fsp>>,
+    /// Lock management system.
+    lock_sys: Arc<RwLock<LockSys>>,
     /// Reference to the B-tree being traversed.
-    btree: Arc<RwLock<BTree>>,
+    btree: &'a BTree,
     /// Current page cursor position.
     page_cur: Option<PageCur>,
-    /// Current buffer block being accessed.
+    /// The current buffer block being accessed.
     buf_block: BufBlock,
 }
 
-impl BTreeCursor {
+impl<'a> BTreeCursor<'a> {
     /// Creates a new BTreeCursor instance.
     ///
     /// # Parameters
@@ -53,13 +65,15 @@ impl BTreeCursor {
     /// # Returns
     /// A new BTreeCursor instance initialized with the provided references
     pub fn new(
-        index: Arc<RwLock<Index>>,
+        index: &'a Index,
         fsp: Arc<RwLock<Fsp>>,
-        btree: Arc<RwLock<BTree>>,
+        lock_sys: Arc<RwLock<LockSys>>,
+        btree: &'a BTree,
     ) -> Self {
         BTreeCursor {
             index,
             fsp,
+            lock_sys,
             btree,
             page_cur: None,
             buf_block: BufBlock::new(null_mut()),
@@ -82,7 +96,8 @@ impl BTreeCursor {
 
     /// Tries to perform an optimistic insert to a page in an index tree.
     ///
-    /// This method attempts to insert a record next to the cursor position. It is assumed 
+    /// This method attempts to insert a record next to the cursor position.
+    /// It is assumed
     /// that the mini-transaction (Mtr) holds an exclusive latch (x-latch) on the page.
     /// The operation will not succeed if there is not enough space on the page.
     /// If there is only one record on the page, the operation will always succeed.
@@ -119,7 +134,7 @@ impl BTreeCursor {
             }
         }
 
-        let is_clustered = self.index.read().unwrap().is_clustered();
+        let is_clustered = self.index.is_clustered();
 
         // If there have been many consecutive inserts on the page, and we are on the leaf, check if we have to split the page to reserve enough free space for future updates of records.
 
@@ -137,20 +152,115 @@ impl BTreeCursor {
                 ut_ad!(false, "page cursor should not be None");
             }
             Some(cur) => {
-                let index = self.index.read().unwrap();
                 insert_rec =
-                    cur.page_cur_tuple_insert(dtuple, &index, n_ext, mtr);
+                    cur.page_cur_tuple_insert(dtuple, self.index, n_ext, mtr);
             }
         }
 
         let reorg = false;
 
         if insert_rec.is_none() && !reorg {
-            let index = self.index.read().unwrap();
-            let success = self.page_reorganize(&index, mtr);
+            let success = self.page_reorganize(self.index, mtr);
         }
 
         Ok(5)
+    }
+
+    /// Performs a pessimistic insert operation in the B-tree.
+    ///
+    /// This method first attempts an optimistic insert. If that fails, it proceeds
+    /// with a pessimistic approach that may involve page splits or reorganization
+    /// to ensure the record can be inserted.
+    ///
+    /// # Arguments
+    ///
+    /// * `flags` - Operation flags (BTR_NO_UNDO_LOG, BTR_NO_LOCKING_FLAG, etc.)
+    /// * `dtuple` - The data tuple to insert
+    /// * `n_ext` - Number of externally stored fields
+    /// * `mtr` - Mini-transaction for logging the operation
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(usize)` - Success with the inserted record position
+    /// * `Err(DbErr)` - Error code if the operation failed
+    pub fn pessimistic_insert(
+        &mut self,
+        flags: usize,
+        dtuple: &mut DTuple,
+        n_ext: usize,
+        mtr: &mut Mtr,
+    ) -> Result<usize, DbErr> {
+        ut_ad!(dtuple.dtuple_type_checked());
+
+        // 1. First, try an optimistic insert.
+        let result = self.optimistic_insert(flags, dtuple, n_ext, mtr);
+        match result {
+            Ok(_) => {}
+            Err(e) => {
+                if e != DbFail {
+                    return Err(e);
+                }
+            }
+        }
+
+        // 2. We were not able to insert. Try pessimistic insert.
+
+        Ok(5)
+    }
+
+    /// Retrieves the current record at the cursor position.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(Record)` - The record at the current cursor position
+    /// * `None` - If the cursor is not positioned on any record
+    fn get_rec(&self) -> Option<Record> {
+        match &self.page_cur {
+            None => None,
+            Some(cur) => Some(cur.page_cur_get_rec()),
+        }
+    }
+
+    /// Checks locks and performs undo logging for an insert operation.
+    ///
+    /// This method verifies that the current transaction has the necessary
+    /// locks to insert a record at the current position. It also handles
+    /// undo logging if required by the operation flags.
+    ///
+    /// # Arguments
+    ///
+    /// * `flags` - Operation flags that control locking and undo logging behavior
+    /// * `dtuple` - The data tuple being inserted
+    /// * `mtr` - Mini-transaction for logging the operation
+    ///
+    /// # Returns
+    ///
+    /// * `DbSuccess` - If the operation can proceed
+    /// * Other `DbErr` values - If there are locking conflicts or other issues
+    pub fn ins_lock_and_undo(
+        &self,
+        flags: usize,
+        dtuple: &DTuple,
+        mtr: &mut Mtr,
+    ) -> DbErr {
+        let rec = self.get_rec().unwrap();
+
+        {
+            let lock_sys = self.lock_sys.read().unwrap();
+            let err = lock_sys.rec_insert_check_and_lock(
+                flags,
+                rec,
+                self.buf_block.clone(),
+                self.index,
+                mtr,
+            );
+
+            if err != DbSuccess {
+                return err;
+            }
+        }
+
+        DbSuccess
     }
 
     /// Reorganizes a page to create more free space.
@@ -168,5 +278,33 @@ impl BTreeCursor {
     pub fn page_reorganize(&self, index: &Index, mtr: &mut Mtr) -> bool {
         // Reorganize the page.
         true
+    }
+
+    /// Searches the B-tree down to the specified level.
+    ///
+    /// This method traverses the B-tree index structure from the root down to the
+    /// specified level, searching for the position where the given data tuple would
+    /// be located. It can be used for both read and write operations, with different
+    /// latching strategies based on the operation type.
+    ///
+    /// # Arguments
+    ///
+    /// * `paths` - Vector to store the traversal path information
+    /// * `index` - The index being searched
+    /// * `level` - The target level to reach (0 = leaf level)
+    /// * `dtuple` - The data tuple to search for
+    /// * `mode` - Search mode (exact match, greater than, etc.)
+    /// * `latch_mode` - Latching strategy to use during traversal
+    /// * `mtr` - Mini-transaction for logging the operation
+    pub fn search_to_nth_level(
+        &self,
+        paths: Vec<Path>,
+        index: &Index,
+        level: usize,
+        dtuple: &DTuple,
+        mode: usize,
+        latch_mode: usize,
+        mtr: &mut Mtr,
+    ) {
     }
 }

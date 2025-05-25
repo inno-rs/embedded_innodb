@@ -1,6 +1,9 @@
 use crate::buf::buf0types::BufBlock;
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
+use crate::innodb::innodb0types::IbSearchMode::{
+    IbCurG, IbCurGe, IbCurL, IbCurLe, IbCurrUnSupp,
+};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::{
     Page, PAGE_DIR_SLOT_MAX_N_OWNED, PAGE_DIR_SLOT_MIN_N_OWNED, PAGE_N_RECS,
@@ -9,6 +12,35 @@ use crate::rem::rem0rec::Record;
 use crate::ut::ut0dbg::ut_ad;
 use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
+
+/// Search modes for positioning a page cursor.
+///
+/// These constants define how the cursor should be positioned when the exact search key
+/// is not found on a page. They are used in various search operations to determine
+/// the cursor position relative to the search key.
+
+/// Unsupported search mode.
+pub const PAGE_CUR_UNSUPP: usize = IbCurrUnSupp as usize;
+
+/// Position the cursor on the record greater than the search key.
+/// If the search key is not found, the cursor will be placed on the first record
+/// that is greater than the search key.
+pub const PAGE_CUR_G: usize = IbCurG as usize;
+
+/// Position the cursor on the record greater than or equal to the search key.
+/// If the search key is found, the cursor will be placed on that record.
+/// Otherwise, it will be placed on the first record greater than the search key.
+pub const PAGE_CUR_GE: usize = IbCurGe as usize;
+
+/// Position the cursor on the record less than the search key.
+/// If the search key is not found, the cursor will be placed on the last record
+/// that is less than the search key.
+pub const PAGE_CUR_L: usize = IbCurL as usize;
+
+/// Position the cursor on the record less than or equal to the search key.
+/// If the search key is found, the cursor will be placed on that record.
+/// Otherwise, it will be placed on the last record less than the search key.
+pub const PAGE_CUR_LE: usize = IbCurLe as usize;
 
 /// A cursor structure for navigating through records in a page.
 ///

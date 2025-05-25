@@ -1,16 +1,24 @@
+use crate::btr::btr0cur::{
+    BTreeCursor, Path, BTR_KEEP_SYS_FLAG, BTR_NO_LOCKING_FLAG, BTR_NO_UNDO_LOG,
+};
+use crate::btr::btr0types::BtrLatchMode::BtrContModifyTree;
 use crate::buf::buf0types::{BufPool, BufferBlock, Request};
+use crate::data::data0types::DTuple;
+use crate::dict::dict0types::Index;
 use crate::fil::fil0types::{FilSpace, FILL_NULL};
 use crate::fsp::fspOfsp::Fsp;
 use crate::innodb::innodb0types::PageId;
+use crate::lock::lock0lock::LockSys;
 use crate::mtr::mtr0mtr::Mtr;
 use crate::os::os0file::IORequest;
+use crate::page::page0cur::PAGE_CUR_LE;
 use crate::rem::rem0rec::Record;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::ut_ad;
 use std::sync::{Arc, Mutex, RwLock};
 
 /// BTree represents a B-tree data structure used for efficient data storage and retrieval.
-/// 
+///
 /// A B-tree is a self-balancing tree data structure that maintains sorted data and allows
 /// searches, sequential access, insertions, and deletions in logarithmic time.
 pub struct BTree {
@@ -18,6 +26,8 @@ pub struct BTree {
     buf_pool: Arc<RwLock<BufPool>>,
     /// File segment manager for handling file space allocation.
     fsp: Arc<RwLock<Fsp>>,
+    /// Lock Management system.
+    lock_sys: Arc<RwLock<LockSys>>,
 }
 
 impl BTree {
@@ -29,8 +39,12 @@ impl BTree {
     ///
     /// # Returns
     /// A new BTree instance initialized with the provided buffer pool and file space manager
-    pub fn new(buf_pool: Arc<RwLock<BufPool>>, fsp: Arc<RwLock<Fsp>>) -> Self {
-        BTree { buf_pool, fsp }
+    pub fn new(
+        buf_pool: Arc<RwLock<BufPool>>,
+        fsp: Arc<RwLock<Fsp>>,
+        lock_sys: Arc<RwLock<LockSys>>,
+    ) -> Self {
+        BTree { buf_pool, fsp, lock_sys }
     }
 
     /// Retrieves the previous user record in the B-tree.
@@ -92,6 +106,55 @@ impl BTree {
         }
 
         None
+    }
+
+    /// Inserts a data tuple into the B-tree at a non-leaf level.
+    ///
+    /// This method is used during page splits and tree structure modifications
+    /// to insert index entries at non-leaf levels of the B-tree. It creates a
+    /// cursor, positions it at the appropriate location in the specified level,
+    /// and performs a pessimistic insert operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - The level at which to insert (must be > 0, where 0 is leaf level)
+    /// * `index` - The index structure being modified
+    /// * `dtuple` - The data tuple to insert
+    /// * `mtr` - Mini-transaction for logging the operation
+    ///
+    /// # Note
+    ///
+    /// It is assumed that the mini-transaction (mtr) holds an exclusive latch (x-latch)
+    /// on the tree during this operation.
+    pub fn insert_on_non_leaf_level(
+        &mut self,
+        level: usize,
+        index: &Index,
+        dtuple: &mut DTuple,
+        mtr: &mut Mtr,
+    ) {
+        ut_ad!(level > 0);
+
+        let mut btr_cursor = BTreeCursor::new(
+            index,
+            self.fsp.clone(),
+            self.lock_sys.clone(),
+            self,
+        );
+        btr_cursor.search_to_nth_level(
+            vec![],
+            index,
+            level,
+            dtuple,
+            PAGE_CUR_LE,
+            BtrContModifyTree as usize,
+            mtr,
+        );
+
+        let flag = BTR_NO_LOCKING_FLAG | BTR_KEEP_SYS_FLAG | BTR_NO_UNDO_LOG;
+        let result = btr_cursor.pessimistic_insert(flag, dtuple, 0, mtr);
+
+        ut_ad!(result.is_ok());
     }
 
     /// Retrieves the next user record in the B-tree.
