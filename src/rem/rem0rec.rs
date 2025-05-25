@@ -3,7 +3,9 @@ use crate::dict::dict0types::Index;
 use crate::fil::fil0types::{FIL_PAGE_NEXT, FIL_PAGE_PREV};
 use crate::innodb::innodb0types::{PageNo, UNIV_PAGE_SIZE, UNIV_SQL_NULL};
 use crate::page::page0page::Page;
-use log::info;
+use crate::rem::rem0types::REC_MAX_N_FIELDS;
+use crate::ut::ut0dbg::{ut_a, ut_ad};
+use log::{error, info};
 use std::ptr::{null, null_mut};
 use std::{ptr, slice};
 
@@ -287,13 +289,13 @@ impl Record {
     pub fn rec_convert_dtuple_to_rec(
         &self,
         index: &Index,
-        d_tuple: &DTuple,
+        dtuple: &DTuple,
         n_ext: usize,
     ) -> Record {
         info!("rec_convert_dtuple_to_rec");
 
-        let n_fields = d_tuple.dtuple_get_n_fields();
-        let data_size = d_tuple.dtuple_get_data_size();
+        let n_fields = dtuple.dtuple_get_n_fields();
+        let data_size = dtuple.dtuple_get_data_size();
 
         /* Calculate the offset of the origin in the physical record */
 
@@ -301,14 +303,14 @@ impl Record {
         self.rec_set_n_fields(n_fields);
 
         /* Store the info bits of the record */
-        self.rec_set_info_bits(d_tuple.dtuple_get_info_bits());
+        self.rec_set_info_bits(dtuple.dtuple_get_info_bits());
 
         /* Store the data and offsets */
         let mut end_offset = 0;
 
         if n_ext == 0 {
             for i in 0..n_fields {
-                let field = d_tuple.dtuple_get_nth_field(i);
+                let field = dtuple.dtuple_get_nth_field(i);
                 let ored_offset: usize;
 
                 match field.dfield_is_null() {
@@ -785,5 +787,81 @@ impl Record {
         // Before the record starts
         // we have metadata about the record.
         REC_N_EXTRA_BYTES + n_field + end_offset_n_field
+    }
+
+    pub fn rec_copy_prefix_to_dtuple(
+        &self,
+        n_fields: usize,
+        index: &Index,
+    ) -> DTuple {
+        ut_ad!(self.rec_validate());
+
+        let mut dtuple = DTuple::new(n_fields);
+        dtuple.dtuple_set_info_bits(self.rec_get_info_bits());
+
+        ut_ad!(dtuple.dtuple_type_checked());
+
+        for field_index in 0..n_fields {
+            let dfield = dtuple.dtuple_get_nth_field_mut(field_index);
+            let rec_field = self.rec_get_data(field_index);
+
+            ut_ad!(rec_field.is_some());
+
+            let data = rec_field.unwrap();
+
+            match data {
+                RecordData::Data(d) => {
+                    dfield.dfield_set_data(d.as_bytes().to_vec(), d.len());
+                    // handle extern field??
+                }
+                RecordData::SqlNullData() => {
+                    dfield.dfield_set_null();
+                }
+            }
+        }
+
+        dtuple
+    }
+
+    pub fn rec_get_nth_field_size(&self, n: usize) -> usize {
+        let (offset, size) = self.rec_get_nth_field_offs(n);
+        size
+    }
+
+    pub fn rec_validate(&self) -> bool {
+        let n_fields = self.rec_get_n_fields();
+
+        if n_fields == 0 || n_fields >= REC_MAX_N_FIELDS {
+            error!("record has {} fields", n_fields);
+            return false;
+        }
+
+        let mut length_sum: usize = 0;
+
+        for field_index in 0..n_fields {
+            let size = self.rec_get_nth_field_size(field_index);
+            if !(size < UNIV_PAGE_SIZE || size == UNIV_SQL_NULL) {
+                error!("record field {} length {}", field_index, size);
+                return false;
+            }
+
+            if size == UNIV_SQL_NULL {
+                continue;
+            } else {
+                length_sum += size;
+            }
+        }
+
+        if length_sum != self.rec_get_data_size() {
+            error!(
+                "record length should be {} but is {}",
+                length_sum,
+                self.rec_get_data_size()
+            );
+
+            return false;
+        }
+
+        true
     }
 }

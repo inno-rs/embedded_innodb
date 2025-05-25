@@ -1,5 +1,6 @@
 use crate::data::data0types::{BigRec, DField, DTuple, DType};
 use crate::innodb::innodb0types::UNIV_SQL_NULL;
+use crate::ut::ut0dbg::{ut_a, ut_ad};
 use log::info;
 
 impl DTuple {
@@ -13,8 +14,7 @@ impl DTuple {
     ///
     /// * A new DTuple instance with the specified number of fields.
     pub fn new(number_of_fields: usize) -> Self {
-        let d_fields =
-            vec![DField::new(std::ptr::null_mut()); number_of_fields];
+        let d_fields = vec![DField::new(vec![]); number_of_fields];
         DTuple { n_fields: number_of_fields, info_bits: 0, fields: d_fields }
     }
 
@@ -126,6 +126,17 @@ impl DTuple {
     pub fn dtuple_convert_big_rec(&mut self, n_ext: usize) -> Option<BigRec> {
         Some(BigRec { n_fields: 0, fields: vec![] })
     }
+
+    pub fn dtuple_type_checked(&self) -> bool {
+        let n_fields = self.dtuple_get_n_fields();
+        for index in 0..n_fields {
+            let field = self.dtuple_get_nth_field(index);
+
+            ut_a!(field.dfield_check_types());
+        }
+
+        true
+    }
 }
 
 impl DField {
@@ -138,9 +149,9 @@ impl DField {
     /// # Returns
     ///
     /// * A new DField instance with the specified data pointer.
-    pub fn new(data_ptr: *mut u8) -> Self {
+    pub fn new(data: Vec<u8>) -> Self {
         DField {
-            data: data_ptr,
+            data,
             len: 0,
             ext: false,
             dtype: DType {
@@ -153,6 +164,10 @@ impl DField {
         }
     }
 
+    pub fn dfield_set_null(&mut self) {
+        self.dfield_set_data(vec![], UNIV_SQL_NULL);
+    }
+
     /// Set the data of the field.
     ///
     /// # Arguments
@@ -160,8 +175,10 @@ impl DField {
     /// * `data` - pointer to the data.
     /// * `len` - length of the data.
     ///
-    pub fn dfield_set_data(&mut self, data: *const u8, len: usize) {
+    pub fn dfield_set_data(&mut self, data: Vec<u8>, len: usize) {
         info!("Setting data: {:?}", data);
+        ut_ad!((data.len() == 0 && len == UNIV_SQL_NULL) || data.len() == len);
+
         self.data = data;
         self.len = len;
     }
@@ -173,7 +190,7 @@ impl DField {
     /// * Pointer to the data field.
     pub fn dfield_get_data(&self) -> *const u8 {
         info!("Getting data: {:?}", self.data);
-        self.data
+        self.data.as_ptr()
     }
 
     /// Set the type of the field.
@@ -225,6 +242,10 @@ impl DField {
     /// * `true` if the field is stored externally, `false` otherwise.
     pub fn dfield_is_ext(&self) -> bool {
         self.ext
+    }
+
+    pub fn dfield_check_types(&self) -> bool {
+        true
     }
 
     /// Compares two data fields for binary equality.
