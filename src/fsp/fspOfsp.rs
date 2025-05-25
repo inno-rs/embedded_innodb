@@ -130,7 +130,13 @@ pub const XDES_SIZE: usize =
     XDES_BITMAP + ut_bits_in_bytes(FSP_EXTENT_SIZE * XDES_BITS_PER_PAGE);
 pub const XDES_ARR_OFFSET: usize = FSP_HEADER_OFFSET + FSP_HEADER_SIZE;
 
+pub struct Fsp {}
 
+impl Fsp {
+    fn new() -> Fsp {
+        Fsp {}
+    }
+}
 
 /// A full 16 KiB page buffer (e.g. page 0 of a space).
 pub struct PageFrame<'a> {
@@ -150,22 +156,22 @@ impl<'a> PageFrame<'a> {
     /// Initialize the FSP header in this page (port of FSP::header_init).
     pub fn header_init(&mut self, space_id: u32, space_size: u32) {
         let start = FSP_HEADER_OFFSET; // Byte 38
-        let end   = start + FSP_HEADER_SIZE; // Byte 150 (Total 112 Bytes)
+        let end = start + FSP_HEADER_SIZE; // Byte 150 (Total 112 Bytes)
         self.buf[start..end].fill(0);
-        self.buf[start + FSP_SPACE_ID .. start + FSP_SPACE_ID + 4] // Byte 38 to Byte 41
+        self.buf[start + FSP_SPACE_ID..start + FSP_SPACE_ID + 4] // Byte 38 to Byte 41
             .copy_from_slice(&space_id.to_le_bytes());
-        self.buf[start + FSP_SIZE .. start + FSP_SIZE + 4] // Byte 46 to 49
+        self.buf[start + FSP_SIZE..start + FSP_SIZE + 4] // Byte 46 to 49
             .copy_from_slice(&space_size.to_le_bytes());
-        self.buf[start + FSP_FREE_LIMIT .. start + FSP_FREE_LIMIT + 4] // Byte 50 to 53
+        self.buf[start + FSP_FREE_LIMIT..start + FSP_FREE_LIMIT + 4] // Byte 50 to 53
             .copy_from_slice(&space_size.to_le_bytes());
 
         // Flags and frag_n_used are already zeroed
 
         // Below are 5 linked list
         let heads = [
-            FSP_FREE, // free list Byte 62-77 [38 + 24 -- 38+24+16]
-            FSP_FREE_FRAG, // partially free extents // Byte 78-93
-            FSP_FULL_FRAG, // list of full extents // Byte 94-109
+            FSP_FREE,            // free list Byte 62-77 [38 + 24 -- 38+24+16]
+            FSP_FREE_FRAG,       // partially free extents // Byte 78-93
+            FSP_FULL_FRAG,       // list of full extents // Byte 94-109
             FSP_SEG_INODES_FULL, // or “full” segment‐inode pages
             FSP_SEG_INODES_FREE, // for “free” segment‐inode pages
         ];
@@ -174,12 +180,10 @@ impl<'a> PageFrame<'a> {
             flst_init(&mut self.buf[abs..abs + FLST_BASE_NODE_SIZE]);
         }
 
-        self.buf[start + FSP_SEG_ID .. start + FSP_SEG_ID + 4]
+        self.buf[start + FSP_SEG_ID..start + FSP_SEG_ID + 4]
             .copy_from_slice(&0u32.to_le_bytes());
     }
 }
-
-
 
 pub struct ExtentDescriptor<'a> {
     buf: &'a mut [u8],
@@ -187,7 +191,11 @@ pub struct ExtentDescriptor<'a> {
 
 impl<'a> ExtentDescriptor<'a> {
     pub fn new(buf: &'a mut [u8]) -> Self {
-        assert!(buf.len() >= XDES_SIZE, "extent-descriptor buffer must be at least {} bytes", XDES_SIZE);
+        assert!(
+            buf.len() >= XDES_SIZE,
+            "extent-descriptor buffer must be at least {} bytes",
+            XDES_SIZE
+        );
         ExtentDescriptor { buf }
     }
 
@@ -201,8 +209,6 @@ impl<'a> ExtentDescriptor<'a> {
     /// No-op in non-debug builds
     #[cfg(not(debug_assertions))]
     fn univ_mem_invalid(&mut self) {}
-
-
 
     pub fn init_file_page_low(&mut self, page_no: u32, space_id: u32) {
         // debug‐only memory invalidation
@@ -224,8 +230,7 @@ impl<'a> ExtentDescriptor<'a> {
 
         // clear the 8-byte trailer (checksum, etc.)
         let trailer_off = UNIV_PAGE_SIZE - FIL_PAGE_END_LSN_CHKSUM;
-        self.buf[trailer_off..trailer_off + FIL_PAGE_END_LSN_CHKSUM]
-            .fill(0);
+        self.buf[trailer_off..trailer_off + FIL_PAGE_END_LSN_CHKSUM].fill(0);
 
         // duplicate space‐ID if you want C++ fidelity
         self.buf[FIL_PAGE_SPACE_ID..FIL_PAGE_SPACE_ID + 4]
@@ -364,4 +369,3 @@ impl<'a> ExtentDescriptor<'a> {
         Some(extent_no * (FSP_EXTENT_SIZE as u32) + page_idx as u32)
     }
 }
-

@@ -3,6 +3,7 @@ mod tests {
     use crate::buf::buf0types::{BufBlock, Frame};
     use crate::dict::dict0types::Index;
     use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
+    use crate::mtr::mtr0mtr::Mtr;
     use crate::page::page0cur::PageCur;
     use crate::page::page0page::Page;
     use crate::rem::rem0rec::Record;
@@ -72,6 +73,7 @@ mod tests {
     #[rstest]
     fn test_page_cur_insert_low(page_cur_fixture: PageCurFixture) {
         {
+            let mut mtr = Mtr::new();
             let dtuples = create_dtuples(1, vec![FieldType::String]);
             let owning_dtuple = dtuples.first().unwrap();
             let mut temp_mem = vec![0; UNIV_PAGE_SIZE];
@@ -89,8 +91,9 @@ mod tests {
             }
 
             assert_eq!(page_cur_fixture.page.page_n_get_recs(), 0);
-            let new_rec =
-                page_cur_fixture.page_cur.page_cur_insert_rec_low(rec, None);
+            let new_rec = page_cur_fixture
+                .page_cur
+                .page_cur_insert_rec_low(rec, &mut mtr);
 
             assert_eq!(page_cur_fixture.page.page_n_get_recs(), 1);
             assert!(new_rec.is_some());

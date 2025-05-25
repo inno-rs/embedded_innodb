@@ -15,7 +15,8 @@
  * 0x1C   | 8    | FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID | Varies by version *
  ************************************************************************/
 use crate::fil::fil0types::{
-    FilNode, FilNodeContainer, FilSpace, FilSpaceContainer, FilType, SpaceId,
+    FilNode, FilNodeContainer, FilSpace, FilSpaceContainer, FilType,
+    SpaceId, FIL_SPACE_MAGIC_N,
 };
 use crate::innodb::innodb0types::{DbErr, PageNo};
 use crate::os::os0file::CreateMode::OsFileOpen;
@@ -53,6 +54,11 @@ pub struct Fil {
     n_open_files: usize,
     /// n_open_files is not allowed to exceed this value.
     max_n_open: usize,
+    /// Increment this counter whenever we write to file.
+    modification_counter: usize,
+    /// Maximum assigned id in the existing tables or assigned during the time the server was up.
+    /// We scan the data dictionary during startup and the maximum accordingly.
+    max_assigned_id: usize,
     /// List of spaces with at least one unflushed file we have written to.
     unflushed_space_list: LinkedList<UnflushedSpaceListAdapter>,
     /// List of all spaces managed by this Fil instance.
@@ -77,6 +83,8 @@ impl Fil {
             tablespace_version: 0,
             n_open_files: 0,
             max_n_open,
+            modification_counter: 0,
+            max_assigned_id: 0,
             unflushed_space_list: Default::default(),
             space_list: Default::default(),
         }
@@ -100,7 +108,7 @@ impl Fil {
     /// * `true` if the file node was created successfully, `false` if the space does not exist.
     ///
     pub fn node_create(
-        &self,
+        &mut self,
         name: &str,
         size: usize,
         space_id: SpaceId,
@@ -110,7 +118,7 @@ impl Fil {
         match space {
             None => false,
             Some(sp) => {
-                let mut fil_space_container = sp.write().unwrap();
+                let fil_space_container = sp.write().unwrap();
                 let file_node = Box::new(FilNodeContainer {
                     chain: Default::default(),
                     lru: Default::default(),
@@ -124,6 +132,14 @@ impl Fil {
                 fil_space.chain.push_back(file_node);
 
                 ut_ad!(fil_space.chain.iter().count() == 1);
+
+                self.max_assigned_id =
+                    if self.max_assigned_id < space_id as usize {
+                        space_id as usize
+                    } else {
+                        self.max_assigned_id
+                    };
+
                 true
             }
         }
@@ -174,6 +190,7 @@ impl Fil {
                 flags,
                 size_in_pages: 0,
                 chain: Default::default(),
+                magic_n: FIL_SPACE_MAGIC_N,
             })),
         }));
 
@@ -380,7 +397,7 @@ impl Fil {
     }
 
     /// Frees a tablespace from memory.
-    /// 
+    ///
     /// This function removes the space from the unflushed spaces list if it's present there.
     /// It does not actually delete the tablespace files from disk.
     ///

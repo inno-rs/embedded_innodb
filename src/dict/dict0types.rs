@@ -38,6 +38,10 @@ impl Index {
             panic!("Column index out of range");
         }
     }
+
+    pub fn is_clustered(&self) -> bool {
+        false
+    }
 }
 
 pub struct Column {

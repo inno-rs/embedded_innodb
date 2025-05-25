@@ -175,6 +175,17 @@ pub struct DField {
     pub dtype: DType,
 }
 
+pub struct BigRecField {
+    pub field_no: usize,
+    pub len: usize,
+    pub data: *const u8,
+}
+
+pub struct BigRec {
+    pub n_fields: usize,
+    pub fields: Vec<BigRecField>,
+}
+
 // Compile-time constants for each DType
 pub const DTYPE_VARCHAR: DType = DType {
     m_type: DATA_VARCHAR as u16,
