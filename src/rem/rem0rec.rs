@@ -1,6 +1,7 @@
 use crate::data::data0types::{DField, DTuple};
 use crate::dict::dict0types::Index;
-use crate::innodb::innodb0types::{UNIV_PAGE_SIZE, UNIV_SQL_NULL};
+use crate::fil::fil0types::{FIL_PAGE_NEXT, FIL_PAGE_PREV};
+use crate::innodb::innodb0types::{PageNo, UNIV_PAGE_SIZE, UNIV_SQL_NULL};
 use crate::page::page0page::Page;
 use log::info;
 use std::ptr::{null, null_mut};
@@ -181,6 +182,10 @@ impl Record {
         aligned_addr as *mut u8
     }
 
+    pub fn get_page(&self) -> Page {
+        Page::new(self.page_align())
+    }
+
     /// Get the next record chained to the current record.
     ///
     /// # Returns
@@ -196,7 +201,7 @@ impl Record {
 
             let page_ptr = self.page_align();
             let next_ptr = page_ptr.add(offset);
-            Some(Record::new(next_ptr ))
+            Some(Record::new(next_ptr))
         }
     }
 
@@ -616,7 +621,7 @@ impl Record {
 
     /// Returns the data size of a physical record which is the sum of field lengths.
     ///
-    /// SQL null fields are counted as lengths of zero. The value returned by the function 
+    /// SQL null fields are counted as lengths of zero. The value returned by the function
     /// is the difference between record origin and record end.
     ///
     /// # Returns

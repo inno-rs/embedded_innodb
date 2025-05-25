@@ -1,4 +1,4 @@
-use crate::data::data0types::{DField, DTuple, DType};
+use crate::data::data0types::{BigRec, DField, DTuple, DType};
 use crate::innodb::innodb0types::UNIV_SQL_NULL;
 use log::info;
 
@@ -116,6 +116,15 @@ impl DTuple {
         }
 
         sum
+    }
+
+    /// Return the size of data tuple when converted to physical record.
+    pub fn rec_get_converted_size(&self) -> usize {
+        self.dtuple_get_data_size()
+    }
+
+    pub fn dtuple_convert_big_rec(&mut self, n_ext: usize) -> Option<BigRec> {
+        Some(BigRec { n_fields: 0, fields: vec![] })
     }
 }
 

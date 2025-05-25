@@ -4,6 +4,9 @@ use intrusive_collections::{intrusive_adapter, LinkedList, LinkedListLink};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Null or undefined page offset in the context of file spaces.
+pub const FILL_NULL: u32 = u32::MAX;
+
 /** Start of the data on the page */
 pub const FSEG_PAGE_DATA: usize = 38;
 
@@ -15,6 +18,14 @@ pub const FIL_PAGE_DATA_END: usize = 8;
 /// Offset of the 4-byte page number in the page header
 pub const FIL_PAGE_OFFSET: usize = 4;
 
+/// The offset of the natural predecessor of the page if present.
+/// Otherwise, FIL_NULL.
+/// This field is not set on BLOB pages which are stored as a singly linked list.
+pub const FIL_PAGE_PREV: usize = 8;
+
+/// The offset of the natural successor of the page if present. Otherwise, FIL_NULL.
+pub const FIL_PAGE_NEXT: usize = 12;
+
 /// Offset of the 8-byte page LSN in the page header
 pub const FIL_PAGE_LSN: usize = 16;
 
@@ -23,6 +34,10 @@ pub const FIL_PAGE_SPACE_ID: usize = 34;
 
 /// Number of bytes reserved at end of page for end-LSN/checksum
 pub const FIL_PAGE_END_LSN_CHKSUM: usize = 8;
+
+pub const FIL_SPACE_MAGIC_N: usize = 89472;
+
+pub const FIL_NODE_MAGIC_N: usize = 89389;
 
 pub struct FilNode {
     /// Path fo the file.
@@ -45,6 +60,8 @@ pub struct FilNode {
     pub chain: LinkedListLink,
     /// LinkedList for LRU.
     pub lru: LinkedListLink,
+    /// FIL_NODE_MAGIC_N
+    pub magic_n: usize,
 }
 
 impl FilNode {
@@ -60,6 +77,7 @@ impl FilNode {
             flush_counter: 0,
             chain: Default::default(),
             lru: Default::default(),
+            magic_n: FIL_NODE_MAGIC_N,
         }
     }
 
@@ -164,6 +182,9 @@ pub struct FilSpace {
 
     /// Chain of file nodes.
     pub chain: LinkedList<FilNodeAdapter>,
+
+    /// FIL_SPACE_MAGIC_N
+    pub magic_n: usize,
 }
 
 /// Container for a FilSpace that includes intrusive collection links.

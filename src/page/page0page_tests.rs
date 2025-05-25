@@ -2,7 +2,6 @@
 mod tests {
     use super::super::page0page::Page;
     use crate::buf::buf0types::{BufBlock, Frame};
-    use crate::data::data0types::{DField, DTupleBuilder};
     use crate::dict::dict0types::Index;
     use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
     use crate::mtr::mtr0mtr::Mtr;

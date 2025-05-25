@@ -20,6 +20,7 @@ mod utils;
 mod ut;
 mod tests;
 mod sync;
+mod btr;
 
 fn main() {
     println!("Hello, world!");

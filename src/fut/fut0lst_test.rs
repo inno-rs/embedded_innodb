@@ -3,8 +3,6 @@
 
 #[cfg(test)]
 mod tests {
-    use std::ptr::write;
-    use super::*;
     use crate::fut::fut0lst::*;
 
     #[test]

@@ -5,6 +5,7 @@ use crate::data::data0types::{
 };
 use crate::dict::dict0types::Index;
 use crate::innodb::innodb0types::{UNIV_PAGE_SIZE, UNIV_SQL_NULL};
+use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0cur::PageCur;
 use crate::page::page0page::Page;
 use crate::rem::rem0rec::Record;
@@ -87,6 +88,7 @@ pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
         owning_page.page,
     );
 
+    let mut mtr = Mtr::new();
     for owning_dtuple in dtuples {
         unsafe {
             let mut temp_mem = vec![0; UNIV_PAGE_SIZE];
@@ -96,7 +98,7 @@ pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
             let index = Index::new();
             rec.rec_convert_dtuple_to_rec(&index, &owning_dtuple.dtuple, 0);
 
-            page_cur.page_cur_insert_rec_low(rec, None);
+            page_cur.page_cur_insert_rec_low(rec, &mut mtr);
         }
     }
 

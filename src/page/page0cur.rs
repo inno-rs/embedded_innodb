@@ -1,4 +1,5 @@
 use crate::buf::buf0types::BufBlock;
+use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::{
@@ -224,6 +225,19 @@ impl PageCur {
         }
     }
 
+    pub fn page_cur_tuple_insert(
+        &self,
+        dtuple: &DTuple,
+        index: &Index,
+        n_ext: usize,
+        mtr: &mut Mtr,
+    ) -> Option<Record> {
+        let mut record = Record::new(null_mut());
+        record = record.rec_convert_dtuple_to_rec(index, dtuple, n_ext);
+
+        self.page_cur_insert_rec_low(record, mtr)
+    }
+
     /// Inserts a record next to the page cursor on an uncompressed page.
     /// The cursor stays at the same place.
     ///
@@ -248,7 +262,7 @@ impl PageCur {
     pub fn page_cur_insert_rec_low(
         &self,
         rec: Record,
-        mtr: Option<Mtr>,
+        mtr: &mut Mtr,
     ) -> Option<Record> {
         ut_ad!(!self.page.page_rec_is_supremum(self.rec));
 

@@ -38,4 +38,9 @@ pub enum DbErr {
     DbError,
     /// Tablespace does not exist or is being deleted right now.
     DbTablespaceDeleted,
+    /// A record in an index would not fit on a compressed page,
+    /// or it will become bigger than 1/2 free space in a compressed page frame.
+    DbTooBigRecord,
+    /// Partial Failure code.
+    DbFail,
 }

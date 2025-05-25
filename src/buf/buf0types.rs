@@ -1,6 +1,7 @@
 use crate::fil::fil0types::SpaceId;
 use crate::innodb::innodb0types::{Lsn, PageId, PageNo, UNIV_PAGE_SIZE};
 use crate::mtr::mtr0mtr::{Mtr, MtrState};
+use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::ut_ad;
 use intrusive_collections::{intrusive_adapter, LinkedList, LinkedListLink};
@@ -9,7 +10,6 @@ use std::sync::RwLock;
 
 // The frame is a pointer to a memory location where the block's data is stored.
 pub type Frame = *mut u8;
-pub type BufFrame = *mut [u8; UNIV_PAGE_SIZE];
 
 pub struct BufPage {
     /// This tells us the last time when this page was put at the head of the LRU list.
@@ -77,15 +77,18 @@ impl BufBlock {
 }
 
 pub struct BufferBlock {
-    buf_frame: BufFrame,
+    buf_frame: Frame,
     lock: RwLock<()>,
 }
 
 impl BufferBlock {
     pub fn new(ptr: *mut u8) -> BufferBlock {
-        let a = ptr as *mut [u8; UNIV_PAGE_SIZE];
-        let block = BufferBlock { buf_frame: a, lock: Default::default() };
+        let block = BufferBlock { buf_frame: ptr, lock: Default::default() };
         block
+    }
+
+    pub fn get_page(&self) -> Page {
+        Page::new(self.buf_frame)
     }
 }
 
@@ -96,10 +99,10 @@ pub struct BufPool {
     lru_list: LinkedList<LruAdapter>,
 }
 
-struct Request<'a> {
-    rw_latch: ReadWriteLatch,
-    page_id: PageId,
-    mtr: &'a mut Mtr,
+pub struct Request<'a> {
+    pub rw_latch: ReadWriteLatch,
+    pub page_id: PageId,
+    pub mtr: &'a mut Mtr,
 }
 
 impl BufPool {
