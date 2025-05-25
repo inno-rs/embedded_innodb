@@ -10,7 +10,6 @@ use crate::page::page0cur::PageCur;
 use crate::page::page0page::Page;
 use crate::rem::rem0rec::OrphanRecord;
 use std::alloc::{alloc_zeroed, Layout};
-use std::ptr::null;
 use std::sync::Arc;
 
 /// A structure that owns both the data vectors and the DTuple that references them.
@@ -182,15 +181,14 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             // INT (signed 32-bit), value = 0x12345678 = 305419896
 
             let data = vec![0x12, 0x34, 0x56, 0x78];
-            let data_ptr = data.as_ptr();
             let len = data.len();
             let mut typ = DTYPE_INT;
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
-                field_data_owner: data,
+                field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(data)
                     .len(len)
                     .dtype(typ)
                     .build()
@@ -205,9 +203,9 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
-                field_data_owner: data,
+                field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(data)
                     .len(len)
                     .dtype(typ)
                     .build()
@@ -224,9 +222,9 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
-                field_data_owner: data,
+                field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(data)
                     .len(len)
                     .dtype(typ)
                     .build()
@@ -234,14 +232,13 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             }
         }
         FieldType::StringNull => {
-            let data_ptr = null();
             let len = UNIV_SQL_NULL;
             let typ = DTYPE_VARCHAR;
 
             OwningDField {
                 field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(vec![])
                     .len(len)
                     .dtype(typ)
                     .build()
@@ -256,9 +253,9 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
-                field_data_owner: data,
+                field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(data)
                     .len(len)
                     .dtype(typ)
                     .build()
@@ -274,9 +271,9 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
-                field_data_owner: data,
+                field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(data)
                     .len(len)
                     .dtype(typ)
                     .build()
@@ -293,9 +290,9 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
-                field_data_owner: data,
+                field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(data)
                     .len(len)
                     .dtype(typ)
                     .build()
@@ -312,9 +309,9 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
-                field_data_owner: data,
+                field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(data)
                     .len(len)
                     .dtype(typ)
                     .build()
