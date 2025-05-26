@@ -1,5 +1,5 @@
 pub enum ReadWriteLatch {
-    RW_S_LATCH,
-    RW_X_LATCH,
-    RW_NO_LATCH,
+    RW_S_LATCH = 1,
+    RW_X_LATCH = 2,
+    RW_NO_LATCH = 3,
 }

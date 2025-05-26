@@ -4,13 +4,12 @@ use crate::data::data0types::{
     DTYPE_DOUBLE, DTYPE_FLOAT, DTYPE_INT, DTYPE_INT_UNSIGNED, DTYPE_VARCHAR,
 };
 use crate::dict::dict0types::Index;
-use crate::innodb::innodb0types::{UNIV_PAGE_SIZE, UNIV_SQL_NULL};
+use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE, UNIV_SQL_NULL};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0cur::PageCur;
 use crate::page::page0page::Page;
 use crate::rem::rem0rec::OrphanRecord;
 use std::alloc::{alloc_zeroed, Layout};
-use std::ptr::null;
 use std::sync::Arc;
 
 /// A structure that owns both the data vectors and the DTuple that references them.
@@ -82,7 +81,7 @@ pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
     let buf_block = owning_page.buf_block.clone();
 
     let page_cur = PageCur::new(
-        Arc::new(Index::new()),
+        Arc::new(Index::new(PageId::dummy())),
         owning_page.page.page_get_infimum_rec(),
         buf_block,
         owning_page.page,
@@ -96,7 +95,7 @@ pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
         );
         let rec = orphan_record.get_record();
 
-        let index = Index::new();
+        let index = Index::new(PageId::dummy());
         rec.rec_convert_dtuple_to_rec(&index, &owning_dtuple.dtuple, 0);
 
         page_cur.page_cur_insert_rec_low(rec, &mut mtr);
@@ -118,7 +117,7 @@ pub fn create_raw_page() -> OwningPage {
         Layout::from_size_align(UNIV_PAGE_SIZE, UNIV_PAGE_SIZE).unwrap();
     let mem = unsafe { alloc_zeroed(layout) };
 
-    let index = Index::new();
+    let index = Index::new(PageId::dummy());
     let buf_block = BufBlock::new(mem);
 
     OwningPage {
@@ -182,15 +181,14 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             // INT (signed 32-bit), value = 0x12345678 = 305419896
 
             let data = vec![0x12, 0x34, 0x56, 0x78];
-            let data_ptr = data.as_ptr();
             let len = data.len();
             let mut typ = DTYPE_INT;
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
-                field_data_owner: data,
+                field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(data)
                     .len(len)
                     .dtype(typ)
                     .build()
@@ -205,9 +203,9 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
-                field_data_owner: data,
+                field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(data)
                     .len(len)
                     .dtype(typ)
                     .build()
@@ -224,9 +222,9 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
-                field_data_owner: data,
+                field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(data)
                     .len(len)
                     .dtype(typ)
                     .build()
@@ -234,14 +232,13 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             }
         }
         FieldType::StringNull => {
-            let data_ptr = null();
             let len = UNIV_SQL_NULL;
             let typ = DTYPE_VARCHAR;
 
             OwningDField {
                 field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(vec![])
                     .len(len)
                     .dtype(typ)
                     .build()
@@ -256,9 +253,9 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
-                field_data_owner: data,
+                field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(data)
                     .len(len)
                     .dtype(typ)
                     .build()
@@ -274,9 +271,9 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
-                field_data_owner: data,
+                field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(data)
                     .len(len)
                     .dtype(typ)
                     .build()
@@ -293,9 +290,9 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
-                field_data_owner: data,
+                field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(data)
                     .len(len)
                     .dtype(typ)
                     .build()
@@ -312,9 +309,9 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
-                field_data_owner: data,
+                field_data_owner: vec![],
                 field: DFieldBuilder::default()
-                    .data(data_ptr)
+                    .data(data)
                     .len(len)
                     .dtype(typ)
                     .build()

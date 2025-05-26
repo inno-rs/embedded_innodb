@@ -713,7 +713,7 @@ impl Page {
         let infimum_field = infimum_d_tuple.dtuple_get_nth_field_mut(0);
 
         infimum_field.dfield_set_data(
-            "infimumr".as_ptr(),
+            "infimumr".as_bytes().to_vec(),
             8, /* size of infimum string*/
         );
         infimum_field.set_type(DATA_VARCHAR, DATA_ENGLISH | DATA_NOT_NULL, 8);
@@ -737,7 +737,7 @@ impl Page {
 
         let supremum_field = supremum_tuple.dtuple_get_nth_field_mut(0);
         supremum_field.dfield_set_data(
-            "supremumr".as_ptr(),
+            "supremumr".as_bytes().to_vec(),
             9, /* size of supremum string*/
         );
         supremum_field.set_type(DATA_VARCHAR, DATA_ENGLISH | DATA_NOT_NULL, 9);

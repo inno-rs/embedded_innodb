@@ -2,3 +2,4 @@
 /// It provides functionality for navigating, searching, and modifying B-tree structures.
 pub(crate) mod btr0btr;
 pub(crate) mod btr0cur;
+mod btr0types;

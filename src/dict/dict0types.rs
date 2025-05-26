@@ -1,4 +1,5 @@
 use crate::data::data0types::DType;
+use crate::innodb::innodb0types::{PageId, PageNo};
 use std::sync::{Arc, Mutex};
 
 pub struct Field {
@@ -14,11 +15,13 @@ pub struct Field {
 }
 pub struct Index {
     fields: Vec<Field>,
+    /// The page ID of the root page of this index in the B-tree structure.
+    page_id: PageId,
 }
 
 impl Index {
-    pub(crate) fn new() -> Self {
-        Index { fields: vec![] }
+    pub(crate) fn new(page_id: PageId) -> Self {
+        Index { fields: vec![], page_id }
     }
 
     /// Gets the nth column of a table.
@@ -37,6 +40,18 @@ impl Index {
         } else {
             panic!("Column index out of range");
         }
+    }
+
+    /// Retrieves the page number of the root page of this index.
+    ///
+    /// The root page is the top-level page in the B-tree structure of the index.
+    /// This method is used when traversing the B-tree from the root down to the leaves.
+    ///
+    /// # Returns
+    ///
+    /// The page number of the root page of this index.
+    pub fn get_root_page_no(&self) -> PageNo {
+        self.page_id.page_no
     }
 
     pub fn is_clustered(&self) -> bool {

@@ -165,7 +165,7 @@ pub struct DTuple {
 #[derive(Clone, Builder)]
 pub struct DField {
     /// Pointer to the data of the field.
-    pub data: *const u8,
+    pub data: Vec<u8>,
     /// Data length; UNIV_SQL_NULL if SQL null.
     pub len: usize,
     /// true=externally stored, false=local.
