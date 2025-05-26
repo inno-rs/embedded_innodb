@@ -42,7 +42,7 @@
 use crate::fil::fil0types::{
     FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
 };
-use crate::fut::fut0lst::flst_init;
+use crate::fut::fut0lst::{FilAddr, flst_init};
 use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
 
 /// Offset of the page data area inside a raw page
@@ -143,6 +143,14 @@ pub struct PageFrame<'a> {
     buf: &'a mut [u8],
 }
 
+#[cfg(test)]
+impl<'a> PageFrame<'a> {
+    
+    pub fn get_buf_mut(&mut self) -> &mut [u8] {
+        &mut self.buf
+    }
+}
+
 impl<'a> PageFrame<'a> {
     /// Wrap a raw 16 KiB buffer.
     pub fn new(buf: &'a mut [u8]) -> Self {
@@ -182,6 +190,59 @@ impl<'a> PageFrame<'a> {
 
         self.buf[start + FSP_SEG_ID..start + FSP_SEG_ID + 4]
             .copy_from_slice(&0u32.to_le_bytes());
+    }
+
+    /** Allocates a free extent from the FSP_FREE list, marks it as partially used,
+    and moves it to the FSP_FREE_FRAG list.
+    
+    This function will:
+    •	Pick one free extent from the free list
+    •	Mark it as “partially used”
+    •	Move it to the “fragmented list”
+    •	Return its index
+
+
+    */
+    pub fn alloc_free_extent(&mut self) -> Option<u32> {
+        let buf = &mut self.buf;
+
+        // Step 1: Read the first node in the FSP_FREE list (scope-limited to avoid borrow conflict)
+        let (first, extent_off) = {
+            let free_head = &mut buf[FSP_HEADER_OFFSET + FSP_FREE..];
+            let first = FilAddr::first(free_head);
+            if first == FilAddr::NULL {
+                return None;
+            }
+            (first, first.byte_off as usize)
+        };
+
+        // Step 2: Split buffer into FSP header + extent descriptor area
+        let (header_part, xdes_area) = buf.split_at_mut(XDES_ARR_OFFSET);
+
+        // Step 3: Get mutable slice for the 40-byte extent descriptor
+        let rel_off = extent_off - XDES_ARR_OFFSET;
+        let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+
+        // Step 4: Initialize extent descriptor and mark as partially used
+        let mut xdes = ExtentDescriptor::new(xdes_buf);
+        xdes.xdes_init();
+        xdes.set_state(XDES_FREE_FRAG);
+
+        // Step 5: Remove from FSP_FREE list (use header_part safely now)
+        {
+            let free_head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE..];
+            first.remove(free_head, xdes_buf, None, None);
+        }
+
+        // Step 6: Add to FSP_FREE_FRAG list
+        {
+            let free_frag_head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
+            first.add_last(free_frag_head, xdes_buf, None);
+        }
+
+        // Step 7: Return extent index
+        let index = (extent_off - XDES_ARR_OFFSET) / XDES_SIZE;
+        Some(index as u32)
     }
 }
 
