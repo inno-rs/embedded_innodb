@@ -321,6 +321,66 @@ mod tests {
             assert_eq!(xdes.used_count(), 0); // All bits set = all pages free
         }
     }
+    
+    
+    #[test]
+   
+    fn test_free_page_moves_extent_to_free_if_all_pages_freed() {
+        let mut page = vec![0u8; UNIV_PAGE_SIZE];
+        let mut frame = PageFrame::new(&mut page);
+        frame.header_init(1, 1000);
+
+        //Correctly aligned extent setup
+        let extent_no = 0;
+        let extent_off = XDES_ARR_OFFSET + extent_no * XDES_SIZE;
+        let page_idx = 63;
+        let page_no = (extent_no * FSP_EXTENT_SIZE + page_idx) as u32;
+
+        {
+            // Split to avoid borrow conflict
+            let buf = frame.get_buf_mut();
+            let (head, tail) = buf.split_at_mut(extent_off);
+            let xdes_buf = &mut tail[..XDES_SIZE];
+
+            let mut xdes = ExtentDescriptor::new(xdes_buf);
+            xdes.xdes_init(); // all pages free
+            xdes.set_bit(page_idx, XDES_FREE_BIT, false); // mark page 63 as used
+            xdes.set_state(XDES_FREE_FRAG);
+
+            let addr = FilAddr {
+                page_no: (extent_no * FSP_EXTENT_SIZE) as u32,
+                byte_off: extent_off as u16,
+            };
+
+            let free_frag = &mut head[FSP_HEADER_OFFSET + FSP_FREE_FRAG..FSP_HEADER_OFFSET + FSP_FREE_FRAG + FLST_BASE_NODE_SIZE];
+            flst_init(free_frag);
+            addr.add_last(free_frag, xdes_buf, None);
+        }
+
+        // Now free that last used page
+        frame.free_page(page_no);
+
+        {
+            let buf = frame.get_buf_mut();
+            let xdes_buf = &mut buf[extent_off..extent_off + XDES_SIZE];
+            let xdes = ExtentDescriptor::new(xdes_buf);
+
+            assert_eq!(xdes.get_bit(page_idx, XDES_FREE_BIT), true);
+            assert_eq!(xdes.used_count(), 0);
+            assert_eq!(xdes.state(), XDES_FREE);
+        }
+
+        {
+            let buf = frame.get_buf_mut();
+            let free = &buf[FSP_HEADER_OFFSET + FSP_FREE..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
+            let free_frag = &buf[FSP_HEADER_OFFSET + FSP_FREE_FRAG..FSP_HEADER_OFFSET + FSP_FREE_FRAG + FLST_BASE_NODE_SIZE];
+
+            assert_eq!(FilAddr::len(free), 1);
+            assert_eq!(FilAddr::len(free_frag), 0);
+        }
+    }
+        
+        
 }
 
 
