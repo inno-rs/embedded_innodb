@@ -145,7 +145,6 @@ pub struct PageFrame<'a> {
 
 #[cfg(test)]
 impl<'a> PageFrame<'a> {
-    
     pub fn get_buf_mut(&mut self) -> &mut [u8] {
         &mut self.buf
     }
@@ -194,7 +193,7 @@ impl<'a> PageFrame<'a> {
 
     /** Allocates a free extent from the FSP_FREE list, marks it as partially used,
     and moves it to the FSP_FREE_FRAG list.
-    
+
     This function will:
     •	Pick one free extent from the free list
     •	Mark it as “partially used”
@@ -236,13 +235,50 @@ impl<'a> PageFrame<'a> {
 
         // Step 6: Add to FSP_FREE_FRAG list
         {
-            let free_frag_head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
+            let free_frag_head =
+                &mut header_part[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
             first.add_last(free_frag_head, xdes_buf, None);
         }
 
         // Step 7: Return extent index
         let index = (extent_off - XDES_ARR_OFFSET) / XDES_SIZE;
         Some(index as u32)
+    }
+
+    pub fn free_page(&mut self, page_no: u32) {
+        let buf = &mut self.buf;
+
+        let extent_no = page_no / FSP_EXTENT_SIZE as u32;
+        let page_idx = (page_no % FSP_EXTENT_SIZE as u32) as usize;
+        let extent_off = XDES_ARR_OFFSET + extent_no as usize * XDES_SIZE;
+
+        let (head_part, xdes_area) = buf.split_at_mut(XDES_ARR_OFFSET);
+        let rel_off = extent_off - XDES_ARR_OFFSET;
+        let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+        let mut xdes = ExtentDescriptor::new(xdes_buf);
+
+        xdes.set_bit(page_idx, XDES_FREE_BIT, true);
+
+        if xdes.used_count() == 0 {
+            xdes.set_state(XDES_FREE);
+
+            let this_addr = FilAddr {
+                page_no: extent_no * FSP_EXTENT_SIZE as u32,
+                byte_off: extent_off as u16,
+            };
+
+            {
+                let free_frag_head = &mut head_part[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
+                this_addr.remove(free_frag_head, xdes_buf, None, None);
+            }
+
+            {
+                let free_head = &mut head_part[FSP_HEADER_OFFSET + FSP_FREE..];
+                this_addr.add_last(free_head, xdes_buf, None);
+            }
+        } else {
+            xdes.set_state(XDES_FREE_FRAG);
+        }
     }
 }
 
