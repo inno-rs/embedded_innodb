@@ -253,6 +253,74 @@ mod tests {
             "next_segment_id not zero"
         );
     }
+
+    #[test]
+    #[test]
+    fn test_alloc_free_extent_moves_extent_correctly() {
+        let mut page = vec![0u8; UNIV_PAGE_SIZE];
+        let mut frame = PageFrame::new(&mut page);
+
+        // Step 1: Initialize header
+        frame.header_init(1, 1000);
+
+        // Step 2: Prepare extent descriptor at offset 190
+        let extent_off = 190;
+        let index = (extent_off - XDES_ARR_OFFSET) / XDES_SIZE;
+        assert_eq!(index, 1);
+
+        // Step 3: Scope 1 - Initialize extent descriptor and link it into FSP_FREE
+        {
+            // Split to avoid overlapping borrows
+            let buf = frame.get_buf_mut();
+            let (head, tail) = buf.split_at_mut(extent_off); // head: 0..extent_off, tail: extent_off..
+
+            let xdes_buf = &mut tail[..XDES_SIZE]; // offset into tail = [extent_off..extent_off+40]
+
+            let mut xdes = ExtentDescriptor::new(xdes_buf);
+            xdes.xdes_init();
+            xdes.set_state(XDES_FREE);
+
+            let me = FilAddr { page_no: 0, byte_off: extent_off as u16 };
+
+            let base = &mut head[FSP_HEADER_OFFSET + FSP_FREE..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
+            flst_init(base);
+            me.add_last(base, xdes_buf, None);
+        }
+
+        // Step 4: Call alloc_free_extent
+        let result = frame.alloc_free_extent();
+
+        // Step 5: Assertions
+        assert_eq!(result, Some(1));
+
+        // Step 6: Scope 2 - Verify FSP_FREE is empty
+        {
+            let buf = frame.get_buf_mut();
+            let base = &buf[FSP_HEADER_OFFSET + FSP_FREE..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
+            assert_eq!(FilAddr::len(base), 0);
+            assert_eq!(FilAddr::first(base), FilAddr::NULL);
+            assert_eq!(FilAddr::last(base), FilAddr::NULL);
+        }
+
+        // Step 7: Scope 3 - Verify FSP_FREE_FRAG contains the extent
+        {
+            let buf = frame.get_buf_mut();
+            let base = &buf[FSP_HEADER_OFFSET + FSP_FREE_FRAG..FSP_HEADER_OFFSET + FSP_FREE_FRAG + FLST_BASE_NODE_SIZE];
+            let me = FilAddr { page_no: 0, byte_off: extent_off as u16 };
+            assert_eq!(FilAddr::len(base), 1);
+            assert_eq!(FilAddr::first(base), me);
+            assert_eq!(FilAddr::last(base), me);
+        }
+
+        // Step 8: Scope 4 - Verify descriptor state and bitmap
+        {
+            let buf = frame.get_buf_mut();
+            let xdes_buf = &mut buf[extent_off..extent_off + XDES_SIZE];
+            let xdes = ExtentDescriptor::new(xdes_buf);
+            assert_eq!(xdes.state(), XDES_FREE_FRAG);
+            assert_eq!(xdes.used_count(), 0); // All bits set = all pages free
+        }
+    }
 }
 
 
