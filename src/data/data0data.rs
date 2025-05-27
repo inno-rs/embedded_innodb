@@ -1,7 +1,10 @@
-use crate::data::data0types::{BigRec, DField, DTuple, DType};
+use crate::data::data0types::{
+    BigRec, DField, DTuple, DType, DATA_CHAR, DATA_CLIENT, DATA_INT,
+    DATA_VARCHAR,
+};
 use crate::innodb::innodb0types::UNIV_SQL_NULL;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
-use log::info;
+use log::{error, info};
 
 impl DTuple {
     /// Creates a new tuple with the specified number of fields.
@@ -123,6 +126,11 @@ impl DTuple {
         self.dtuple_get_data_size()
     }
 
+    pub fn dtuple_validate(&self) -> bool {
+        ut_a!(self.dtuple_type_checked());
+        true
+    }
+
     pub fn dtuple_convert_big_rec(&mut self, n_ext: usize) -> Option<BigRec> {
         Some(BigRec { n_fields: 0, fields: vec![] })
     }
@@ -132,7 +140,7 @@ impl DTuple {
         for index in 0..n_fields {
             let field = self.dtuple_get_nth_field(index);
 
-            ut_a!(field.dfield_check_types());
+            ut_a!(field.dfield_check_typed());
         }
 
         true
@@ -188,9 +196,9 @@ impl DField {
     /// # Returns
     ///
     /// * Pointer to the data field.
-    pub fn dfield_get_data(&self) -> *const u8 {
+    pub fn dfield_get_data(&self) -> &Vec<u8> {
         info!("Getting data: {:?}", self.data);
-        self.data.as_ptr()
+        self.data.as_ref()
     }
 
     /// Set the type of the field.
@@ -244,7 +252,49 @@ impl DField {
         self.ext
     }
 
-    pub fn dfield_check_types(&self) -> bool {
+    pub fn dfield_print(&self) {
+        if self.dfield_is_null() {
+            info!("NULL");
+            return;
+        }
+
+        let data = self.dfield_get_data();
+
+        let mut output: String = String::new();
+
+        match self.dfield_get_type().m_type as usize {
+            n if n == DATA_CHAR || n == DATA_VARCHAR => {
+                output.push_str(format!("{:?}", data).as_str());
+
+                if self.dfield_is_ext() {
+                    output.push_str(format!("{}", "external").as_str());
+                }
+            }
+            n if n == DATA_INT => {
+                ut_a!(data.len() == 4);
+                output.push_str(format!("{:?}", data).as_str());
+            }
+            _ => {}
+        }
+
+        info!("{:?}", output);
+    }
+
+    /// Checks if the data in the tuple is typed.
+    pub fn dfield_check_typed(&self) -> bool {
+        let dtype = self.dfield_get_type();
+        if dtype.m_type > DATA_CLIENT as u16
+            || dtype.m_type < DATA_VARCHAR as u16
+        {
+            error!(
+                "Error: data type field {}, len {}",
+                dtype.m_type, dtype.len
+            );
+
+            ut_ad!(false);
+            return false;
+        }
+
         true
     }
 
@@ -263,16 +313,9 @@ impl DField {
         field2: &DField,
     ) -> bool {
         let len = field1.dfield_get_len();
-
         len == field2.dfield_get_len()
             && (field1.dfield_get_len() == UNIV_SQL_NULL
-                || unsafe {
-                    std::slice::from_raw_parts(field1.dfield_get_data(), len)
-                        == std::slice::from_raw_parts(
-                            field2.dfield_get_data(),
-                            len,
-                        )
-                })
+                || field1.dfield_get_data().eq(field2.dfield_get_data()))
     }
 }
 

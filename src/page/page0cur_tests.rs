@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::buf::buf0types::{BufBlock, Frame};
+    use crate::buf::buf0types::{BufBlock, BufPage, Frame};
     use crate::dict::dict0types::Index;
     use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
     use crate::mtr::mtr0mtr::Mtr;
@@ -33,7 +33,7 @@ mod tests {
     impl PageCurFixture {
         fn new() -> PageCurFixture {
             let frame = get_raw_block();
-            let buf_block = BufBlock::new(frame);
+            let buf_block = BufBlock::new(BufPage::dummy(), frame);
             let index = Index::new(PageId::dummy());
             let page = Page::page_create(&index, &buf_block, None);
             let infimum_rec = page.page_get_infimum_rec();

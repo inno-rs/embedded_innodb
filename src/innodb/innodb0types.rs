@@ -34,10 +34,7 @@ impl PageId {
     ///
     /// A PageId instance with space_id=0 and page_no=0.
     pub fn dummy() -> Self {
-        PageId {
-            space_id: 0,
-            page_no: 0,
-        }
+        PageId { space_id: 0, page_no: 0 }
     }
 }
 

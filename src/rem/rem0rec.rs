@@ -335,11 +335,8 @@ impl Record {
                         let length = field.dfield_get_len();
                         unsafe {
                             let ptr = self.ptr.add(end_offset);
-                            ptr::copy_nonoverlapping(
-                                field.dfield_get_data(),
-                                ptr,
-                                length,
-                            );
+                            let src = field.dfield_get_data().as_ptr();
+                            ptr::copy_nonoverlapping(src, ptr, length);
                         }
 
                         end_offset += length;

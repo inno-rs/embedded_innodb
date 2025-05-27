@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::page0page::Page;
-    use crate::buf::buf0types::{BufBlock, Frame};
+    use crate::buf::buf0types::{BufBlock, BufPage, Frame};
     use crate::dict::dict0types::Index;
     use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
     use crate::mtr::mtr0mtr::Mtr;
@@ -20,9 +20,9 @@ mod tests {
 
     impl PageFixture {
         fn new() -> PageFixture {
-            let index = Index::new(PageId{ space_id: 0, page_no: 0 });
+            let index = Index::new(PageId { space_id: 0, page_no: 0 });
             let frame = get_raw_block();
-            let buf_block = BufBlock::new(frame);
+            let buf_block = BufBlock::new(BufPage::dummy(), frame);
             let mtr = None;
             let page = Page::page_create(&index, &buf_block, mtr);
 
@@ -332,5 +332,5 @@ mod tests {
 
         page.page_dir_add_slot(3);
         assert_eq!(5, page.page_dir_get_n_slots());
-    }    
+    }
 }

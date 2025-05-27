@@ -42,7 +42,7 @@
 use crate::fil::fil0types::{
     FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
 };
-use crate::fut::fut0lst::{FilAddr, flst_init};
+use crate::fut::fut0lst::{flst_init, FilAddr};
 use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
 
 /// Offset of the page data area inside a raw page
@@ -268,7 +268,8 @@ impl<'a> PageFrame<'a> {
             };
 
             {
-                let free_frag_head = &mut head_part[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
+                let free_frag_head =
+                    &mut head_part[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
                 this_addr.remove(free_frag_head, xdes_buf, None, None);
             }
 
