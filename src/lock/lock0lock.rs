@@ -91,7 +91,7 @@ impl LockSys {
         &self,
         flags: usize,
         rec: Record,
-        buf_block: BufBlock,
+        buf_block: &BufBlock,
         index: &Index,
         mtr: &mut Mtr,
     ) -> DbErr {

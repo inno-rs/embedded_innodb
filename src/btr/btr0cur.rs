@@ -1,5 +1,5 @@
 use crate::btr::btr0btr::BTree;
-use crate::buf::buf0types::BufBlock;
+use crate::buf::buf0types::{BufBlock, BufPage};
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
 use crate::fsp::fspOfsp::Fsp;
@@ -76,7 +76,7 @@ impl<'a> BTreeCursor<'a> {
             lock_sys,
             btree,
             page_cur: None,
-            buf_block: BufBlock::new(null_mut()),
+            buf_block: BufBlock::new(BufPage::dummy(), null_mut()),
         }
     }
 
@@ -250,7 +250,7 @@ impl<'a> BTreeCursor<'a> {
             let err = lock_sys.rec_insert_check_and_lock(
                 flags,
                 rec,
-                self.buf_block.clone(),
+                &self.buf_block,
                 self.index,
                 mtr,
             );

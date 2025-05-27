@@ -6,11 +6,7 @@ mod tests {
     fn test_create_data_tuple() {
         let dtuples = create_dtuples(
             1,
-            vec![
-                FieldType::String,
-                FieldType::String,
-                FieldType::StringNull,
-            ],
+            vec![FieldType::String, FieldType::String, FieldType::StringNull],
         );
 
         let dtuple = &dtuples.first().unwrap().dtuple;
