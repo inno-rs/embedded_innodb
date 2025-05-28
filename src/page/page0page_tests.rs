@@ -9,6 +9,8 @@ mod tests {
     use crate::rem::rem0rec::{Record, RecordData};
     use rstest::{fixture, rstest};
     use std::alloc::{alloc_zeroed, Layout};
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     struct PageFixture {
         index: Index,
@@ -22,7 +24,9 @@ mod tests {
         fn new() -> PageFixture {
             let index = Index::new(PageId { space_id: 0, page_no: 0 });
             let frame = get_raw_block();
-            let buf_block = BufBlock::new(BufPage::dummy(), frame);
+            let buf_page =
+                RefCell::new(Rc::new(RefCell::new(BufPage::dummy())));
+            let buf_block = BufBlock::new(buf_page, frame);
             let mtr = None;
             let page = Page::page_create(&index, &buf_block, mtr);
 

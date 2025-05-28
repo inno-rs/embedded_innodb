@@ -192,7 +192,7 @@ impl BufPage {
 #[derive(Clone)]
 pub struct BufBlock {
     /// Metadata about the page stored in this buffer block
-    buf_page: BufPage,
+    buf_page: RefCell<Rc<RefCell<BufPage>>>,
     /// Pointer to the actual page data in memory
     frame: Frame,
     /// Lock for concurrency control when accessing this buffer block
@@ -208,7 +208,7 @@ impl BufBlock {
     ///
     /// # Returns
     /// A new BufBlock instance
-    pub fn new(buf_page: BufPage, frame: Frame) -> Self {
+    pub fn new(buf_page: RefCell<Rc<RefCell<BufPage>>>, frame: Frame) -> Self {
         BufBlock { buf_page, frame, lock: Arc::new(Default::default()) }
     }
 
@@ -225,27 +225,25 @@ impl BufBlock {
     /// # Returns
     /// The current state of the buffer page
     pub fn get_state(&self) -> BufPageState {
-        self.buf_page.get_state()
+        self.buf_page.borrow().borrow().state.clone()
     }
 
     /// Sets the state of the buffer page.
     ///
     /// # Parameters
     /// * `state` - The new state to set for the buffer page
-    pub fn buf_block_set_state(&mut self, state: BufPageState) {
-        self.buf_page.state = state;
-    }
+    pub fn buf_block_set_state(&mut self, state: BufPageState) {}
 
     /// Gets the buffer page metadata for this buffer block.
     ///
     /// # Returns
     /// A clone of the buffer page metadata
-    pub fn buf_block_get_page(&self) -> &BufPage {
-        &self.buf_page
+    pub fn buf_block_get_page(&self) -> Rc<RefCell<BufPage>> {
+        self.buf_page.borrow().clone()
     }
 
-    pub fn buf_block_get_page_mut(&mut self) -> &mut BufPage {
-        &mut self.buf_page
+    pub fn buf_block_get_page_mut(&mut self) -> Rc<RefCell<BufPage>> {
+        self.buf_page.borrow().clone()
     }
 
     /// Gets a Page object that provides methods for accessing the page data.
