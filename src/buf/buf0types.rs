@@ -3,7 +3,10 @@ use crate::innodb::innodb0types::{Lsn, PageId, PageNo};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
-use intrusive_collections::{intrusive_adapter, LinkedListLink};
+use intrusive_collections::{intrusive_adapter, LinkedListLink, UnsafeRef};
+use std::cell::RefCell;
+use std::pin::Pin;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -52,14 +55,22 @@ pub struct BufPage {
     flush_list: LinkedListLink,
     /// Link for the LRU (Least Recently Used) list of buffer pages.
     lru_list: LinkedListLink,
+    /// Indicates if the page is currently in the free list.
+    is_in_free_list: bool,
+    /// Indicates if the page is currently in the flush list.
+    is_in_flush_list: bool,
+    /// Indicates if the page is currently in the LRU list.
+    is_in_lru_list: bool,
+
+    buf_block: Weak<RefCell<BufBlock>>,
 }
 
 /// Adapter for intrusive collections to manage flush lists of buffer pages.
-intrusive_adapter!(pub FlushListAdapter = Box<BufPage>: BufPage { flush_list: LinkedListLink });
+intrusive_adapter!(pub FlushListAdapter = UnsafeRef<BufPage>: BufPage { flush_list: LinkedListLink });
 /// Adapter for intrusive collections to manage free lists of buffer pages.
-intrusive_adapter!(pub FreeListAdapter = Box<BufPage>: BufPage { free_list: LinkedListLink });
+intrusive_adapter!(pub FreeListAdapter = UnsafeRef<BufPage>: BufPage { free_list: LinkedListLink });
 /// Adapter for intrusive collections to manage LRU lists of buffer pages.
-intrusive_adapter!(pub LruAdapter = Box<BufPage>: BufPage { lru_list: LinkedListLink });
+intrusive_adapter!(pub LruAdapter = UnsafeRef<BufPage>: BufPage { lru_list: LinkedListLink });
 
 impl BufPage {
     /// Creates a new buffer page with the specified tablespace ID and page number.
@@ -81,6 +92,10 @@ impl BufPage {
             free_list: Default::default(),
             flush_list: Default::default(),
             lru_list: Default::default(),
+            is_in_free_list: false,
+            is_in_flush_list: false,
+            is_in_lru_list: false,
+            buf_block: Default::default(),
         }
     }
 
@@ -130,6 +145,42 @@ impl BufPage {
     /// The current state of the buffer page
     pub fn get_state(&self) -> BufPageState {
         self.state.clone()
+    }
+
+    pub fn is_in_free_list(&self) -> bool {
+        self.state == BufPageState::BufBlockNotUsed
+    }
+
+    pub fn set_is_in_lru_list(&mut self, is_in_lru_list: bool) {
+        self.is_in_lru_list = is_in_lru_list;
+    }
+
+    pub fn set_is_in_flush_list(&mut self, is_in_flush_list: bool) {
+        self.is_in_flush_list = is_in_flush_list;
+    }
+
+    pub fn set_is_in_free_list(&mut self, is_in_free_list: bool) {
+        self.is_in_free_list = is_in_free_list;
+    }
+
+    pub fn is_in_flush_list(&self) -> bool {
+        self.is_in_flush_list
+    }
+
+    pub fn is_in_lru_list(&self) -> bool {
+        self.is_in_lru_list
+    }
+
+    /// Check if the block is mapped to a tablespace.
+    pub fn in_file(&self) -> bool {
+        match self.state.clone() {
+            BufPageState::BufBlockFilePage => true,
+            _ => false,
+        }
+    }
+
+    pub fn buf_page_get_buf_block(&self) -> Weak<RefCell<BufBlock>> {
+        Weak::clone(&self.buf_block)
     }
 }
 
@@ -189,8 +240,12 @@ impl BufBlock {
     ///
     /// # Returns
     /// A clone of the buffer page metadata
-    pub fn buf_block_get_page(&self) -> BufPage {
-        self.buf_page.clone()
+    pub fn buf_block_get_page(&self) -> &BufPage {
+        &self.buf_page
+    }
+
+    pub fn buf_block_get_page_mut(&mut self) -> &mut BufPage {
+        &mut self.buf_page
     }
 
     /// Gets a Page object that provides methods for accessing the page data.
@@ -237,4 +292,11 @@ pub enum BufPageState {
     /// The buffer block is marked for hash index removal before being
     /// returned to the free list. This is a transitional state.
     BufBlockRemoveHash,
+}
+
+pub struct BufChunk {
+    pub mem_size: usize,
+    pub size: usize,
+    pub mem: *mut u8,
+    pub buf_pages: Vec<Pin<Box<BufBlock>>>,
 }

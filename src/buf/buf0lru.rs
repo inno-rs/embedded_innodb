@@ -2,10 +2,12 @@ use crate::buf::buf0buf::BufPool;
 use crate::buf::buf0types::BufPageState::{
     BufBlockNotUsed, BufBlockReadyForUse,
 };
-use crate::buf::buf0types::{BufBlock, BufPageState};
+use crate::buf::buf0types::{BufBlock, BufPage, BufPageState, LruAdapter};
 use crate::ut::ut0dbg::{ut_a, ut_ad};
+use intrusive_collections::{LinkedList, UnsafeRef};
 use log::info;
-use std::cmp::PartialEq;
+use std::cell::RefCell;
+use std::rc::Weak;
 use std::sync::{Arc, RwLock};
 
 /// Manages the Least Recently Used (LRU) list of buffer pages.
@@ -14,9 +16,10 @@ use std::sync::{Arc, RwLock};
 /// for the buffer pool. It manages the movement of pages between the free list
 /// and the LRU list, and handles the eviction of pages when the buffer pool
 /// is full.
-struct BufLRU {
+pub struct BufLRU {
     /// Reference to the buffer pool that this LRU manager operates on
     buf_pool: Arc<RwLock<BufPool>>,
+    lru_list: RefCell<Weak<RefCell<LinkedList<LruAdapter>>>>,
 }
 
 impl BufLRU {
@@ -28,7 +31,22 @@ impl BufLRU {
     /// # Returns
     /// A new BufLRU instance
     pub fn new(buf_pool: Arc<RwLock<BufPool>>) -> Self {
-        BufLRU { buf_pool }
+        BufLRU { buf_pool, lru_list: RefCell::new(Default::default()) }
+    }
+
+    pub fn add_block(&mut self, buf_page: &BufPage) {
+        self.add_block_low(buf_page);
+    }
+
+    fn add_block_low(&mut self, buf_page: &BufPage) {
+        let page = unsafe { UnsafeRef::from_raw(buf_page) };
+        let lru_list = self.lru_list.borrow_mut();
+        if let Some(lru) = lru_list.upgrade() {
+            let mut lru_ref = lru.borrow_mut();
+            lru_ref.push_back(page);
+        } else {
+            ut_a!(false, "LRU list is not initialized");
+        }
     }
 
     /// Gets a free block from the buffer pool's free list without modifying the LRU list.
@@ -91,8 +109,15 @@ impl BufLRU {
             }
         }
 
+        ut_ad!(block.buf_block_get_page().is_in_free_list() == false);
+        ut_ad!(block.buf_block_get_page().is_in_flush_list() == false);
+        ut_ad!(block.buf_block_get_page().is_in_lru_list() == false);
+
         block.buf_block_set_state(BufBlockNotUsed);
 
         let mut pool = self.buf_pool.write().unwrap();
+        pool.add_to_free_list(block.buf_block_get_page_mut());
+
+        ut_a!(block.buf_block_get_page_mut().is_in_lru_list())
     }
 }
