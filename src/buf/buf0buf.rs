@@ -1,15 +1,24 @@
+use crate::buf::buf0lru::BufLRU;
 use crate::buf::buf0types::{
-    BufBlock, BufPage, BufPageState, Request, BUF_GET_ALWAYS,
-    BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH,
+    BufBlock, BufChunk, BufPage, FlushListAdapter, FreeListAdapter,
+    LruAdapter, Request, BUF_GET_ALWAYS, BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH,
 };
 use crate::fil::fil0fil::Fil;
 use crate::fil::fil0types::SpaceId;
-use crate::innodb::innodb0types::{PageId, PageNo};
+use crate::innodb::innodb0types::{DbErr, PageId, PageNo, UNIV_PAGE_SIZE};
+use crate::mtr::mtr0mtr::Mtr;
 use crate::mtr::mtr0types::MtrState;
 use crate::sync::sync0rw::ReadWriteLatch;
-use crate::ut::ut0dbg::ut_ad;
-use intrusive_collections::LinkedList;
+use crate::ut::ut0dbg::{ut_a, ut_ad};
+use intrusive_collections::{LinkedList, UnsafeRef};
+use log::warn;
+use std::alloc::{alloc_zeroed, Layout};
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
+use std::pin::Pin;
+use std::ptr::null_mut;
+use std::rc::{Rc, Weak};
 use std::sync::{Arc, RwLock};
 
 /// Buffer Pool manages the caching of database pages in memory.
@@ -19,16 +28,19 @@ use std::sync::{Arc, RwLock};
 /// various page replacement algorithms and manages the lifecycle of pages
 /// in memory.
 pub struct BufPool {
+    /// Current size of the buffer pool in pages.
+    curr_size: usize,
     /// Hash table mapping page IDs to buffer blocks
-    page_hash: HashMap<PageId, Box<BufBlock>>,
+    page_hash: HashMap<PageId, RefCell<BufBlock>>,
     /// List of modified pages that need to be flushed to disk
-    flush_list: LinkedList<crate::buf::buf0types::FlushListAdapter>,
+    flush_list: LinkedList<FlushListAdapter>,
     /// List of free buffer blocks available for allocation
-    free_list: LinkedList<crate::buf::buf0types::FreeListAdapter>,
+    free_list: LinkedList<FreeListAdapter>,
     /// List of buffer blocks ordered by least recently used algorithm
-    lru_list: LinkedList<crate::buf::buf0types::LruAdapter>,
+    lru_list: LinkedList<LruAdapter>,
     /// File system interface for I/O operations
     fil: Arc<RwLock<Fil>>,
+    buf_lru: Weak<RefCell<BufLRU>>,
 }
 impl BufPool {
     /// Creates a new Buffer Pool instance.
@@ -40,12 +52,19 @@ impl BufPool {
     /// A new BufPool instance with initialized data structures
     pub fn new(fil: Arc<RwLock<Fil>>) -> Self {
         BufPool {
+            curr_size: 0,
             page_hash: Default::default(),
             free_list: Default::default(),
             lru_list: Default::default(),
             flush_list: Default::default(),
             fil,
+            buf_lru: Weak::new(),
         }
+    }
+
+    /// Sets the LRU manager for this buffer pool.
+    pub fn set_buf_lru(&mut self, buf_lru: &Rc<RefCell<BufLRU>>) {
+        self.buf_lru = Rc::downgrade(buf_lru);
     }
 
     /* Free List methods */
@@ -57,8 +76,14 @@ impl BufPool {
     /// # Returns
     /// * `Some(BufBlock)` - A free buffer block if available
     /// * `None` - If no free blocks are available
-    pub fn get_free_block(&mut self) -> Option<BufBlock> {
-        if let Some(block) = self.free_list.pop_front() { None } else { None }
+    pub fn get_free_block(&mut self) -> Option<Weak<RefCell<BufBlock>>> {
+        println!("free list size: {}", self.get_free_list_size());
+        if let Some(buf_page) = self.free_list.pop_front() {
+            let block = buf_page.buf_page_get_buf_block();
+            Some(block)
+        } else {
+            None
+        }
     }
 
     /// Retrieves a buffer block for the requested page.
@@ -91,7 +116,7 @@ impl BufPool {
         );
 
         let block_opt =
-            self.page_hash.get(&request.page_id).map(|block| block.as_ref());
+            self.page_hash.get(&request.page_id).map(|block| block.borrow());
 
         match block_opt {
             None => {
@@ -133,7 +158,8 @@ impl BufPool {
         page_no: PageNo,
     ) -> Option<&BufBlock> {
         let page_id = PageId { space_id, page_no };
-        self.page_hash.get(&page_id).map(|block| block.as_ref())
+        // self.page_hash.get(&page_id).map(|block| block.borrow())
+        None
     }
 
     /// Checks if a page is present in the buffer pool.
@@ -174,11 +200,154 @@ impl BufPool {
     /// * `page_no` - The page number within the tablespace
     /// * `table_space_version` - The version of the tablespace
     pub fn init_for_read(
-        &self,
+        &mut self,
         space_id: SpaceId,
         page_no: PageNo,
         table_space_version: i64,
-    ) {
+    ) -> Result<Option<RefCell<BufBlock>>, DbErr> {
+        /* 1. Check if the block is present in the buffer pool.*/
         let block = self.page_hash.get(&PageId { space_id, page_no });
+
+        if let Some(buf_block) = block {
+            return Ok(None);
+        }
+
+        /* 2. Check if the tablespace is being deleted or already deleted. */
+        let fil = self.fil.read().unwrap();
+        if fil
+            .tablespace_deleted_or_being_deleted(space_id, table_space_version)
+        {
+            warn!(
+                "Trying to read a page from a deleted tablespace or is being deleted: {}",
+                space_id
+            );
+            return Ok(None);
+        }
+
+        /* 3. Allocate a new buffer block for the page. */
+        let block = block.unwrap();
+        self.buf_lru
+            .upgrade()
+            .unwrap()
+            .borrow_mut()
+            .add_block(block.clone().borrow().buf_block_get_page());
+
+        self.page_init(space_id, page_no, block.clone().get_mut());
+
+        let ret = Some(block.clone());
+        Ok(ret)
+    }
+
+    pub fn add_to_free_list(&mut self, buf_page: &mut BufPage) {
+        unsafe {
+            self.free_list.push_back(UnsafeRef::from_raw(buf_page));
+        }
+        buf_page.set_is_in_lru_list(true);
+    }
+
+    pub fn add_to_flush_list(&mut self, buf_page: &mut BufPage) {
+        unsafe {
+            self.flush_list.push_back(UnsafeRef::from_raw(buf_page));
+        }
+        buf_page.set_is_in_flush_list(true);
+    }
+
+    pub fn add_to_lru_list(&mut self, buf_page: &mut BufPage) {
+        unsafe {
+            self.lru_list.push_back(UnsafeRef::from_raw(buf_page));
+        }
+        buf_page.set_is_in_lru_list(true);
+    }
+
+    /// Initializes a page in the buffer pool.
+    pub fn page_init(
+        &self,
+        space_id: SpaceId,
+        page_no: PageNo,
+        buf_block: &mut BufBlock,
+    ) {
+    }
+
+    pub fn block_free(&mut self, buf_block: &mut BufBlock) {
+        self.buf_lru
+            .upgrade()
+            .unwrap()
+            .borrow_mut()
+            .block_free_non_file_page(buf_block);
+    }
+
+    pub fn create(
+        &mut self,
+        space_id: SpaceId,
+        page_no: PageNo,
+        mtr: &mut Mtr,
+    ) -> Option<Rc<RefCell<BufBlock>>> {
+        ut_ad!(mtr.get_mtr_state() == MtrState::MTR_ACTIVE);
+
+        let free_block = self.get_free_block();
+        if let Some(block) = free_block {
+            if let Some(buf_block) = block.upgrade() {
+                let mut block_ref = buf_block.borrow_mut();
+                let block = block_ref.deref_mut();
+
+                if buf_block.borrow().buf_block_get_page().in_file() {
+                    self.block_free(block);
+
+                    // return using the Get methods.
+                }
+
+                self.page_init(space_id, page_no, block);
+
+                return Some(buf_block.clone());
+            }
+        }
+
+        None
+    }
+
+    pub fn get_free_list_size(&self) -> usize {
+        let link = self.free_list.iter().clone();
+        link.count()
+    }
+
+    pub fn chunk_init(&mut self, mem_size: usize) -> Box<BufChunk> {
+        ut_ad!(mem_size % UNIV_PAGE_SIZE == 0);
+
+        let layout =
+            Layout::from_size_align(UNIV_PAGE_SIZE, UNIV_PAGE_SIZE).unwrap();
+        let mem_ptr = unsafe { alloc_zeroed(layout) };
+
+        let no_of_pages = mem_size / UNIV_PAGE_SIZE;
+
+        let mut buf_pages =
+            Vec::<Pin<Box<BufBlock>>>::with_capacity(no_of_pages);
+
+        ut_ad!(buf_pages.len() == 0);
+
+        let mut buf_frame_ptr = mem_ptr;
+        for _index in 0..no_of_pages {
+            let mut buf_block = Pin::new(Box::new(BufBlock::new(
+                BufPage::new(0, 0),
+                buf_frame_ptr,
+            )));
+
+            self.add_to_free_list(buf_block.buf_block_get_page_mut());
+            buf_pages.push(buf_block);
+
+            unsafe {
+                buf_frame_ptr = buf_frame_ptr.add(UNIV_PAGE_SIZE);
+            }
+        }
+
+        ut_ad!(buf_pages.len() == no_of_pages);
+
+        let rt = Box::new(BufChunk {
+            mem_size,
+            size: no_of_pages,
+            mem: mem_ptr,
+            buf_pages,
+        });
+
+        rt
     }
 }

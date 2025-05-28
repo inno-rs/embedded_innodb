@@ -23,4 +23,8 @@ impl Mtr {
     pub fn get_mtr_state(&self) -> MtrState {
         self.mtr_state.clone()
     }
+
+    pub fn set_mtr_state(&mut self, mtr_state: MtrState) {
+        self.mtr_state = mtr_state;
+    }
 }
