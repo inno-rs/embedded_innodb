@@ -226,11 +226,9 @@ impl BufPool {
 
         /* 3. Allocate a new buffer block for the page. */
         let block = block.unwrap();
-        self.buf_lru
-            .upgrade()
-            .unwrap()
-            .borrow_mut()
-            .add_block(block.clone().borrow().buf_block_get_page());
+        self.buf_lru.upgrade().unwrap().borrow_mut().add_block(
+            block.borrow_mut().buf_block_get_page().borrow().deref(),
+        );
 
         self.page_init(space_id, page_no, block.clone().get_mut());
 
@@ -290,7 +288,7 @@ impl BufPool {
                 let mut block_ref = buf_block.borrow_mut();
                 let block = block_ref.deref_mut();
 
-                if buf_block.borrow().buf_block_get_page().in_file() {
+                if buf_block.borrow().buf_block_get_page().borrow().in_file() {
                     self.block_free(block);
 
                     // return using the Get methods.
@@ -326,12 +324,18 @@ impl BufPool {
 
         let mut buf_frame_ptr = mem_ptr;
         for _index in 0..no_of_pages {
+            let buf_page =
+                RefCell::new(Rc::new(RefCell::new(BufPage::new(0, 0))));
             let mut buf_block = Pin::new(Box::new(BufBlock::new(
-                BufPage::new(0, 0),
+                buf_page.clone(),
                 buf_frame_ptr,
             )));
 
-            self.add_to_free_list(buf_block.buf_block_get_page_mut());
+            let buf_page_ref = buf_page.borrow();
+
+            self.add_to_free_list(
+                buf_page_ref.as_ref().borrow_mut().deref_mut(),
+            );
             buf_pages.push(buf_block);
 
             unsafe {

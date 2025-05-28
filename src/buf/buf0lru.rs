@@ -7,6 +7,7 @@ use crate::ut::ut0dbg::{ut_a, ut_ad};
 use intrusive_collections::{LinkedList, UnsafeRef};
 use log::info;
 use std::cell::RefCell;
+use std::ops::{Deref, DerefMut};
 use std::rc::Weak;
 use std::sync::{Arc, RwLock};
 
@@ -109,15 +110,19 @@ impl BufLRU {
             }
         }
 
-        ut_ad!(block.buf_block_get_page().is_in_free_list() == false);
-        ut_ad!(block.buf_block_get_page().is_in_flush_list() == false);
-        ut_ad!(block.buf_block_get_page().is_in_lru_list() == false);
+        let buf_page = block.buf_block_get_page();
+        let page_ref = buf_page.borrow();
+        ut_ad!(page_ref.is_in_free_list() == false);
+        ut_ad!(page_ref.is_in_flush_list() == false);
+        ut_ad!(page_ref.is_in_lru_list() == false);
 
         block.buf_block_set_state(BufBlockNotUsed);
 
         let mut pool = self.buf_pool.write().unwrap();
-        pool.add_to_free_list(block.buf_block_get_page_mut());
+        let page_ref = block.buf_block_get_page();
 
-        ut_a!(block.buf_block_get_page_mut().is_in_lru_list())
+        pool.add_to_free_list(page_ref.borrow_mut().deref_mut());
+
+        ut_a!(page_ref.borrow().is_in_lru_list())
     }
 }

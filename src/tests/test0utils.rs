@@ -10,6 +10,8 @@ use crate::page::page0cur::PageCur;
 use crate::page::page0page::Page;
 use crate::rem::rem0rec::OrphanRecord;
 use std::alloc::{alloc_zeroed, Layout};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 /// A structure that owns both the data vectors and the DTuple that references them.
@@ -118,7 +120,10 @@ pub fn create_raw_page() -> OwningPage {
     let mem = unsafe { alloc_zeroed(layout) };
 
     let index = Index::new(PageId::dummy());
-    let buf_block = BufBlock::new(BufPage::dummy(), mem);
+    let buf_block = BufBlock::new(
+        RefCell::new(Rc::new(RefCell::new(BufPage::dummy()))),
+        mem,
+    );
 
     OwningPage {
         page_mem: mem,
