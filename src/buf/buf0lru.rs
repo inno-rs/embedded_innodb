@@ -2,13 +2,15 @@ use crate::buf::buf0buf::BufPool;
 use crate::buf::buf0types::BufPageState::{
     BufBlockNotUsed, BufBlockReadyForUse,
 };
-use crate::buf::buf0types::{BufBlock, BufPage, BufPageState, LruAdapter};
+use crate::buf::buf0types::{
+    BufBlock, BufPage, BufPageState, FreeListAdapter, LruAdapter,
+};
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use intrusive_collections::{LinkedList, UnsafeRef};
 use log::info;
 use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
-use std::rc::Weak;
+use std::rc::{Rc, Weak};
 use std::sync::{Arc, RwLock};
 
 /// Manages the Least Recently Used (LRU) list of buffer pages.
@@ -19,8 +21,11 @@ use std::sync::{Arc, RwLock};
 /// is full.
 pub struct BufLRU {
     /// Reference to the buffer pool that this LRU manager operates on
-    buf_pool: Arc<RwLock<BufPool>>,
-    lru_list: RefCell<Weak<RefCell<LinkedList<LruAdapter>>>>,
+    buf_pool: Weak<RefCell<BufPool>>,
+    /// List of buffer blocks ordered by least recently used algorithm
+    lru_list: Arc<RefCell<LinkedList<LruAdapter>>>,
+    /// List of free buffer blocks available for allocation
+    free_list: Arc<RefCell<LinkedList<FreeListAdapter>>>,
 }
 
 impl BufLRU {
@@ -31,23 +36,48 @@ impl BufLRU {
     ///
     /// # Returns
     /// A new BufLRU instance
-    pub fn new(buf_pool: Arc<RwLock<BufPool>>) -> Self {
-        BufLRU { buf_pool, lru_list: RefCell::new(Default::default()) }
+    pub fn new() -> Self {
+        BufLRU {
+            buf_pool: Default::default(),
+            lru_list: Default::default(),
+            free_list: Default::default(),
+        }
+    }
+
+    pub fn init(&mut self, buf_pool: Weak<RefCell<BufPool>>) {
+        let buf_pool_ref = buf_pool.upgrade();
+        if let Some(buf_pool) = buf_pool_ref {
+            self.buf_pool = Rc::downgrade(&buf_pool);
+        }
     }
 
     pub fn add_block(&mut self, buf_page: &BufPage) {
         self.add_block_low(buf_page);
     }
 
+    /// Moves a page to the start of the buffer pool LRU list.
+    /// This high level function can be used
+    /// to prevent an important page from slipping out of the buffer pool.
+    pub fn make_young(&mut self, buf_page: &mut BufPage) {
+        ut_ad!(buf_page.in_file());
+
+        self.remove_block(buf_page);
+        self.add_block_low(buf_page);
+    }
+
+    fn remove_block(&mut self, buf_page: &mut BufPage) {
+        let mut lru_ref = self.lru_list.borrow_mut();
+        unsafe {
+            let mut cursor = lru_ref.cursor_mut_from_ptr(buf_page);
+            cursor.remove();
+        }
+        buf_page.set_is_in_lru_list(false);
+    }
+
     fn add_block_low(&mut self, buf_page: &BufPage) {
         let page = unsafe { UnsafeRef::from_raw(buf_page) };
-        let lru_list = self.lru_list.borrow_mut();
-        if let Some(lru) = lru_list.upgrade() {
-            let mut lru_ref = lru.borrow_mut();
-            lru_ref.push_back(page);
-        } else {
-            ut_a!(false, "LRU list is not initialized");
-        }
+        let mut lru_list = self.lru_list.borrow_mut();
+        lru_list.push_back(page);
     }
 
     /// Gets a free block from the buffer pool's free list without modifying the LRU list.
@@ -58,8 +88,13 @@ impl BufLRU {
     /// # Returns
     /// * `Some(BufBlock)` - A free buffer block if available on the free list
     /// * `None` - If the free list is empty
-    pub fn get_free_only(&mut self) -> Option<BufBlock> {
-        let pool = self.buf_pool.write().unwrap();
+    pub fn get_free_only(&mut self) -> Option<Rc<RefCell<BufBlock>>> {
+        let buf_page = self.free_list.borrow_mut().pop_front();
+
+        if let Some(buf_page) = buf_page {
+            let buf_block = buf_page.buf_page_get_buf_block();
+            return buf_block.upgrade();
+        }
 
         None
     }
@@ -73,13 +108,13 @@ impl BufLRU {
     /// # Returns
     /// * `Some(BufBlock)` - A free buffer block
     /// * `None` - If no blocks could be freed (should not happen in a properly sized buffer pool)
-    pub fn get_free_block(&mut self) -> Option<BufBlock> {
+    pub fn get_free_block(&mut self) -> Option<Rc<RefCell<BufBlock>>> {
         // First try to get a block from the free list
         if let Some(block) = self.get_free_only() {
             return Some(block);
         }
 
-        // If free list is empty, we should move blocks from LRU list
+        // If the free list is empty, we should move blocks from LRU list
         // This is a simplified implementation that just returns None for now
         None
     }
@@ -118,11 +153,26 @@ impl BufLRU {
 
         block.buf_block_set_state(BufBlockNotUsed);
 
-        let mut pool = self.buf_pool.write().unwrap();
-        let page_ref = block.buf_block_get_page();
+        let page = block.buf_block_get_page();
 
-        pool.add_to_free_list(page_ref.borrow_mut().deref_mut());
+        self.add_to_free_list(page.borrow_mut().deref_mut());
 
-        ut_a!(page_ref.borrow().is_in_lru_list())
+        ut_a!(page.borrow().is_in_lru_list())
+    }
+
+    pub fn add_to_free_list(&mut self, buf_page: &mut BufPage) {
+        let mut free_list_ref = self.free_list.borrow_mut();
+        unsafe {
+            free_list_ref.push_back(UnsafeRef::from_raw(buf_page));
+        }
+        buf_page.set_is_in_lru_list(true);
+    }
+
+    pub fn buf_page_remove_from_lru_list(&mut self, buf_page: &mut BufPage) {
+        self.remove_block(buf_page);
+    }
+
+    pub fn get_free_list_size(&self) -> usize {
+        self.free_list.borrow().iter().count()
     }
 }
