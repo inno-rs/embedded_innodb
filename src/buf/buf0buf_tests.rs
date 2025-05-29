@@ -37,7 +37,7 @@ mod tests {
         assert_eq!(result.size, 10);
     }
 
-    #[ignore]
+    // #[ignore]
     #[test]
     fn test_create_space() {
         let fil = Arc::new(RwLock::new(Fil::new(1)));
@@ -56,5 +56,15 @@ mod tests {
 
         let resp = buf_pool.create(0, 0, &mut mtr);
         assert!(resp.is_some());
+
+        // The total number of items in the free list should decrease by 1.
+        assert_eq!(buf_pool.get_free_list_size(), 9);
+
+        for i in 0..9 {
+            let resp = buf_pool.create(0, 0, &mut mtr);
+            assert!(resp.is_some());
+
+            assert_eq!(buf_pool.get_free_list_size(), 9 - i - 1);
+        }
     }
 }

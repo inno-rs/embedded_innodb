@@ -5,7 +5,6 @@ use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
 use intrusive_collections::{intrusive_adapter, LinkedListLink, UnsafeRef};
 use std::cell::RefCell;
-use std::pin::Pin;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -97,6 +96,10 @@ impl BufPage {
             is_in_lru_list: false,
             buf_block: Default::default(),
         }
+    }
+
+    pub fn set_buf_block_ref(&mut self, buf_block: Weak<RefCell<BufBlock>>) {
+        self.buf_block = buf_block;
     }
 
     /// Creates a dummy buffer page with zero values for testing or placeholder purposes.
@@ -296,5 +299,5 @@ pub struct BufChunk {
     pub mem_size: usize,
     pub size: usize,
     pub mem: *mut u8,
-    pub buf_pages: Vec<Pin<Box<BufBlock>>>,
+    pub buf_pages: Vec<RefCell<Rc<RefCell<BufBlock>>>>,
 }

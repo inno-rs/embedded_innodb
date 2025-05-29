@@ -288,7 +288,7 @@ impl BufPool {
                 let mut block_ref = buf_block.borrow_mut();
                 let block = block_ref.deref_mut();
 
-                if buf_block.borrow().buf_block_get_page().borrow().in_file() {
+                if block.buf_block_get_page().borrow().in_file() {
                     self.block_free(block);
 
                     // return using the Get methods.
@@ -304,8 +304,7 @@ impl BufPool {
     }
 
     pub fn get_free_list_size(&self) -> usize {
-        let link = self.free_list.iter().clone();
-        link.count()
+        self.free_list.iter().count()
     }
 
     pub fn chunk_init(&mut self, mem_size: usize) -> Box<BufChunk> {
@@ -318,7 +317,7 @@ impl BufPool {
         let no_of_pages = mem_size / UNIV_PAGE_SIZE;
 
         let mut buf_pages =
-            Vec::<Pin<Box<BufBlock>>>::with_capacity(no_of_pages);
+            Vec::<RefCell<Rc<RefCell<BufBlock>>>>::with_capacity(no_of_pages);
 
         ut_ad!(buf_pages.len() == 0);
 
@@ -326,16 +325,18 @@ impl BufPool {
         for _index in 0..no_of_pages {
             let buf_page =
                 RefCell::new(Rc::new(RefCell::new(BufPage::new(0, 0))));
-            let mut buf_block = Pin::new(Box::new(BufBlock::new(
-                buf_page.clone(),
-                buf_frame_ptr,
+            let buf_block = RefCell::new(Rc::new(RefCell::new(
+                BufBlock::new(buf_page.clone(), buf_frame_ptr),
             )));
 
             let buf_page_ref = buf_page.borrow();
 
-            self.add_to_free_list(
-                buf_page_ref.as_ref().borrow_mut().deref_mut(),
-            );
+            self.add_to_free_list(buf_page_ref.borrow_mut().deref_mut());
+
+            let buf_block_weak = Rc::downgrade(&buf_block.borrow());
+
+            buf_page.borrow().borrow_mut().set_buf_block_ref(buf_block_weak);
+
             buf_pages.push(buf_block);
 
             unsafe {
