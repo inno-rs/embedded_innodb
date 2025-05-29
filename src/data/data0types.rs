@@ -178,7 +178,7 @@ pub struct DField {
 pub struct BigRecField {
     pub field_no: usize,
     pub len: usize,
-    pub data: *const u8,
+    pub data: Vec<u8>,
 }
 
 pub struct BigRec {

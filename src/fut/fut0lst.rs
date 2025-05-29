@@ -253,5 +253,5 @@ pub fn flst_init(base: &mut [u8]) {
 
 pub fn write_len(base: &mut [u8], len: usize) {
     let bytes = (len as u32).to_be_bytes();
-    base[FLST_LEN..FLST_LEN+4].copy_from_slice(&bytes);
+    base[FLST_LEN..FLST_LEN + 4].copy_from_slice(&bytes);
 }

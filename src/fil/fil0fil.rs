@@ -443,4 +443,12 @@ impl Fil {
     pub fn unflushed_space_list_len(&self) -> usize {
         self.unflushed_space_list.iter().count()
     }
+
+    pub fn tablespace_deleted_or_being_deleted(
+        &self,
+        space_id: SpaceId,
+        table_space_version: i64,
+    ) -> bool {
+        true
+    }
 }

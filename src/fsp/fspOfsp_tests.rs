@@ -24,9 +24,7 @@ mod tests {
         );
 
         // LSN field (bytes FIL_PAGE_LSN .. FIL_PAGE_SPACE_ID) must be zero
-        assert!(buf[FIL_PAGE_LSN..FIL_PAGE_SPACE_ID]
-            .iter()
-            .all(|&b| b == 0));
+        assert!(buf[FIL_PAGE_LSN..FIL_PAGE_SPACE_ID].iter().all(|&b| b == 0));
 
         // Space‐ID field
         assert_eq!(
@@ -36,22 +34,27 @@ mod tests {
 
         // End‐LSN/checksum trailer
         let trailer_start = UNIV_PAGE_SIZE - FIL_PAGE_END_LSN_CHKSUM;
-        assert!(buf[trailer_start..trailer_start + FIL_PAGE_END_LSN_CHKSUM]
-            .iter()
-            .all(|&b| b == 0));
+        assert!(
+            buf[trailer_start..trailer_start + FIL_PAGE_END_LSN_CHKSUM]
+                .iter()
+                .all(|&b| b == 0)
+        );
 
         // Everything else should also be zero
         for (i, &byte) in buf.iter().enumerate() {
-            let in_page_no   = (FIL_PAGE_OFFSET..FIL_PAGE_OFFSET + 4).contains(&i);
-            let in_lsn       = (FIL_PAGE_LSN..FIL_PAGE_SPACE_ID).contains(&i);
-            let in_space_id  = (FIL_PAGE_SPACE_ID..FIL_PAGE_SPACE_ID + 4).contains(&i);
-            let in_trailer   = i >= trailer_start;
+            let in_page_no =
+                (FIL_PAGE_OFFSET..FIL_PAGE_OFFSET + 4).contains(&i);
+            let in_lsn = (FIL_PAGE_LSN..FIL_PAGE_SPACE_ID).contains(&i);
+            let in_space_id =
+                (FIL_PAGE_SPACE_ID..FIL_PAGE_SPACE_ID + 4).contains(&i);
+            let in_trailer = i >= trailer_start;
             if in_page_no || in_lsn || in_space_id || in_trailer {
                 continue;
             }
             assert_eq!(
                 byte, 0,
-                "byte at offset {} should be zero, found 0x{:02x}", i, byte
+                "byte at offset {} should be zero, found 0x{:02x}",
+                i, byte
             );
         }
     }
@@ -68,13 +71,11 @@ mod tests {
         assert_eq!(u32::from_le_bytes(state_bytes) as usize, XDES_FREE);
 
         // bitmap bytes all 0xFF
-        assert!(buf[XDES_BITMAP..XDES_SIZE]
-            .iter()
-            .all(|&b| b == 0xFF));
+        assert!(buf[XDES_BITMAP..XDES_SIZE].iter().all(|&b| b == 0xFF));
 
         // other bytes untouched
         for (i, &b) in buf.iter().enumerate() {
-            let in_state  = (XDES_STATE..XDES_STATE + 4).contains(&i);
+            let in_state = (XDES_STATE..XDES_STATE + 4).contains(&i);
             let in_bitmap = (XDES_BITMAP..XDES_SIZE).contains(&i);
             if in_state || in_bitmap {
                 continue;
@@ -135,8 +136,7 @@ mod tests {
         desc.xdes_init();
 
         let extent_no = 5;
-        let first = desc.alloc_page(extent_no)
-            .expect("should get a page");
+        let first = desc.alloc_page(extent_no).expect("should get a page");
         assert_eq!(first, extent_no * FSP_EXTENT_SIZE as u32);
 
         // after one alloc, descriptor must be fragmented
@@ -152,7 +152,8 @@ mod tests {
         let extent_no = 7;
         // allocate all 64 pages
         for i in 0..FSP_EXTENT_SIZE {
-            let pg = desc.alloc_page(extent_no)
+            let pg = desc
+                .alloc_page(extent_no)
                 .unwrap_or_else(|| panic!("alloc #{} failed", i));
             assert_eq!(pg, extent_no * FSP_EXTENT_SIZE as u32 + i as u32);
 
@@ -175,7 +176,7 @@ mod tests {
         let mut frame = vec![0xFFu8; UNIV_PAGE_SIZE];
         let mut desc = PageFrame::new(&mut frame);
         let sid = 1234;
-        let sz  = 5678;
+        let sz = 5678;
 
         // Invoke header_init
         desc.header_init(sid, sz);
@@ -183,7 +184,7 @@ mod tests {
         // 1) space_id written correctly
         let span = FSP_HEADER_OFFSET + FSP_SPACE_ID;
         assert_eq!(
-            &frame[span .. span + 4],
+            &frame[span..span + 4],
             &sid.to_le_bytes(),
             "space_id mismatch"
         );
@@ -191,7 +192,7 @@ mod tests {
         // 2) space_size
         let span = FSP_HEADER_OFFSET + FSP_SIZE;
         assert_eq!(
-            &frame[span .. span + 4],
+            &frame[span..span + 4],
             &sz.to_le_bytes(),
             "space_size mismatch"
         );
@@ -199,16 +200,16 @@ mod tests {
         // 3) free_limit = space_size
         let span = FSP_HEADER_OFFSET + FSP_FREE_LIMIT;
         assert_eq!(
-            &frame[span .. span + 4],
+            &frame[span..span + 4],
             &sz.to_le_bytes(),
             "free_limit mismatch"
         );
 
         // 4) flags and frag_n_used remain zero
         let fspan = FSP_HEADER_OFFSET + FSP_SPACE_FLAGS;
-        assert!(frame[fspan .. fspan + 4].iter().all(|&b| b == 0));
+        assert!(frame[fspan..fspan + 4].iter().all(|&b| b == 0));
         let fspan = FSP_HEADER_OFFSET + FSP_FRAG_N_USED;
-        assert!(frame[fspan .. fspan + 4].iter().all(|&b| b == 0));
+        assert!(frame[fspan..fspan + 4].iter().all(|&b| b == 0));
 
         // 5) each of the five list-heads is initialized empty
         let lists = [
@@ -220,7 +221,7 @@ mod tests {
         ];
         for &rel_off in &lists {
             let abs_off = FSP_HEADER_OFFSET + rel_off;
-            let slice  = &frame[abs_off .. abs_off + FLST_BASE_NODE_SIZE];
+            let slice = &frame[abs_off..abs_off + FLST_BASE_NODE_SIZE];
 
             // length == 0
             assert_eq!(
@@ -248,7 +249,7 @@ mod tests {
         // 6) next_segment_id == 0
         let span = FSP_HEADER_OFFSET + FSP_SEG_ID;
         assert_eq!(
-            &frame[span .. span + 4],
+            &frame[span..span + 4],
             &0u32.to_le_bytes(),
             "next_segment_id not zero"
         );
@@ -282,7 +283,8 @@ mod tests {
 
             let me = FilAddr { page_no: 0, byte_off: extent_off as u16 };
 
-            let base = &mut head[FSP_HEADER_OFFSET + FSP_FREE..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
+            let base = &mut head[FSP_HEADER_OFFSET + FSP_FREE
+                ..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
             flst_init(base);
             me.add_last(base, xdes_buf, None);
         }
@@ -296,7 +298,8 @@ mod tests {
         // Step 6: Scope 2 - Verify FSP_FREE is empty
         {
             let buf = frame.get_buf_mut();
-            let base = &buf[FSP_HEADER_OFFSET + FSP_FREE..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
+            let base = &buf[FSP_HEADER_OFFSET + FSP_FREE
+                ..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
             assert_eq!(FilAddr::len(base), 0);
             assert_eq!(FilAddr::first(base), FilAddr::NULL);
             assert_eq!(FilAddr::last(base), FilAddr::NULL);
@@ -305,7 +308,8 @@ mod tests {
         // Step 7: Scope 3 - Verify FSP_FREE_FRAG contains the extent
         {
             let buf = frame.get_buf_mut();
-            let base = &buf[FSP_HEADER_OFFSET + FSP_FREE_FRAG..FSP_HEADER_OFFSET + FSP_FREE_FRAG + FLST_BASE_NODE_SIZE];
+            let base = &buf[FSP_HEADER_OFFSET + FSP_FREE_FRAG
+                ..FSP_HEADER_OFFSET + FSP_FREE_FRAG + FLST_BASE_NODE_SIZE];
             let me = FilAddr { page_no: 0, byte_off: extent_off as u16 };
             assert_eq!(FilAddr::len(base), 1);
             assert_eq!(FilAddr::first(base), me);
@@ -321,10 +325,9 @@ mod tests {
             assert_eq!(xdes.used_count(), 0); // All bits set = all pages free
         }
     }
-    
-    
+
     #[test]
-   
+
     fn test_free_page_moves_extent_to_free_if_all_pages_freed() {
         let mut page = vec![0u8; UNIV_PAGE_SIZE];
         let mut frame = PageFrame::new(&mut page);
@@ -352,7 +355,8 @@ mod tests {
                 byte_off: extent_off as u16,
             };
 
-            let free_frag = &mut head[FSP_HEADER_OFFSET + FSP_FREE_FRAG..FSP_HEADER_OFFSET + FSP_FREE_FRAG + FLST_BASE_NODE_SIZE];
+            let free_frag = &mut head[FSP_HEADER_OFFSET + FSP_FREE_FRAG
+                ..FSP_HEADER_OFFSET + FSP_FREE_FRAG + FLST_BASE_NODE_SIZE];
             flst_init(free_frag);
             addr.add_last(free_frag, xdes_buf, None);
         }
@@ -372,15 +376,13 @@ mod tests {
 
         {
             let buf = frame.get_buf_mut();
-            let free = &buf[FSP_HEADER_OFFSET + FSP_FREE..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
-            let free_frag = &buf[FSP_HEADER_OFFSET + FSP_FREE_FRAG..FSP_HEADER_OFFSET + FSP_FREE_FRAG + FLST_BASE_NODE_SIZE];
+            let free = &buf[FSP_HEADER_OFFSET + FSP_FREE
+                ..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
+            let free_frag = &buf[FSP_HEADER_OFFSET + FSP_FREE_FRAG
+                ..FSP_HEADER_OFFSET + FSP_FREE_FRAG + FLST_BASE_NODE_SIZE];
 
             assert_eq!(FilAddr::len(free), 1);
             assert_eq!(FilAddr::len(free_frag), 0);
         }
     }
-        
-        
 }
-
-

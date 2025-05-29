@@ -1,5 +1,6 @@
 extern crate core;
 
+mod btr;
 mod buf;
 mod data;
 mod dict;
@@ -15,12 +16,11 @@ mod os;
 mod page;
 mod rem;
 mod srv;
-mod trx;
-mod utils;
-mod ut;
-mod tests;
 mod sync;
-mod btr;
+mod tests;
+mod trx;
+mod ut;
+mod utils;
 
 fn main() {
     println!("Hello, world!");

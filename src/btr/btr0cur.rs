@@ -1,5 +1,5 @@
 use crate::btr::btr0btr::BTree;
-use crate::buf::buf0types::BufBlock;
+use crate::buf::buf0types::{BufBlock, BufPage};
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
 use crate::fsp::fspOfsp::Fsp;
@@ -11,7 +11,9 @@ use crate::page::page0cur::PageCur;
 use crate::page::page0page::Page;
 use crate::rem::rem0rec::Record;
 use crate::ut::ut0dbg::ut_ad;
+use std::cell::RefCell;
 use std::ptr::null_mut;
+use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
 /// Flag indicating that undo logging should be skipped for this operation.
@@ -76,7 +78,10 @@ impl<'a> BTreeCursor<'a> {
             lock_sys,
             btree,
             page_cur: None,
-            buf_block: BufBlock::new(null_mut()),
+            buf_block: BufBlock::new(
+                RefCell::new(Rc::new(RefCell::new(BufPage::dummy()))),
+                null_mut(),
+            ),
         }
     }
 
@@ -250,7 +255,7 @@ impl<'a> BTreeCursor<'a> {
             let err = lock_sys.rec_insert_check_and_lock(
                 flags,
                 rec,
-                self.buf_block.clone(),
+                &self.buf_block,
                 self.index,
                 mtr,
             );

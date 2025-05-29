@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::buf::buf0types::{BufBlock, Frame};
+    use crate::buf::buf0types::{BufBlock, BufPage, Frame};
     use crate::dict::dict0types::Index;
     use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
     use crate::mtr::mtr0mtr::Mtr;
@@ -10,6 +10,8 @@ mod tests {
     use crate::tests::test0utils::{create_dtuples, FieldType};
     use rstest::{fixture, rstest};
     use std::alloc::{alloc_zeroed, Layout};
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::sync::Arc;
 
     fn get_raw_block() -> Frame {
@@ -33,7 +35,9 @@ mod tests {
     impl PageCurFixture {
         fn new() -> PageCurFixture {
             let frame = get_raw_block();
-            let buf_block = BufBlock::new(frame);
+            let buf_page =
+                RefCell::new(Rc::new(RefCell::new(BufPage::dummy())));
+            let buf_block = BufBlock::new(buf_page, frame);
             let index = Index::new(PageId::dummy());
             let page = Page::page_create(&index, &buf_block, None);
             let infimum_rec = page.page_get_infimum_rec();
