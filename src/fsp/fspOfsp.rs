@@ -245,6 +245,10 @@ impl<'a> PageFrame<'a> {
         Some(index as u32)
     }
 
+    /* 
+    frees a single page and moves extent between lists based on usage
+    
+    */
     pub fn free_page(&mut self, page_no: u32) {
         let buf = &mut self.buf;
 
@@ -280,6 +284,57 @@ impl<'a> PageFrame<'a> {
         } else {
             xdes.set_state(XDES_FREE_FRAG);
         }
+    }
+    
+    
+    /*
+    This method is responsible for allocating one page from the tablespace. It typically works by:
+	1.	Searching partially used extents (i.e., FSP_FREE_FRAG list).
+	2.	Picking the first extent descriptor from that list.
+	3.	Asking that extent for a free page via ExtentDescriptor::alloc_page().
+	4.	Updating the list pointers and state if the extent becomes full.
+
+    */
+    pub fn alloc_page(&mut self) -> Option<u32> { 
+        // Get the FSP FREE_FRAG_LIST
+        let head = &mut self.buf[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
+        let first = FilAddr::first(head);
+        if first == FilAddr::NULL {
+            return None;
+        }
+        let extent_off = first.byte_off as usize;
+        let (header_part, xdes_area) = self.buf.split_at_mut(XDES_ARR_OFFSET);
+        let rel_off = extent_off - XDES_ARR_OFFSET;
+        let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+        
+        let mut xdes = ExtentDescriptor::new(xdes_buf);
+        
+        let extent_no = rel_off / XDES_SIZE;
+        let page_no = xdes.alloc_page(extent_no as u32)?;
+
+        if xdes.is_full() {
+            // If extent is now full, move it to FSP_FULL_FRAG
+            let this_addr = FilAddr {
+                page_no: 0,
+                byte_off: extent_off as u16,
+            };
+
+            // remove from FSP_FREE_FRAG
+            this_addr.remove(
+                &mut header_part[FSP_HEADER_OFFSET + FSP_FREE_FRAG..],
+                xdes_buf,
+                None,
+                None,
+            );
+
+            // add to FSP_FULL_FRAG
+            this_addr.add_last(
+                &mut header_part[FSP_HEADER_OFFSET + FSP_FULL_FRAG..],
+                xdes_buf,
+                None,
+            );
+        }
+        Some(page_no)
     }
 }
 
