@@ -1,35 +1,59 @@
 #[cfg(test)]
 mod tests {
     use crate::buf::buf0buf::BufPool;
+    use crate::buf::buf0lru::BufLRU;
     use crate::fil::fil0fil::Fil;
     use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
     use crate::mtr::mtr0mtr::Mtr;
     use crate::mtr::mtr0mtr::MtrState::MTR_ACTIVE;
+    use rstest::{fixture, rstest};
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::sync::{Arc, RwLock};
 
-    #[test]
-    fn create_buf_pool() {
-        let fil = Arc::new(RwLock::new(Fil::new(1)));
-        let buf_pool = BufPool::new(fil);
+    struct BufPoolFixture {
+        buf_lru: Arc<RefCell<BufLRU>>,
+        buf_pool: Rc<RefCell<BufPool>>,
+    }
+
+    impl BufPoolFixture {
+        pub fn new() -> Self {
+            let fil = Arc::new(RwLock::new(Fil::new(1)));
+            let buf_lru = Arc::new(RefCell::new(BufLRU::new()));
+            let buf_pool_rc =
+                Rc::new(RefCell::new(BufPool::new(fil, buf_lru.clone())));
+            buf_lru.borrow_mut().init(Rc::downgrade(&buf_pool_rc));
+
+            BufPoolFixture { buf_lru, buf_pool: buf_pool_rc }
+        }
+    }
+
+    #[fixture]
+    fn buf_pool_fixture() -> BufPoolFixture {
+        BufPoolFixture::new()
+    }
+
+    #[rstest]
+    fn create_buf_pool(buf_pool_fixture: BufPoolFixture) {
+        let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
+
         let page = buf_pool.hash_get_page(0, 0);
 
         assert!(page.is_none());
         assert!(!buf_pool.peek(0, 1));
     }
 
-    #[test]
-    fn test_free_list_returns_none() {
-        let fil = Arc::new(RwLock::new(Fil::new(1)));
-        let mut buf_pool = BufPool::new(fil);
+    #[rstest]
+    fn test_free_list_returns_none(buf_pool_fixture: BufPoolFixture) {
+        let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
 
         let r = buf_pool.get_free_block();
         assert!(r.is_none());
     }
 
-    #[test]
-    fn test_free_list_returns_some() {
-        let fil = Arc::new(RwLock::new(Fil::new(1)));
-        let mut buf_pool = BufPool::new(fil);
+    #[rstest]
+    fn test_free_list_returns_some(buf_pool_fixture: BufPoolFixture) {
+        let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
 
         let result = buf_pool.chunk_init(10 * UNIV_PAGE_SIZE);
 
@@ -37,11 +61,9 @@ mod tests {
         assert_eq!(result.size, 10);
     }
 
-    // #[ignore]
-    #[test]
-    fn test_create_space() {
-        let fil = Arc::new(RwLock::new(Fil::new(1)));
-        let mut buf_pool = BufPool::new(fil);
+    #[rstest]
+    fn test_create_space(buf_pool_fixture: BufPoolFixture) {
+        let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
         let mut mtr = Mtr::new();
         mtr.set_mtr_state(MTR_ACTIVE);
 

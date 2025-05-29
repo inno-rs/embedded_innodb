@@ -16,8 +16,6 @@ use std::alloc::{alloc_zeroed, Layout};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
-use std::pin::Pin;
-use std::ptr::null_mut;
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, RwLock};
 
@@ -34,13 +32,11 @@ pub struct BufPool {
     page_hash: HashMap<PageId, RefCell<BufBlock>>,
     /// List of modified pages that need to be flushed to disk
     flush_list: LinkedList<FlushListAdapter>,
-    /// List of free buffer blocks available for allocation
-    free_list: LinkedList<FreeListAdapter>,
-    /// List of buffer blocks ordered by least recently used algorithm
-    lru_list: LinkedList<LruAdapter>,
     /// File system interface for I/O operations
     fil: Arc<RwLock<Fil>>,
-    buf_lru: Weak<RefCell<BufLRU>>,
+    buf_lru: Arc<RefCell<BufLRU>>,
+
+    chunks: Vec<Box<BufChunk>>,
 }
 impl BufPool {
     /// Creates a new Buffer Pool instance.
@@ -50,21 +46,15 @@ impl BufPool {
     ///
     /// # Returns
     /// A new BufPool instance with initialized data structures
-    pub fn new(fil: Arc<RwLock<Fil>>) -> Self {
+    pub fn new(fil: Arc<RwLock<Fil>>, buf_lru: Arc<RefCell<BufLRU>>) -> Self {
         BufPool {
             curr_size: 0,
             page_hash: Default::default(),
-            free_list: Default::default(),
-            lru_list: Default::default(),
             flush_list: Default::default(),
             fil,
-            buf_lru: Weak::new(),
+            buf_lru,
+            chunks: vec![],
         }
-    }
-
-    /// Sets the LRU manager for this buffer pool.
-    pub fn set_buf_lru(&mut self, buf_lru: &Rc<RefCell<BufLRU>>) {
-        self.buf_lru = Rc::downgrade(buf_lru);
     }
 
     /* Free List methods */
@@ -77,11 +67,11 @@ impl BufPool {
     /// * `Some(BufBlock)` - A free buffer block if available
     /// * `None` - If no free blocks are available
     pub fn get_free_block(&mut self) -> Option<Weak<RefCell<BufBlock>>> {
-        println!("free list size: {}", self.get_free_list_size());
-        if let Some(buf_page) = self.free_list.pop_front() {
-            let block = buf_page.buf_page_get_buf_block();
-            Some(block)
+        if let Some(r) = self.buf_lru.borrow_mut().get_free_block() {
+            println!("free block found");
+            Some(Rc::downgrade(&r))
         } else {
+            println!("free block not found");
             None
         }
     }
@@ -226,7 +216,7 @@ impl BufPool {
 
         /* 3. Allocate a new buffer block for the page. */
         let block = block.unwrap();
-        self.buf_lru.upgrade().unwrap().borrow_mut().add_block(
+        self.buf_lru.borrow_mut().add_block(
             block.borrow_mut().buf_block_get_page().borrow().deref(),
         );
 
@@ -236,25 +226,11 @@ impl BufPool {
         Ok(ret)
     }
 
-    pub fn add_to_free_list(&mut self, buf_page: &mut BufPage) {
-        unsafe {
-            self.free_list.push_back(UnsafeRef::from_raw(buf_page));
-        }
-        buf_page.set_is_in_lru_list(true);
-    }
-
     pub fn add_to_flush_list(&mut self, buf_page: &mut BufPage) {
         unsafe {
             self.flush_list.push_back(UnsafeRef::from_raw(buf_page));
         }
         buf_page.set_is_in_flush_list(true);
-    }
-
-    pub fn add_to_lru_list(&mut self, buf_page: &mut BufPage) {
-        unsafe {
-            self.lru_list.push_back(UnsafeRef::from_raw(buf_page));
-        }
-        buf_page.set_is_in_lru_list(true);
     }
 
     /// Initializes a page in the buffer pool.
@@ -267,11 +243,7 @@ impl BufPool {
     }
 
     pub fn block_free(&mut self, buf_block: &mut BufBlock) {
-        self.buf_lru
-            .upgrade()
-            .unwrap()
-            .borrow_mut()
-            .block_free_non_file_page(buf_block);
+        self.buf_lru.borrow_mut().block_free_non_file_page(buf_block);
     }
 
     pub fn create(
@@ -304,7 +276,7 @@ impl BufPool {
     }
 
     pub fn get_free_list_size(&self) -> usize {
-        self.free_list.iter().count()
+        self.buf_lru.borrow().get_free_list_size()
     }
 
     pub fn chunk_init(&mut self, mem_size: usize) -> Box<BufChunk> {
@@ -331,7 +303,9 @@ impl BufPool {
 
             let buf_page_ref = buf_page.borrow();
 
-            self.add_to_free_list(buf_page_ref.borrow_mut().deref_mut());
+            self.buf_lru
+                .borrow_mut()
+                .add_to_free_list(buf_page_ref.borrow_mut().deref_mut());
 
             let buf_block_weak = Rc::downgrade(&buf_block.borrow());
 
@@ -354,5 +328,12 @@ impl BufPool {
         });
 
         rt
+    }
+
+    pub fn open(&mut self, pool_size: usize) {
+        let chunk = self.chunk_init(pool_size);
+        self.chunks.push(chunk);
+
+        self.curr_size = pool_size;
     }
 }
