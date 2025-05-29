@@ -256,7 +256,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn test_alloc_free_extent_moves_extent_correctly() {
         let mut page = vec![0u8; UNIV_PAGE_SIZE];
         let mut frame = PageFrame::new(&mut page);
@@ -327,7 +326,6 @@ mod tests {
     }
 
     #[test]
-
     fn test_free_page_moves_extent_to_free_if_all_pages_freed() {
         let mut page = vec![0u8; UNIV_PAGE_SIZE];
         let mut frame = PageFrame::new(&mut page);
@@ -385,4 +383,58 @@ mod tests {
             assert_eq!(FilAddr::len(free_frag), 0);
         }
     }
+    
+    
+    #[test]
+    fn test_alloc_page_from_free_frag_list() {
+        let mut buf = vec![0u8; UNIV_PAGE_SIZE];
+        let mut page = PageFrame::new(&mut buf);
+
+        let space_id = 7;
+        let space_size = 256;
+
+        page.header_init(space_id, space_size);
+
+        {
+            let buf = page.get_buf_mut();
+            let extent_off = XDES_ARR_OFFSET;
+
+            // SAFELY split buffer
+            let (head_part, xdes_area) = buf.split_at_mut(XDES_ARR_OFFSET);
+            let rel_off = extent_off - XDES_ARR_OFFSET;
+            let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+
+            let mut xdes = ExtentDescriptor::new(xdes_buf);
+            xdes.xdes_init();
+            xdes.set_state(XDES_FREE_FRAG);
+
+            let this_addr = FilAddr {
+                page_no: 0,
+                byte_off: extent_off as u16,
+            };
+
+            let free_frag_head = &mut head_part[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
+            this_addr.add_last(free_frag_head, xdes_buf, None);
+        }
+
+        let page_no = page.alloc_page();
+
+        assert!(page_no.is_some());
+        let page_no = page_no.unwrap();
+        assert_eq!(page_no, 0);
+
+        // Re-borrow xdes to verify post-state
+        let buf = page.get_buf_mut();
+        let (head_part, xdes_area) = buf.split_at_mut(XDES_ARR_OFFSET);
+        let rel_off = 0; // First extent
+        let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+        let xdes = ExtentDescriptor::new(xdes_buf);
+
+        // Check that page 0 was marked used
+        assert!(!xdes.get_bit(0, XDES_FREE_BIT), "Page not marked used");
+
+        // Should still be in FREE_FRAG since only 1 page used
+        assert_eq!(xdes.state(), XDES_FREE_FRAG);
+    }
+    
 }
