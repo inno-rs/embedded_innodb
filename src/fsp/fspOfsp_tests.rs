@@ -477,6 +477,73 @@ mod tests {
             assert_eq!(xdes.get_bit(0, XDES_FREE_BIT), false);
         }
     }
+
+
+    #[test]
+    fn test_alloc_n_pages_zero() {
+        let mut buf = vec![0u8; UNIV_PAGE_SIZE];
+        let mut page = PageFrame::new(&mut buf);
+        page.header_init(99, 256);
+
+        let result = page.alloc_n_pages(0);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_alloc_n_pages_one() {
+        let mut buf = vec![0u8; UNIV_PAGE_SIZE];
+        let mut page = PageFrame::new(&mut buf);
+        page.header_init(99, 256);
+
+        // Setup a FREE extent at offset 0
+        {
+            let (header_part, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+            let xdes_buf = &mut xdes_area[0..XDES_SIZE];
+            let mut xdes = ExtentDescriptor::new(xdes_buf);
+            xdes.xdes_init();
+            xdes.set_state(XDES_FREE);
+
+            let head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
+            let this_addr = FilAddr { page_no: 0, byte_off: XDES_ARR_OFFSET as u16 };
+            this_addr.add_last(head, xdes_buf, None);
+        }
+
+        let result = page.alloc_n_pages(1);
+        assert_eq!(result, Some(vec![0]));
+    }
+
+    #[test]
+    fn test_alloc_n_pages_full_extent() {
+        let mut buf = vec![0u8; UNIV_PAGE_SIZE];
+        let mut page = PageFrame::new(&mut buf);
+        page.header_init(99, 256);
+
+        // Setup a FREE extent at offset 0
+        {
+            let (header_part, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+            let xdes_buf = &mut xdes_area[0..XDES_SIZE];
+            let mut xdes = ExtentDescriptor::new(xdes_buf);
+            xdes.xdes_init();
+            xdes.set_state(XDES_FREE);
+
+            let head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
+            let this_addr = FilAddr { page_no: 0, byte_off: XDES_ARR_OFFSET as u16 };
+            this_addr.add_last(head, xdes_buf, None);
+        }
+
+        let result = page.alloc_n_pages(FSP_EXTENT_SIZE);
+        assert_eq!(result, Some((0..FSP_EXTENT_SIZE as u32).collect()));
+    }
+
+    #[test]
+    fn test_alloc_n_pages_unsupported_size() {
+        let mut buf = vec![0u8; UNIV_PAGE_SIZE];
+        let mut page = PageFrame::new(&mut buf);
+        page.header_init(99, 256);
+
+        let result = page.alloc_n_pages(5);
+        assert!(result.is_none());
+    }
     
     
 }
