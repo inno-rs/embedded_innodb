@@ -364,6 +364,38 @@ impl<'a> PageFrame<'a> {
         // Step 4: Allocate one page from the fresh extent
         xdes.alloc_page(extent_no)
     }
+
+   
+   
+   /*
+   This method tries to allocate n pages from a tablespace. But InnoDB (and our simplified model) only supports:
+	•	allocating 1 page (from a partially-free extent),
+	•	or a full extent of 64 pages (all pages from a fresh extent).
+   
+   */
+    pub fn alloc_n_pages(&mut self, n: usize) -> Option<Vec<u32>> {
+        if n == 0 {
+            return None;
+        }
+
+        if n == 1 {
+            // “If alloc_single_page() gives me Some(p),
+            // wrap that p in a new vector vec![p]. p = pageNumber. Otherwise, propagate None.”
+            return self.alloc_single_page().map(|p| vec![p]);
+        }
+
+        if n == FSP_EXTENT_SIZE {
+            let extent_no = self.alloc_free_extent()?;
+            let base_page = extent_no * (FSP_EXTENT_SIZE as u32);
+            let pages = (0..FSP_EXTENT_SIZE)
+                .map(|i| base_page + i as u32)
+                .collect();
+            return Some(pages); // Returning page numbers
+        }
+
+        // InnoDB doesn't support allocating partial extents
+        None
+    }
 }
 
 pub struct ExtentDescriptor<'a> {
