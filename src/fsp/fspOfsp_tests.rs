@@ -436,5 +436,47 @@ mod tests {
         // Should still be in FREE_FRAG since only 1 page used
         assert_eq!(xdes.state(), XDES_FREE_FRAG);
     }
+
+    #[test]
+    fn test_alloc_single_page_new_extent() {
+        let mut buf = vec![0u8; UNIV_PAGE_SIZE];
+        let mut page = PageFrame::new(&mut buf);
+        page.header_init(99, 256); // space_id = 99, space size = 256 pages
+
+        // Step 1: Setup extent descriptor and add it to FSP_FREE
+        {
+            let (header_part, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET); 
+            let extent_off = XDES_ARR_OFFSET;
+            let rel_off = extent_off - XDES_ARR_OFFSET;
+            let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+
+            let mut xdes = ExtentDescriptor::new(xdes_buf);
+            xdes.xdes_init();
+            xdes.set_state(XDES_FREE);
+
+            let head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
+            let this_addr = FilAddr {
+                page_no: 0,
+                byte_off: extent_off as u16,
+            };
+            this_addr.add_last(head, xdes_buf, None);
+        }
+
+        // Step 2: Allocate single page
+        let page_no = page.alloc_single_page();
+        assert!(page_no.is_some());
+        let page_no = page_no.unwrap();
+        assert_eq!(page_no, 0); // First page of extent 0
+
+        // Step 3: Check that bit is marked as used
+        {
+            let (_, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+            let rel_off = 0;
+            let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+            let xdes = ExtentDescriptor::new(xdes_buf);
+            assert_eq!(xdes.get_bit(0, XDES_FREE_BIT), false);
+        }
+    }
+    
     
 }

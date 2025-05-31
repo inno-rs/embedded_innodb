@@ -336,6 +336,34 @@ impl<'a> PageFrame<'a> {
         }
         Some(page_no)
     }
+
+    /*
+    IMP
+    Allocate one page from the tablespace, using this order of preference:
+	1.	Try to find a partially-used extent (a FREE_FRAG extent) and allocate a page from it.
+	2.	If no such extent exists, allocate a brand new extent (FREE extent), 
+	convert it into a FREE_FRAG, and allocate the first page from it.
+    
+    */
+    pub fn alloc_single_page(&mut self) -> Option<u32> {
+        // Step 1: Try to allocate from existing partially used extents
+        if let Some(page_no) = self.alloc_page() {
+            return Some(page_no);
+        }
+
+        // Step 2: No FREE_FRAG extents — try allocating a fresh extent
+        let extent_no = self.alloc_free_extent()?; // None means space exhausted
+        let extent_off = XDES_ARR_OFFSET + extent_no as usize * XDES_SIZE;
+
+        // Step 3: Get mutable view into descriptor
+        let (_, xdes_area) = self.buf.split_at_mut(XDES_ARR_OFFSET);
+        let rel_off = extent_off - XDES_ARR_OFFSET;
+        let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+        let mut xdes = ExtentDescriptor::new(xdes_buf);
+
+        // Step 4: Allocate one page from the fresh extent
+        xdes.alloc_page(extent_no)
+    }
 }
 
 pub struct ExtentDescriptor<'a> {
