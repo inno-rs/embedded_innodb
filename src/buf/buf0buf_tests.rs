@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use crate::buf::buf0buf::BufPool;
     use crate::buf::buf0lru::BufLRU;
     use crate::fil::fil0fil::Fil;
@@ -11,7 +11,7 @@ mod tests {
     use std::rc::Rc;
     use std::sync::{Arc, RwLock};
 
-    struct BufPoolFixture {
+    pub struct BufPoolFixture {
         buf_lru: Arc<RefCell<BufLRU>>,
         buf_pool: Rc<RefCell<BufPool>>,
     }
@@ -58,7 +58,7 @@ mod tests {
         let result = buf_pool.chunk_init(10 * UNIV_PAGE_SIZE);
 
         assert_eq!(buf_pool.get_free_list_size(), 10);
-        assert_eq!(result.size, 10);
+        assert_eq!(result.read().unwrap().size, 10);
     }
 
     #[rstest]

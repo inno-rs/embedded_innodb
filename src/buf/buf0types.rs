@@ -1,12 +1,16 @@
+use crate::buf::buf0types::BufIoFix::BufIoNone;
 use crate::fil::fil0types::SpaceId;
 use crate::innodb::innodb0types::{Lsn, PageId, PageNo};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
+use crate::ut::ut0dbg::{ut_a, ut_ad};
 use intrusive_collections::{intrusive_adapter, LinkedListLink, UnsafeRef};
 use std::cell::RefCell;
+use std::cmp::PartialEq;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
+use strum_macros::Display;
 use tokio::sync::RwLock;
 
 /// The frame is a pointer to a memory location where the block's data is stored.
@@ -28,6 +32,25 @@ pub const BUF_GET_IF_IN_POOL: usize = 11;
 /// This mode is used when the caller doesn't need exclusive access to the page.
 pub const BUF_GET_NO_LATCH: usize = 14;
 
+/// Represents the I/O status of a buffer page.
+///
+/// This enum indicates whether a buffer page has any pending I/O operations
+/// (read or write) or is free from I/O operations. It's used to track the
+/// I/O state of pages in the buffer pool and prevent operations on pages
+/// that are currently involved in I/O.
+#[derive(Clone, Eq, PartialEq)]
+pub enum BufIoFix {
+    /// No pending I/O operations on this page.
+    /// The page is not being read from or written to disk.
+    BufIoNone = 0,
+    /// A read operation is pending on this page.
+    /// The page is currently being read from disk.
+    BufIoRead = 1,
+    /// A write operation is pending on this page.
+    /// The page is currently being written to disk.
+    BufIoWrite = 2,
+}
+
 /// Represents a page in the buffer pool.
 ///
 /// BufPage contains metadata about a database page that is cached in the buffer pool.
@@ -41,6 +64,12 @@ pub struct BufPage {
     page_no: PageNo,
     /// Current state of the buffer page.
     state: BufPageState,
+    /// Type of pending i/o operation.
+    io_fix: BufIoFix,
+    /// Count of the number of currently fixes.
+    buf_fix_count: usize,
+    /// True is the block is marked as old in the lru list. False, otherwise.
+    old: bool,
     /// Timestamp of when this page was last put at the head of the LRU list.
     freed_page_lock: usize,
     /// Log Sequence Number of the youngest modification to the page. Zero, if the page is not modified.
@@ -54,6 +83,8 @@ pub struct BufPage {
     flush_list: LinkedListLink,
     /// Link for the LRU (Least Recently Used) list of buffer pages.
     lru_list: LinkedListLink,
+    /// Indicated if the page is currently in hashmap.
+    is_in_hash_map: bool,
     /// Indicates if the page is currently in the free list.
     is_in_free_list: bool,
     /// Indicates if the page is currently in the flush list.
@@ -85,12 +116,16 @@ impl BufPage {
             space_id,
             page_no,
             state: BufPageState::BufBlockNotUsed,
+            io_fix: BufIoNone,
+            buf_fix_count: 0,
+            old: false,
             freed_page_lock: 0,
             newest_modification: 0,
             oldest_modification: 0,
             free_list: Default::default(),
             flush_list: Default::default(),
             lru_list: Default::default(),
+            is_in_hash_map: false,
             is_in_free_list: false,
             is_in_flush_list: false,
             is_in_lru_list: false,
@@ -98,6 +133,12 @@ impl BufPage {
         }
     }
 
+    /// Sets a reference to the buffer block that contains this page.
+    ///
+    /// This method establishes the connection between a buffer page and its containing buffer block.
+    ///
+    /// # Parameters
+    /// * `buf_block` - A weak reference to the buffer block containing this page
     pub fn set_buf_block_ref(&mut self, buf_block: Weak<RefCell<BufBlock>>) {
         self.buf_block = buf_block;
     }
@@ -150,28 +191,82 @@ impl BufPage {
         self.state.clone()
     }
 
+    /// Checks if the buffer page is in the free list.
+    ///
+    /// A page is considered to be in the free list if its state is BufBlockNotUsed.
+    ///
+    /// # Returns
+    /// * `true` if the page is in the free list, `false` otherwise
     pub fn is_in_free_list(&self) -> bool {
         self.state == BufPageState::BufBlockNotUsed
     }
 
+    /// Sets whether the buffer page is in the LRU list.
+    ///
+    /// # Parameters
+    /// * `is_in_lru_list` - Whether the page is in the LRU list
     pub fn set_is_in_lru_list(&mut self, is_in_lru_list: bool) {
         self.is_in_lru_list = is_in_lru_list;
     }
 
+    /// Sets whether the buffer page is in the flush list.
+    ///
+    /// # Parameters
+    /// * `is_in_flush_list` - Whether the page is in the flush list
     pub fn set_is_in_flush_list(&mut self, is_in_flush_list: bool) {
         self.is_in_flush_list = is_in_flush_list;
     }
 
+    /// Sets whether the buffer page is in the free list.
+    ///
+    /// # Parameters
+    /// * `is_in_free_list` - Whether the page is in the free list
     pub fn set_is_in_free_list(&mut self, is_in_free_list: bool) {
         self.is_in_free_list = is_in_free_list;
     }
 
+    /// Checks if the buffer page is in the flush list.
+    ///
+    /// Pages in the flush list are modified and need to be written to disk.
+    ///
+    /// # Returns
+    /// * `true` if the page is in the flush list, `false` otherwise
     pub fn is_in_flush_list(&self) -> bool {
         self.is_in_flush_list
     }
 
+    /// Checks if the buffer page is in the LRU list.
+    ///
+    /// # Returns
+    /// * `true` if the page is in the LRU list, `false` otherwise
     pub fn is_in_lru_list(&self) -> bool {
         self.is_in_lru_list
+    }
+
+    /// Checks if the buffer page is in the hash map.
+    ///
+    /// # Returns
+    /// * `true` if the page is in the hash map, `false` otherwise
+    pub fn is_in_hash_map(&self) -> bool {
+        self.is_in_lru_list
+    }
+
+    /// Sets whether the buffer page is in the hash map.
+    ///
+    /// # Parameters
+    /// * `is_in_hash_map` - Whether the page is in the hash map
+    pub fn set_is_in_hash_map(&mut self, is_in_hash_map: bool) {
+        self.is_in_hash_map = is_in_hash_map;
+    }
+
+    /// Sets whether the buffer page is considered 'old' in the LRU list.
+    ///
+    /// Pages marked as 'old' are candidates for early eviction from the buffer pool.
+    ///
+    /// # Parameters
+    /// * `old` - Whether to mark the page as old
+    pub fn set_old(&mut self, old: bool) {
+        self.old = old;
     }
 
     /// Check if the block is mapped to a tablespace.
@@ -182,8 +277,83 @@ impl BufPage {
         }
     }
 
+    /// Checks if the buffer page has been modified and not yet flushed to disk.
+    ///
+    /// A page is considered modified if it has an oldest modification LSN greater than zero.
+    /// Modified pages need to be written back to disk eventually.
+    ///
+    /// # Returns
+    /// * `true` if the page has been modified, `false` otherwise
+    pub fn buf_page_modified(&self) -> bool {
+        self.oldest_modification > 0
+    }
+
+    /// Gets the current I/O fix status of the buffer page.
+    ///
+    /// This method returns the current I/O status, indicating whether the page
+    /// has any pending read or write operations.
+    ///
+    /// # Returns
+    /// * `BufIoFix` - The current I/O fix status of the page
+    pub fn buf_page_get_io_fix(&self) -> BufIoFix {
+        self.io_fix.clone()
+    }
+
+    /// Gets the current buffer fix count of the page.
+    ///
+    /// The buffer fix count indicates how many operations are currently
+    /// accessing this page. A page with a non-zero fix count cannot be evicted.
+    ///
+    /// # Returns
+    /// * `usize` - The current buffer fix count
+    pub fn buf_page_io_fix_count(&self) -> usize {
+        self.buf_fix_count
+    }
+
+    /// Gets the space ID of the tablespace containing this page.
+    ///
+    /// # Returns
+    /// * `SpaceId` - The ID of the tablespace containing this page
+    pub fn get_space_id(&self) -> SpaceId {
+        self.space_id
+    }
+
+    /// Gets the page number of this page within its tablespace.
+    ///
+    /// # Returns
+    /// * `PageNo` - The page number within the tablespace
+    pub fn get_page_no(&self) -> PageNo {
+        self.page_no
+    }
+
+    /// Gets a weak reference to the buffer block containing this page.
+    ///
+    /// This method returns a weak reference to avoid reference cycles between
+    /// the buffer page and its containing buffer block.
+    ///
+    /// # Returns
+    /// * `Weak<RefCell<BufBlock>>` - A weak reference to the buffer block
     pub fn buf_page_get_buf_block(&self) -> Weak<RefCell<BufBlock>> {
         Weak::clone(&self.buf_block)
+    }
+
+    /// Checks if the buffer page can be safely relocated in memory.
+    ///
+    /// This method determines if a page can be moved or evicted from the buffer pool.
+    /// A page can be relocated if it has no pending I/O operations (io_fix is BufIoNone)
+    /// and no active users (buf_fix_count is 0). The page can be dirty (modified),
+    /// but must be in a file and in the LRU list.
+    ///
+    /// # Returns
+    /// * `true` if the page can be relocated, `false` otherwise
+    ///
+    /// # Panics
+    /// Panics in debug mode if the page is not in a file or not in the LRU list
+    pub fn buf_page_can_relocate(&self) -> bool {
+        ut_ad!(self.in_file());
+        ut_ad!(self.is_in_lru_list());
+
+        self.io_fix == BufIoNone && self.buf_fix_count == 0
     }
 }
 
@@ -194,6 +364,9 @@ impl BufPage {
 /// It also includes a lock for concurrency control.
 #[derive(Clone)]
 pub struct BufBlock {
+    /// Counter that tracks modifications to this buffer block.
+    /// Incremented each time the block is removed from the hash table.
+    modify_clock: usize,
     /// Metadata about the page stored in this buffer block
     buf_page: RefCell<Rc<RefCell<BufPage>>>,
     /// Pointer to the actual page data in memory
@@ -212,7 +385,12 @@ impl BufBlock {
     /// # Returns
     /// A new BufBlock instance
     pub fn new(buf_page: RefCell<Rc<RefCell<BufPage>>>, frame: Frame) -> Self {
-        BufBlock { buf_page, frame, lock: Arc::new(Default::default()) }
+        BufBlock {
+            modify_clock: 0,
+            buf_page,
+            frame,
+            lock: Arc::new(Default::default()),
+        }
     }
 
     /// Gets the frame pointer for this buffer block.
@@ -233,9 +411,17 @@ impl BufBlock {
 
     /// Sets the state of the buffer page.
     ///
+    /// This method updates the state of the buffer page, which affects how the page
+    /// is managed in the buffer pool (e.g., whether it's in the free list, LRU list, etc.).
+    ///
     /// # Parameters
     /// * `state` - The new state to set for the buffer page
-    pub fn buf_block_set_state(&mut self, state: BufPageState) {}
+    ///
+    /// # Note
+    /// This method is currently a stub and needs to be implemented.
+    pub fn buf_block_set_state(&mut self, state: BufPageState) {
+        // TODO: Implement this method to update the page state
+    }
 
     /// Gets the buffer page metadata for this buffer block.
     ///
@@ -245,8 +431,24 @@ impl BufBlock {
         self.buf_page.borrow().clone()
     }
 
+    /// Gets a mutable reference to the buffer page metadata for this buffer block.
+    ///
+    /// This method is similar to `buf_block_get_page` but is intended to be used
+    /// when modifications to the buffer page are needed.
+    ///
+    /// # Returns
+    /// * `Rc<RefCell<BufPage>>` - A reference to the buffer page that can be mutated
     pub fn buf_block_get_page_mut(&mut self) -> Rc<RefCell<BufPage>> {
         self.buf_page.borrow().clone()
+    }
+
+    /// Increments the modification clock of this buffer block.
+    ///
+    /// This method is called when the block is removed from the hash table,
+    /// typically during page eviction or relocation. The modification clock
+    /// helps track how many times the block has been recycled.
+    pub fn buf_block_incr_clock(&mut self) {
+        self.modify_clock += 1;
     }
 
     /// Gets a Page object that provides methods for accessing the page data.
@@ -278,7 +480,7 @@ pub struct Request<'a> {
 ///
 /// This enum defines the lifecycle states of a buffer page as it moves
 /// through the buffer pool management system.
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug, Display)]
 pub enum BufPageState {
     /// The buffer block is not currently in use and is in the free list.
     BufBlockNotUsed,

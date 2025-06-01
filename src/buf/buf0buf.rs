@@ -8,8 +8,9 @@ use crate::fil::fil0types::SpaceId;
 use crate::innodb::innodb0types::{DbErr, PageId, PageNo, UNIV_PAGE_SIZE};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::mtr::mtr0types::MtrState;
+use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
-use crate::ut::ut0dbg::{ut_a, ut_ad};
+use crate::ut::ut0dbg::ut_ad;
 use intrusive_collections::{LinkedList, UnsafeRef};
 use log::warn;
 use std::alloc::{alloc_zeroed, Layout};
@@ -26,17 +27,20 @@ use std::sync::{Arc, RwLock};
 /// various page replacement algorithms and manages the lifecycle of pages
 /// in memory.
 pub struct BufPool {
+    /// A sequence number used to count the number of buffer blocks removed from the end of the lru list.
+    freed_page_clock: usize,
     /// Current size of the buffer pool in pages.
     curr_size: usize,
     /// Hash table mapping page IDs to buffer blocks
-    page_hash: HashMap<PageId, RefCell<BufBlock>>,
+    page_hash: HashMap<PageId, Arc<RwLock<BufBlock>>>,
     /// List of modified pages that need to be flushed to disk
     flush_list: LinkedList<FlushListAdapter>,
     /// File system interface for I/O operations
     fil: Arc<RwLock<Fil>>,
+    /// reference to BufLru.
     buf_lru: Arc<RefCell<BufLRU>>,
 
-    chunks: Vec<Box<BufChunk>>,
+    chunks: Vec<Arc<RwLock<BufChunk>>>,
 }
 impl BufPool {
     /// Creates a new Buffer Pool instance.
@@ -48,6 +52,7 @@ impl BufPool {
     /// A new BufPool instance with initialized data structures
     pub fn new(fil: Arc<RwLock<Fil>>, buf_lru: Arc<RefCell<BufLRU>>) -> Self {
         BufPool {
+            freed_page_clock: 0,
             curr_size: 0,
             page_hash: Default::default(),
             flush_list: Default::default(),
@@ -55,6 +60,15 @@ impl BufPool {
             buf_lru,
             chunks: vec![],
         }
+    }
+
+    /// Increments the freed page counter.
+    ///
+    /// This method is called when a buffer block is removed from the LRU list
+    /// and returned to the free list. It helps track how many pages have been
+    /// freed during the buffer pool's lifetime.
+    pub fn incr_freed_page_count(&mut self) {
+        self.freed_page_clock += 1;
     }
 
     /* Free List methods */
@@ -105,8 +119,7 @@ impl BufPool {
                 || request.mode == BUF_GET_NO_LATCH
         );
 
-        let block_opt =
-            self.page_hash.get(&request.page_id).map(|block| block.borrow());
+        let block_opt = self.page_hash.get(&request.page_id);
 
         match block_opt {
             None => {
@@ -146,10 +159,37 @@ impl BufPool {
         &self,
         space_id: SpaceId,
         page_no: PageNo,
-    ) -> Option<&BufBlock> {
+    ) -> Option<Arc<RwLock<BufBlock>>> {
         let page_id = PageId { space_id, page_no };
-        // self.page_hash.get(&page_id).map(|block| block.borrow())
-        None
+        self.page_hash.get(&page_id).cloned()
+    }
+
+    /// Removes a page from the buffer pool's hash table.
+    ///
+    /// This method is called when a page is being evicted from the buffer pool.
+    /// It removes the mapping between the page ID and its buffer block from the
+    /// hash table, making the page no longer accessible through the buffer pool.
+    ///
+    /// # Parameters
+    /// * `space_id` - The ID of the tablespace containing the page
+    /// * `page_no` - The page number within the tablespace
+    ///
+    /// # Returns
+    /// * `true` - If the page was found and removed from the hash table
+    /// * `false` - If the page was not in the hash table
+    pub fn hash_remove_page(
+        &mut self,
+        space_id: SpaceId,
+        page_no: PageNo,
+    ) -> bool {
+        let page_id = PageId { space_id, page_no };
+        if let Some(block) = self.page_hash.remove(&page_id) {
+            let block_ref = block.write().unwrap();
+            let buf_page = block_ref.buf_block_get_page();
+            buf_page.borrow_mut().set_is_in_hash_map(false);
+            return true;
+        }
+        false
     }
 
     /// Checks if a page is present in the buffer pool.
@@ -181,7 +221,7 @@ impl BufPool {
 
     /// Initializes a page for reading into the buffer pool.
     ///
-    /// This method prepares for reading a page from disk into the buffer pool.
+    /// This method prepares a page read from the disk into the buffer pool.
     /// It checks if the page is already in the pool and handles the appropriate
     /// initialization based on the page's current state.
     ///
@@ -194,7 +234,7 @@ impl BufPool {
         space_id: SpaceId,
         page_no: PageNo,
         table_space_version: i64,
-    ) -> Result<Option<RefCell<BufBlock>>, DbErr> {
+    ) -> Result<Option<Arc<RwLock<BufBlock>>>, DbErr> {
         /* 1. Check if the block is present in the buffer pool.*/
         let block = self.page_hash.get(&PageId { space_id, page_no });
 
@@ -216,11 +256,13 @@ impl BufPool {
 
         /* 3. Allocate a new buffer block for the page. */
         let block = block.unwrap();
-        self.buf_lru.borrow_mut().add_block(
-            block.borrow_mut().buf_block_get_page().borrow().deref(),
-        );
+        let mut block_ref = block.write().unwrap();
 
-        self.page_init(space_id, page_no, block.clone().get_mut());
+        let buf_page = block_ref.buf_block_get_page();
+        let mut buf_page_ref = buf_page.borrow_mut();
+        self.buf_lru.borrow_mut().add_block(&mut buf_page_ref, false);
+
+        self.page_init(space_id, page_no, block_ref.deref_mut());
 
         let ret = Some(block.clone());
         Ok(ret)
@@ -279,7 +321,7 @@ impl BufPool {
         self.buf_lru.borrow().get_free_list_size()
     }
 
-    pub fn chunk_init(&mut self, mem_size: usize) -> Box<BufChunk> {
+    pub fn chunk_init(&mut self, mem_size: usize) -> Arc<RwLock<BufChunk>> {
         ut_ad!(mem_size % UNIV_PAGE_SIZE == 0);
 
         let layout =
@@ -320,12 +362,12 @@ impl BufPool {
 
         ut_ad!(buf_pages.len() == no_of_pages);
 
-        let rt = Box::new(BufChunk {
+        let rt = Arc::new(RwLock::new(BufChunk {
             mem_size,
             size: no_of_pages,
             mem: mem_ptr,
             buf_pages,
-        });
+        }));
 
         rt
     }
