@@ -8,7 +8,6 @@ use crate::fil::fil0types::SpaceId;
 use crate::innodb::innodb0types::{DbErr, PageId, PageNo, UNIV_PAGE_SIZE};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::mtr::mtr0types::MtrState;
-use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::ut_ad;
 use intrusive_collections::{LinkedList, UnsafeRef};
@@ -16,7 +15,7 @@ use log::warn;
 use std::alloc::{alloc_zeroed, Layout};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, RwLock};
 
@@ -102,7 +101,7 @@ impl BufPool {
     /// # Returns
     /// * `Some(&BufBlock)` - A reference to the buffer block containing the requested page
     /// * `None` - If the page is not in the pool and cannot be loaded based on request mode
-    pub fn get(&self, request: Request) -> Option<&BufBlock> {
+    pub fn get(&self, request: Request) -> Option<Arc<RwLock<BufBlock>>> {
         ut_ad!(request.mtr.get_mtr_state() == MtrState::MTR_ACTIVE);
         ut_ad!(
             request.rw_latch == ReadWriteLatch::RW_NO_LATCH
@@ -140,7 +139,7 @@ impl BufPool {
             }
         }
 
-        None
+        Some(block.clone())
     }
 
     /// Retrieves a buffer block by its space ID and page number.
@@ -268,6 +267,14 @@ impl BufPool {
         Ok(ret)
     }
 
+    /// Adds a buffer page to the flush list.
+    ///
+    /// This method adds a modified buffer page to the flush list, which tracks
+    /// pages that need to be written back to disk. Pages in the flush list are
+    /// ordered by their oldest modification LSN.
+    ///
+    /// # Parameters
+    /// * `buf_page` - The buffer page to add to the flush list
     pub fn add_to_flush_list(&mut self, buf_page: &mut BufPage) {
         unsafe {
             self.flush_list.push_back(UnsafeRef::from_raw(buf_page));
@@ -276,6 +283,15 @@ impl BufPool {
     }
 
     /// Initializes a page in the buffer pool.
+    ///
+    /// This method sets up a buffer block to represent a specific page in a tablespace.
+    /// It initializes the buffer page metadata with the provided space ID and page number,
+    /// and prepares the block for use in the buffer pool.
+    ///
+    /// # Parameters
+    /// * `space_id` - The ID of the tablespace containing the page
+    /// * `page_no` - The page number within the tablespace
+    /// * `buf_block` - The buffer block to initialize
     pub fn page_init(
         &self,
         space_id: SpaceId,
@@ -284,10 +300,35 @@ impl BufPool {
     ) {
     }
 
+    /// Frees a buffer block and returns it to the free list.
+    ///
+    /// This method releases a buffer block that is no longer needed, making it
+    /// available for reuse. It delegates to the LRU manager's block_free_non_file_page
+    /// method to handle the actual freeing process.
+    ///
+    /// # Parameters
+    /// * `buf_block` - The buffer block to free
     pub fn block_free(&mut self, buf_block: &mut BufBlock) {
         self.buf_lru.borrow_mut().block_free_non_file_page(buf_block);
     }
 
+    /// Creates a new page in the buffer pool.
+    ///
+    /// This method allocates a buffer block for a new page with the specified
+    /// space ID and page number. It first attempts to get a free block from the
+    /// free list, then initializes it for the new page.
+    ///
+    /// # Parameters
+    /// * `space_id` - The ID of the tablespace for the new page
+    /// * `page_no` - The page number within the tablespace
+    /// * `mtr` - The mini-transaction context for logging the operation
+    ///
+    /// # Returns
+    /// * `Some(Rc<RefCell<BufBlock>>)` - A reference to the newly created buffer block
+    /// * `None` - If no free blocks are available
+    ///
+    /// # Panics
+    /// Panics in debug mode if the mini-transaction is not active
     pub fn create(
         &mut self,
         space_id: SpaceId,
@@ -317,10 +358,31 @@ impl BufPool {
         None
     }
 
+    /// Returns the number of blocks in the free list.
+    ///
+    /// This method delegates to the LRU manager to get the current size of the free list,
+    /// which indicates how many buffer blocks are available for immediate reuse.
+    ///
+    /// # Returns
+    /// * `usize` - The number of blocks in the free list
     pub fn get_free_list_size(&self) -> usize {
         self.buf_lru.borrow().get_free_list_size()
     }
 
+    /// Initializes a chunk of memory for the buffer pool.
+    ///
+    /// This method allocates a contiguous block of memory and divides it into
+    /// fixed-size pages for use in the buffer pool. It creates buffer blocks for
+    /// each page and adds them to the free list, making them available for use.
+    ///
+    /// # Parameters
+    /// * `mem_size` - The total size of memory to allocate (must be a multiple of page size)
+    ///
+    /// # Returns
+    /// * `Arc<RwLock<BufChunk>>` - A reference to the newly created buffer chunk
+    ///
+    /// # Panics
+    /// Panics in debug mode if the memory size is not a multiple of the page size
     pub fn chunk_init(&mut self, mem_size: usize) -> Arc<RwLock<BufChunk>> {
         ut_ad!(mem_size % UNIV_PAGE_SIZE == 0);
 
@@ -372,6 +434,14 @@ impl BufPool {
         rt
     }
 
+    /// Opens and initializes the buffer pool with the specified size.
+    ///
+    /// This method sets up the buffer pool by initializing a memory chunk of the
+    /// specified size and adding it to the buffer pool's chunks. It updates the
+    /// current size of the buffer pool to reflect the allocated memory.
+    ///
+    /// # Parameters
+    /// * `pool_size` - The size of the buffer pool to initialize (in bytes)
     pub fn open(&mut self, pool_size: usize) {
         let chunk = self.chunk_init(pool_size);
         self.chunks.push(chunk);

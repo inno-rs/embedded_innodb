@@ -100,7 +100,7 @@ impl BTree {
                     panic!("should not happen");
                 }
                 Some(buf) => {
-                    let prev_page = buf.get_page();
+                    let prev_page = buf.read().unwrap().get_page();
                     let sup = prev_page.page_get_supremum_rec();
                     return sup.rec_get_prev();
                 }
@@ -211,7 +211,7 @@ impl BTree {
                     panic!("should not happen");
                 }
                 Some(buf) => {
-                    let next_page = buf.get_page();
+                    let next_page = buf.read().unwrap().get_page();
                     let sup = next_page.page_get_supremum_rec();
                     return sup.rec_get_next();
                 }

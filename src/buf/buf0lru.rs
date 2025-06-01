@@ -4,9 +4,13 @@ use crate::buf::buf0types::BufPageState::{
 };
 use crate::buf::buf0types::{
     BufBlock, BufIoFix, BufPage, BufPageState, FreeListAdapter, LruAdapter,
+    Request,
 };
+use crate::innodb::innodb0types::PageId;
+use crate::mtr::mtr0mtr::Mtr;
+use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
-use crate::ut_panic;
+use crate::{some_or_panic, ut_panic};
 use intrusive_collections::{LinkedList, UnsafeRef};
 use log::info;
 use std::cell::RefCell;
@@ -133,6 +137,7 @@ impl BufLRU {
         ut_ad!(buf_page.in_file());
 
         self.remove_block(buf_page);
+        self.add_block_to_end_low(buf_page);
     }
 
     /// Removes a buffer page from the LRU list.
@@ -187,15 +192,11 @@ impl BufLRU {
             let mut lru_list = self.lru_list.borrow_mut();
             lru_list.push_front(page);
         } else {
-            // todo: use some_or_panic.
-            if let Some(old_head) = &self.lru_old_head {
-                let mut lru_list_ref = self.lru_list.borrow_mut();
-                unsafe {
-                    let mut cursor =
-                        lru_list_ref.cursor_mut_from_ptr(buf_page);
-                    cursor.insert_after(UnsafeRef::from_raw(buf_page));
-                    buf_page.set_is_in_lru_list(false);
-                }
+            let mut lru_list_ref = self.lru_list.borrow_mut();
+            unsafe {
+                let mut cursor = lru_list_ref.cursor_mut_from_ptr(buf_page);
+                cursor.insert_after(UnsafeRef::from_raw(buf_page));
+                buf_page.set_is_in_lru_list(false);
             }
         }
 
@@ -232,48 +233,81 @@ impl BufLRU {
 
     /// Adjusts the length of the old section in the LRU list.
     ///
-    /// This method moves the lru_old_head pointer so that the total number of items 
+    /// This method moves the lru_old_head pointer so that the total number of items
     /// marked as old are within the limits defined by the old_ratio. It ensures that
     /// the old section of the LRU list maintains the proper proportion of the total list.
     ///
     /// The method handles both increasing and decreasing the old section size as needed.
     fn old_adjust_len(&mut self) {
+        struct PageStateChange {
+            page_id: PageId,
+            old: bool,
+        }
         ut_ad!(self.old_ratio <= OLD_RATIO_MAX);
         ut_ad!(self.old_ratio >= OLD_RATIO_MIN);
 
-        let lru_length = self.lru_list.borrow().iter().count();
-        let new_length = min(
-            lru_length * self.old_ratio / OLD_RATIO_DIV,
-            lru_length - OLD_TOLERANCE - NON_MIN_LENGTH,
-        );
+        let mut changes: Vec<PageStateChange> = vec![];
+        {
+            let lru_length = self.lru_list.borrow().iter().count();
+            let new_length = min(
+                lru_length * self.old_ratio / OLD_RATIO_DIV,
+                lru_length - OLD_TOLERANCE - NON_MIN_LENGTH,
+            );
 
-        let mut lru_old_length = self.lru_old_len;
-        let buf_page = self.lru_old_head.take().unwrap();
-        let lru_list = self.lru_list.borrow_mut();
+            let mut lru_old_length = self.lru_old_len;
+            let buf_page = self.lru_old_head.take().unwrap();
+            let lru_list = self.lru_list.borrow_mut();
 
-        // move the pointer pointing to lru_old_head to increase the old section
-        while new_length > lru_old_length + OLD_TOLERANCE {
-            let mut cursor =
-                unsafe { lru_list.cursor_from_ptr(buf_page.deref()) };
-            cursor.move_prev();
+            // move the pointer pointing to lru_old_head to increase the old section
+            while new_length > lru_old_length + OLD_TOLERANCE {
+                let mut cursor =
+                    unsafe { lru_list.cursor_from_ptr(buf_page.deref()) };
+                cursor.move_prev();
 
-            let new_head = cursor.get().unwrap();
-            let head_ref = unsafe { UnsafeRef::from_raw(new_head) };
-            self.lru_old_head = Some(head_ref.clone());
-            self.lru_old_len += 1;
+                let new_head = cursor.get().unwrap();
+                let head_ref = unsafe { UnsafeRef::from_raw(new_head) };
+                self.lru_old_head = Some(head_ref.clone());
+                self.lru_old_len += 1;
 
-            lru_old_length = self.lru_old_len;
+                lru_old_length = self.lru_old_len;
+
+                changes.push(PageStateChange {
+                    page_id: new_head.get_page_id(),
+                    old: true,
+                });
+            }
+
+            while lru_old_length > new_length + OLD_TOLERANCE {
+                let mut cursor =
+                    unsafe { lru_list.cursor_from_ptr(buf_page.deref()) };
+
+                cursor.move_next();
+
+                let new_head = cursor.get().unwrap();
+                let head_ref = unsafe { UnsafeRef::from_raw(new_head) };
+                self.lru_old_head = Some(head_ref.clone());
+                self.lru_old_len -= 1;
+                lru_old_length = self.lru_old_len;
+
+                changes.push(PageStateChange {
+                    page_id: new_head.get_page_id(),
+                    old: true,
+                });
+            }
         }
 
-        while lru_old_length > new_length + OLD_TOLERANCE {
-            let mut cursor =
-                unsafe { lru_list.cursor_from_ptr(buf_page.deref()) };
-
-            cursor.move_next();
-
-            self.lru_old_len -= 1;
-            lru_old_length = self.lru_old_len;
-        }
+        let mut mtr = Mtr::new();
+        let buf_pool =
+            some_or_panic!(self.buf_pool.upgrade(), "buf_pool is empty");
+        let buf_pool_ref = buf_pool.borrow_mut();
+        changes.iter().for_each(|change| {
+            buf_pool_ref.get(Request {
+                rw_latch: ReadWriteLatch::RW_NO_LATCH,
+                page_id: change.page_id,
+                mode: 0,
+                mtr: &mut mtr,
+            });
+        });
     }
 
     /// Updates the old_ratio field based on the provided percentage.

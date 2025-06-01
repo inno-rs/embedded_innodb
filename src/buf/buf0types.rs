@@ -133,6 +133,10 @@ impl BufPage {
         }
     }
 
+    pub fn get_page_id(&self) -> PageId {
+        PageId { space_id: self.space_id, page_no: self.page_no }
+    }
+
     /// Sets a reference to the buffer block that contains this page.
     ///
     /// This method establishes the connection between a buffer page and its containing buffer block.
@@ -397,7 +401,7 @@ impl BufBlock {
     ///
     /// # Returns
     /// A pointer to the memory location where the page data is stored
-    pub fn getFrame(&self) -> Frame {
+    pub fn get_frame(&self) -> Frame {
         self.frame
     }
 
