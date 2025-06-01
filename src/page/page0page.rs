@@ -573,6 +573,15 @@ impl Page {
         n_owned as SlotId
     }
 
+    /// Sets the number of records owned by a specific slot in the page directory.
+    ///
+    /// This method updates the number of records that a particular slot in the
+    /// page directory owns. This is important for maintaining the balance of
+    /// records across directory slots.
+    ///
+    /// # Parameters
+    /// * `slot` - The slot ID to set the number of owned records for
+    /// * `n_owned` - The new number of records owned by the slot
     pub fn page_dir_set_n_owned(&self, slot: SlotId, n_owned: SlotId) {
         unsafe {
             let n_owned_ptr = self.ptr.add(PAGE_HEADER + slot) as *mut u16;
@@ -692,7 +701,7 @@ impl Page {
         buf: &BufBlock,
         mtr: Option<Mtr>,
     ) -> Page {
-        let ptr = buf.getFrame();
+        let ptr = buf.get_frame();
         let page = Page::new(ptr);
 
         ut_ad!(
@@ -986,6 +995,17 @@ impl Page {
         rec.rec_set_next_offs(offset);
     }
 
+    /// Finds the record that owns the given record in the page directory.
+    ///
+    /// This method traverses the record list starting from the given record
+    /// until it finds a record that has a non-zero n_owned value, indicating
+    /// that it's an owner record in the page directory.
+    ///
+    /// # Parameters
+    /// * `rec` - The record to find the owner for
+    ///
+    /// # Returns
+    /// * The owner record for the given record
     pub fn page_rec_find_owner_rec(&self, rec: Record) -> Record {
         let mut cur = rec;
         while cur.rec_get_n_owned() == 0 {
@@ -995,6 +1015,13 @@ impl Page {
         rec
     }
 
+    /// Gets the page number of the previous page in the linked list of pages.
+    ///
+    /// This method retrieves the page number of the previous page in the
+    /// doubly-linked list of pages in the tablespace.
+    ///
+    /// # Returns
+    /// * The page number of the previous page as a `PageNo`
     pub fn get_prev_page(&self) -> PageNo {
         unsafe {
             let ptr = self.ptr.add(FIL_PAGE_PREV) as *const u32;
@@ -1002,6 +1029,13 @@ impl Page {
         }
     }
 
+    /// Gets the page number of the next page in the linked list of pages.
+    ///
+    /// This method retrieves the page number of the next page in the
+    /// doubly-linked list of pages in the tablespace.
+    ///
+    /// # Returns
+    /// * The page number of the next page as a `PageNo`
     pub fn get_next_page(&self) -> PageNo {
         unsafe {
             let ptr = self.ptr.add(FIL_PAGE_NEXT) as *const u32;
@@ -1009,7 +1043,21 @@ impl Page {
         }
     }
 
-    /// Check if the record needs to be externally stored.
+    /// Checks if a record needs to be stored externally due to its size.
+    ///
+    /// This method determines if a record is too large to be stored inline
+    /// within a page and should instead be stored externally with only a
+    /// pointer in the page. A record is considered too large if its size
+    /// exceeds half of the free space available in an empty page.
+    ///
+    /// # Parameters
+    /// * `rec_size` - The size of the record in bytes
+    ///
+    /// # Returns
+    /// * `true` if the record needs to be stored externally, `false` otherwise
+    ///
+    /// # Panics
+    /// Panics in debug mode if the record size is not greater than the extra bytes needed for a record
     pub fn page_rec_needs_ext(rec_size: usize) -> bool {
         ut_ad!(rec_size > REC_N_EXTRA_BYTES);
 
