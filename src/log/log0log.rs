@@ -4,6 +4,7 @@ use crate::log::log0types::{
     LOG_BLOCK_FLUSH_BIT_MASK, LOG_BLOCK_HDR_DATA_LENGTH, LOG_BLOCK_HDR_NO,
     LOG_BLOCK_HDR_SIZE, LOG_BLOCK_TRL_SIZE,
 };
+use crate::ut::ut0dbg::ut_ad;
 use std::sync::{Arc, Condvar, Mutex};
 
 /// We write to alternative checkpoint blocks when we make new checkpoints.
@@ -11,9 +12,9 @@ use std::sync::{Arc, Condvar, Mutex};
 pub const LOG_CHECKPOINT_1: usize = IB_FILE_BLOCK_SIZE;
 pub const LOG_CHECKPOINT_2: usize = IB_FILE_BLOCK_SIZE * 3;
 
-pub enum LogWait {
-    LOG_NO_WAIT,
-    LOG_WAIT,
+pub enum LogWaitMode {
+    LogNoWait,
+    LogWait,
 }
 
 /// Database log
@@ -64,9 +65,7 @@ pub struct LogWriteResult {
 
 impl Log {
     pub fn new(buffer_size: usize) -> Self {
-        debug_assert!(
-            buffer_size != 0 && buffer_size % IB_FILE_BLOCK_SIZE == 0
-        );
+        ut_ad!(buffer_size != 0 && buffer_size % IB_FILE_BLOCK_SIZE == 0);
 
         Log {
             mutex: Arc::from(Mutex::new(())),
@@ -438,7 +437,7 @@ impl Log {
         };
 
         if lsn > 0 {
-            self.write_up_to(lsn, LogWait::LOG_NO_WAIT, false);
+            self.write_up_to(lsn, LogWaitMode::LogNoWait, false);
         }
     }
 
@@ -455,7 +454,7 @@ impl Log {
     pub fn write_up_to(
         &mut self,
         lsn: Lsn,
-        log_wait: LogWait,
+        log_wait: LogWaitMode,
         flush_to_disk: bool,
     ) {
         let do_wait = || {
@@ -463,13 +462,13 @@ impl Log {
             let mtx = self.mutex.clone();
             let cond_var = self.flushed_event.clone();
             match log_wait {
-                LogWait::LOG_WAIT => {
+                LogWaitMode::LogWait => {
                     let _guard = cond_var
                         .wait_while(mtx.lock().unwrap(), |_| *flushed)
                         .unwrap();
                     return;
                 }
-                LogWait::LOG_NO_WAIT => {
+                LogWaitMode::LogNoWait => {
                     return;
                 }
             }

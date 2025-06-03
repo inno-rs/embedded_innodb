@@ -4,8 +4,9 @@ use crate::buf::buf0types::{
     LruAdapter, Request, BUF_GET_ALWAYS, BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH,
 };
 use crate::fil::fil0fil::Fil;
-use crate::fil::fil0types::SpaceId;
-use crate::innodb::innodb0types::{DbErr, PageId, PageNo, UNIV_PAGE_SIZE};
+use crate::innodb::innodb0types::{
+    DbErr, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
+};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::mtr::mtr0types::MtrState;
 use crate::sync::sync0rw::ReadWriteLatch;

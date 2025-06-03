@@ -1,7 +1,6 @@
 use crate::buf::buf0buf::BufPool;
 use crate::fil::fil0fil::Fil;
-use crate::fil::fil0types::SpaceId;
-use crate::innodb::innodb0types::{DbErr, PageNo};
+use crate::innodb::innodb0types::{DbErr, PageNo, SpaceId};
 use crate::os::os0file::IORequest;
 use crate::trx::trx0sys::TRX_SYS_SPACE;
 use crate::ut::ut0dbg::ut_a;

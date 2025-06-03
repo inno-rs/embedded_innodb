@@ -1,5 +1,6 @@
 pub(crate) use assert as ut_a;
 pub(crate) use debug_assert as ut_ad;
+use std::sync::Once;
 
 /// Macro for triggering a panic with a custom error message.
 ///
@@ -47,4 +48,15 @@ macro_rules! some_or_panic {
             None => panic!($msg $(, $args)*),
         }
     };
+}
+
+static INIT: Once = Once::new();
+
+pub fn init_tracing() {
+    INIT.call_once(|| {
+        tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_max_level(tracing::Level::TRACE)
+            .init();
+    });
 }

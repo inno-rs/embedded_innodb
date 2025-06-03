@@ -1,3 +1,3 @@
-mod log0log;
+pub(crate) mod log0log;
 mod log0log_tests;
-mod log0types;
+pub(crate) mod log0types;

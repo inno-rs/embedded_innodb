@@ -1,6 +1,8 @@
+use crate::buf::buf0flu::BufFlushType;
 use crate::buf::buf0types::BufIoFix::BufIoNone;
-use crate::fil::fil0types::SpaceId;
-use crate::innodb::innodb0types::{Lsn, PageId, PageNo, UNIV_PAGE_SIZE};
+use crate::innodb::innodb0types::{
+    Lsn, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
+};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
@@ -64,11 +66,13 @@ pub struct BufPage {
     page_no: PageNo,
     /// Current state of the buffer page.
     state: BufPageState,
+    /// Indicates the type of flush_type.
+    flush_type: BufFlushType,
     /// Type of pending i/o operation.
     io_fix: BufIoFix,
-    /// Count of the number of currently fixes.
+    /// Count of the number of current fixes.
     buf_fix_count: usize,
-    /// True is the block is marked as old in the lru list. False, otherwise.
+    /// True, the block is marked as old in the lru list. False, otherwise.
     old: bool,
     /// Timestamp of when this page was last put at the head of the LRU list.
     freed_page_lock: usize,
@@ -116,6 +120,7 @@ impl BufPage {
             space_id,
             page_no,
             state: BufPageState::BufBlockNotUsed,
+            flush_type: BufFlushType::None,
             io_fix: BufIoNone,
             buf_fix_count: 0,
             old: false,
@@ -303,6 +308,40 @@ impl BufPage {
         self.io_fix.clone()
     }
 
+    /// Sets the I/O fix status of the buffer page.
+    ///
+    /// This method updates the I/O status of the page, indicating whether it has
+    /// pending read or write operations. This affects how the page can be accessed
+    /// and whether it can be evicted from the buffer pool.
+    ///
+    /// # Parameters
+    /// * `io_fix` - The new I/O fix status to set for the page
+    pub fn buf_page_set_io_fix(&mut self, io_fix: BufIoFix) {
+        self.io_fix = io_fix.clone();
+        ut_ad!(self.buf_page_get_io_fix() == io_fix);
+    }
+
+    /// Gets the current flush type of the buffer page.
+    ///
+    /// # Returns
+    /// The current flush type of the buffer page
+    pub fn buf_page_get_flush_type(&self) -> BufFlushType {
+        self.flush_type.clone()
+    }
+
+    /// Sets the flush type of the buffer page.
+    ///
+    /// This method specifies how the page should be flushed to disk when it's time
+    /// to write it back. Different flush types (LRU, List, Single Page) correspond to
+    /// different flushing strategies and priorities.
+    ///
+    /// # Parameters
+    /// * `flush_type` - The new flush type to set for the page
+    pub fn buf_page_set_flush_type(&mut self, flush_type: BufFlushType) {
+        self.flush_type = flush_type.clone();
+        ut_ad!(self.buf_page_get_flush_type() == flush_type);
+    }
+
     /// Gets the current buffer fix count of the page.
     ///
     /// The buffer fix count indicates how many operations are currently
@@ -417,12 +456,14 @@ impl BufBlock {
     ///
     /// This method updates the state of the buffer page, which affects how the page
     /// is managed in the buffer pool (e.g., whether it's in the free list, LRU list, etc.).
+    /// The state transition may trigger additional actions such as adding or removing
+    /// the page from various buffer pool management lists.
     ///
     /// # Parameters
     /// * `state` - The new state to set for the buffer page
     ///
     /// # Note
-    /// This method is currently a stub and needs to be implemented.
+    /// This method is currently a placeholder and needs to be implemented.
     pub fn buf_block_set_state(&mut self, state: BufPageState) {
         // TODO: Implement this method to update the page state
     }

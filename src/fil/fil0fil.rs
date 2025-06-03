@@ -16,9 +16,9 @@
  ************************************************************************/
 use crate::fil::fil0types::{
     FilNode, FilNodeContainer, FilSpace, FilSpaceContainer, FilType,
-    SpaceId, FIL_SPACE_MAGIC_N,
+    FIL_SPACE_MAGIC_N,
 };
-use crate::innodb::innodb0types::{DbErr, PageNo};
+use crate::innodb::innodb0types::{DbErr, PageFrame, PageNo, SpaceId};
 use crate::os::os0file::CreateMode::OsFileOpen;
 use crate::os::os0file::{os_file_create, IORequest, IOResult, WriteResult};
 use crate::ut::ut0dbg::ut_ad;
@@ -342,6 +342,7 @@ impl Fil {
         space_id: SpaceId,
         page_no: PageNo,
         byte_offset: usize,
+        page_frame: PageFrame,
         len: usize,
     ) -> Result<IOResult, DbErr> {
         ut_ad!(len > 0);
@@ -451,4 +452,8 @@ impl Fil {
     ) -> bool {
         true
     }
+
+    pub fn flush(&mut self, space_id: SpaceId) {}
+
+    pub fn flush_file_space(&mut self, fil_type: FilType) {}
 }
