@@ -5,9 +5,9 @@ use crate::innodb::innodb0types::{PageNo, UNIV_PAGE_SIZE, UNIV_SQL_NULL};
 use crate::page::page0page::Page;
 use crate::rem::rem0types::REC_MAX_N_FIELDS;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
-use log::{error, info};
 use std::ptr::{null, null_mut};
 use std::{ptr, slice};
+use tracing::{error, info};
 
 /// Info bit denoting the predefined minimum record:
 /// this bit is set if and only if the record
@@ -359,7 +359,7 @@ impl Record {
     ///
     pub fn rec_get_n_fields(&self) -> usize {
         unsafe {
-            println!("rec_get_n_fields: at={}", self.ptr as usize);
+            info!("rec_get_n_fields: at={}", self.ptr as usize);
             let p = self.ptr.sub(REC_N_FIELDS) as *const u16;
             let val = p.read_unaligned();
             (val as usize & REC_N_FIELDS_MASK) >> REC_N_FIELDS_SHIFT
@@ -377,7 +377,7 @@ impl Record {
     /// * `None` if the operation was successful, or an error if it failed.
     pub fn rec_set_n_fields(&self, n_fields: usize) {
         unsafe {
-            println!(
+            info!(
                 "rec_set_n_fields: n_fields={} at={}",
                 n_fields, self.ptr as usize
             );
@@ -684,7 +684,7 @@ impl Record {
     /// * `None` if the field number is out of range.
     pub fn rec_get_data(&self, n_field: usize) -> Option<RecordData> {
         let (offset, length) = self.rec_get_nth_field_offs(n_field);
-        println!("rec_get_data: offset={}, length={}", offset, length);
+        info!("rec_get_data: offset={}, length={}", offset, length);
 
         if length == UNIV_SQL_NULL {
             return Some(RecordData::SqlNullData());

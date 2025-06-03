@@ -5,8 +5,8 @@ use crate::innodb::innodb0types::{DbErr, PageNo};
 use crate::os::os0file::IORequest;
 use crate::trx::trx0sys::TRX_SYS_SPACE;
 use crate::ut::ut0dbg::ut_a;
-use log::warn;
 use std::sync::{Arc, RwLock};
+use tracing::warn;
 
 /// Manages read operations for the buffer pool.
 ///

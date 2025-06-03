@@ -25,12 +25,12 @@ use crate::ut::ut0dbg::ut_ad;
 use intrusive_collections::{
     intrusive_adapter, Adapter, LinkedList, LinkedListLink, UnsafeRef,
 };
-use log::{error, warn};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::DerefMut;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
+use tracing::{error, warn};
 
 /// Adapter for the unflushed spaces list. This allows FilSpaceContainer to be stored in a linked list
 /// using the unflushed_spaces field as the link. UnsafeRef is used because the containers are stored

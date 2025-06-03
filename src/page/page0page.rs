@@ -12,9 +12,10 @@ use crate::mtr::mtr0mtr::Mtr;
 use crate::rem::rem0rec::{
     Record, REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM,
 };
-use crate::ut::ut0dbg::ut_ad;
+use crate::ut::ut0dbg::{ut_a, ut_ad};
 use crate::utils::TxnId;
-use log::info;
+use std::ptr::{slice_from_raw_parts, slice_from_raw_parts_mut};
+use tracing::{info, warn};
 
 pub type SlotId = usize;
 
@@ -184,6 +185,15 @@ impl Page {
         }
     }
 
+    /// Copy the page to a destination buffer.
+    pub fn copy_to(&self, buffer: &mut [u8; UNIV_PAGE_SIZE]) {
+        let src = self.page_get_as_mut_slice();
+        ut_a!(src.len() == buffer.len());
+
+        let src_slice = unsafe { &*src };
+        buffer.copy_from_slice(src_slice);
+    }
+
     /// Set the tablespace identifier of the page.
     ///
     /// # Arguments
@@ -217,11 +227,8 @@ impl Page {
     /// # Returns
     ///
     /// * A mutable reference to the page data as a `Vec<u8>`.
-    pub fn page_get_as_mut_vector(&self) -> &mut Vec<u8> {
-        unsafe {
-            let page_ptr = self.ptr as *mut Vec<u8>;
-            &mut *page_ptr
-        }
+    pub fn page_get_as_mut_slice(&self) -> *mut [u8] {
+        slice_from_raw_parts_mut(self.ptr, UNIV_PAGE_SIZE)
     }
 
     /// Set the max transaction id on the page.
@@ -248,7 +255,7 @@ impl Page {
                 loc.write_unaligned(max_trx_id);
             },
             Some(_) => {
-                log::warn!("don't know how to handle Mtr");
+                warn!("don't know how to handle Mtr");
                 panic!("don't know how to handle Mtr");
             }
         }
@@ -285,7 +292,7 @@ impl Page {
     ///
     pub fn page_get_infimum_rec(&self) -> Record {
         let ptr = unsafe { self.ptr.add(PAGE_INFIMUM) };
-        println!("ptr: {}", ptr as usize);
+        info!("ptr: {}", ptr as usize);
         Record::new(ptr)
     }
 
@@ -607,8 +614,8 @@ impl Page {
             let mut slot =
                 self.page_dir_get_nth_slot(self.page_dir_get_n_slots() - 1);
 
-            println!("slot: {}", slot as usize);
-            println!("record_offset: {}", record_offset);
+            info!("slot: {}", slot as usize);
+            info!("record_offset: {}", record_offset);
 
             while (slot as *mut u16).read_unaligned() as usize != record_offset
             {
@@ -728,14 +735,14 @@ impl Page {
         infimum_field.set_type(DATA_VARCHAR, DATA_ENGLISH | DATA_NOT_NULL, 8);
 
         let heap_top = unsafe { ptr.add(PAGE_INFIMUM) };
-        println!("heap_top: {}", heap_top as usize);
+        info!("heap_top: {}", heap_top as usize);
         let infimum_rec = Record::new(heap_top).rec_convert_dtuple_to_rec(
             index,
             &infimum_d_tuple,
             0,
         );
-        println!("infimum no of fields: {}", infimum_rec.rec_get_n_fields());
-        println!("infimum position: {}", infimum_rec.get_ptr() as usize);
+        info!("infimum no of fields: {}", infimum_rec.rec_get_n_fields());
+        info!("infimum position: {}", infimum_rec.get_ptr() as usize);
         infimum_rec.rec_set_n_owned(1);
         // infimum_rec.rec_set_heap_no(0);
 
@@ -757,8 +764,8 @@ impl Page {
             &supremum_tuple,
             0,
         );
-        println!("supremum no of fields: {}", supremum_rec.rec_get_n_fields());
-        println!("supremum position: {}", supremum_rec.get_ptr() as usize);
+        info!("supremum no of fields: {}", supremum_rec.rec_get_n_fields());
+        info!("supremum position: {}", supremum_rec.get_ptr() as usize);
         supremum_rec.rec_set_n_owned(1);
         // supremum_rec.rec_set_heap_no(1);
 
@@ -782,11 +789,11 @@ impl Page {
         page.page_dir_slot_set_rec(0, infimum_rec);
         page.page_dir_slot_set_rec(1, supremum_rec);
 
-        println!(
+        info!(
             "infimum position: {}",
             page.page_get_infimum_rec().get_ptr() as usize
         );
-        println!(
+        info!(
             "supremum position: {}",
             page.page_get_supremum_rec().get_ptr() as usize
         );

@@ -11,13 +11,13 @@ use crate::mtr::mtr0types::MtrState;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::ut_ad;
 use intrusive_collections::{LinkedList, UnsafeRef};
-use log::warn;
 use std::alloc::{alloc_zeroed, Layout};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::DerefMut;
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, RwLock};
+use tracing::info;
 
 /// Buffer Pool manages the caching of database pages in memory.
 ///
@@ -81,10 +81,10 @@ impl BufPool {
     /// * `None` - If no free blocks are available
     pub fn get_free_block(&mut self) -> Option<Weak<RefCell<BufBlock>>> {
         if let Some(r) = self.buf_lru.borrow_mut().get_free_block() {
-            println!("free block found");
+            info!("free block found");
             Some(Rc::downgrade(&r))
         } else {
-            println!("free block not found");
+            info!("free block not found");
             None
         }
     }
@@ -246,7 +246,7 @@ impl BufPool {
         if fil
             .tablespace_deleted_or_being_deleted(space_id, table_space_version)
         {
-            warn!(
+            tracing::warn!(
                 "Trying to read a page from a deleted tablespace or is being deleted: {}",
                 space_id
             );

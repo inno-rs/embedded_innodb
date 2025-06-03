@@ -4,7 +4,7 @@ use crate::data::data0types::{
 };
 use crate::innodb::innodb0types::UNIV_SQL_NULL;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
-use log::{error, info};
+use tracing::{error, info};
 
 impl DTuple {
     /// Creates a new tuple with the specified number of fields.

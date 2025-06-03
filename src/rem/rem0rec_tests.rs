@@ -4,6 +4,7 @@ mod tests {
     use crate::rem::rem0rec::*;
     use crate::tests::test0utils::{create_records, FieldType};
     use std::alloc::{alloc, dealloc, Layout};
+    use tracing::info;
 
     fn get_new_rec() -> (Record, Layout, *mut u8) {
         let layout =
@@ -46,8 +47,8 @@ mod tests {
         let (rec, layout, ptr) = get_new_rec();
 
         for n_fields_val in (0..0xF).step_by(23) {
-            println!("Setting n_fields to: {}", n_fields_val);
-            println!("previous n_fields: {}", rec.rec_get_n_fields());
+            info!("Setting n_fields to: {}", n_fields_val);
+            info!("previous n_fields: {}", rec.rec_get_n_fields());
 
             rec.rec_set_n_fields(n_fields_val);
             let result = rec.rec_get_n_fields();
@@ -64,7 +65,7 @@ mod tests {
         let (rec, layout, p) = get_new_rec();
 
         for next_offset_val in (0..0xFFFF).step_by(3453) {
-            println!("previous next_offset: {}", rec.rec_get_next_offs());
+            info!("previous next_offset: {}", rec.rec_get_next_offs());
 
             rec.rec_set_next_offs(next_offset_val);
             let result = rec.rec_get_next_offs();
@@ -81,7 +82,7 @@ mod tests {
         let (rec, layout, ptr) = get_new_rec();
 
         for info_bits_val in 0..0xF {
-            println!("previous info_bits: {}", rec.rec_get_info_bits());
+            info!("previous info_bits: {}", rec.rec_get_info_bits());
 
             rec.rec_set_info_bits(info_bits_val);
             let result = rec.rec_get_info_bits();
@@ -97,7 +98,7 @@ mod tests {
         let (rec, layout, ptr) = get_new_rec();
 
         for n_owned_val in 0..0xF {
-            println!("previous n_owned: {}", rec.rec_get_n_owned());
+            info!("previous n_owned: {}", rec.rec_get_n_owned());
 
             rec.rec_set_n_owned(n_owned_val);
             let result = rec.rec_get_n_owned();
@@ -113,7 +114,7 @@ mod tests {
         let (rec, layout, ptr) = get_new_rec();
 
         for heap_no_val in (0..8191).step_by(19) {
-            println!("previous heap_no: {}", rec.rec_get_heap_no());
+            info!("previous heap_no: {}", rec.rec_get_heap_no());
 
             rec.rec_set_heap_no(heap_no_val);
             let result = rec.rec_get_heap_no();
