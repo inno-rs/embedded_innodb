@@ -12,12 +12,12 @@ use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use crate::{some_or_panic, ut_panic};
 use intrusive_collections::{LinkedList, UnsafeRef};
-use log::info;
 use std::cell::RefCell;
 use std::cmp::min;
 use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, RwLock};
+use tracing::info;
 
 /// The denominator of lru_old_ratio.
 pub const OLD_RATIO_DIV: usize = 1024;

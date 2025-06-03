@@ -11,6 +11,7 @@ mod tests {
     use std::alloc::{alloc_zeroed, Layout};
     use std::cell::RefCell;
     use std::rc::Rc;
+    use tracing::info;
 
     struct PageFixture {
         index: Index,
@@ -74,7 +75,7 @@ mod tests {
         assert_eq!(extract_data(infimum_rec), "infimumr");
 
         let supremum_rec = page.page_get_supremum_rec();
-        println!("{:?}", supremum_rec.rec_get_n_fields());
+        info!("{:?}", supremum_rec.rec_get_n_fields());
         assert_eq!(extract_data(supremum_rec), "supremumr");
 
         assert_eq!(page.page_header_get_field(PAGE_N_DIR_SLOTS), 2);
