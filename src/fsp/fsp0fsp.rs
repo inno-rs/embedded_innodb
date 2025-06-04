@@ -130,16 +130,32 @@ pub const XDES_SIZE: usize =
     XDES_BITMAP + ut_bits_in_bytes(FSP_EXTENT_SIZE * XDES_BITS_PER_PAGE);
 pub const XDES_ARR_OFFSET: usize = FSP_HEADER_OFFSET + FSP_HEADER_SIZE;
 
+/// Represents a file space manager for InnoDB tablespaces.
+///
+/// The `Fsp` struct provides an interface for managing tablespace files,
+/// including operations for allocating and deallocating pages and extents.
 pub struct Fsp {}
 
 impl Fsp {
+    /// Creates a new file space manager instance.
+    ///
+    /// Returns an empty `Fsp` struct that can be used to manage tablespace operations.
     pub(crate) fn new() -> Fsp {
         Fsp {}
     }
 }
 
-/// A full 16 KiB page buffer (e.g. page 0 of a space).
+/// Represents a full 16 KiB InnoDB page buffer in memory.
+///
+/// The `PageFrame` struct provides a safe interface for manipulating the raw bytes
+/// of an InnoDB page, particularly for file space management operations. It is typically
+/// used to represent page 0 of a tablespace, which contains the file space header and
+/// extent descriptors.
+///
+/// The struct wraps a mutable byte slice and provides methods to read and write
+/// various fields in the page according to InnoDB's on-disk format.
 pub struct PageFrame<'a> {
+    /// The raw byte buffer representing the page
     buf: &'a mut [u8],
 }
 
@@ -151,7 +167,16 @@ impl<'a> PageFrame<'a> {
 }
 
 impl<'a> PageFrame<'a> {
-    /// Wrap a raw 16 KiB buffer.
+    /// Creates a new `PageFrame` by wrapping a raw 16 KiB buffer.
+    ///
+    /// This method takes ownership of a mutable byte slice and provides
+    /// a structured interface for manipulating it as an InnoDB page.
+    ///
+    /// # Arguments
+    /// * `buf` - A mutable byte slice of at least UNIV_PAGE_SIZE (16 KiB) in length
+    ///
+    /// # Panics
+    /// Panics if the provided buffer is smaller than UNIV_PAGE_SIZE
     pub fn new(buf: &'a mut [u8]) -> Self {
         assert!(
             buf.len() >= UNIV_PAGE_SIZE,
@@ -160,7 +185,15 @@ impl<'a> PageFrame<'a> {
         PageFrame { buf }
     }
 
-    /// Initialize the FSP header in this page (port of FSP::header_init).
+    /// Initializes the FSP (File Space) header in this page.
+    ///
+    /// This method sets up the file space header at the beginning of the page,
+    /// which includes space ID, size information, and initializes the linked lists
+    /// that track free, partially free, and full extents.
+    ///
+    /// # Arguments
+    /// * `space_id` - The unique identifier for this tablespace
+    /// * `space_size` - The initial size of the tablespace in pages
     pub fn header_init(&mut self, space_id: u32, space_size: u32) {
         let start = FSP_HEADER_OFFSET; // Byte 38
         let end = start + FSP_HEADER_SIZE; // Byte 150 (Total 112 Bytes)
@@ -191,17 +224,14 @@ impl<'a> PageFrame<'a> {
             .copy_from_slice(&0u32.to_le_bytes());
     }
 
-    /** Allocates a free extent from the FSP_FREE list, marks it as partially used,
-    and moves it to the FSP_FREE_FRAG list.
-
-    This function will:
-    •	Pick one free extent from the free list
-    •	Mark it as “partially used”
-    •	Move it to the “fragmented list”
-    •	Return its index
-
-
-    */
+    /// Allocates a free extent from the FSP_FREE list, marks it as partially used,
+    /// and moves it to the FSP_FREE_FRAG list.
+    ///
+    /// This function will:
+    /// •	Pick one free extent from the free list
+    /// •	Mark it as “partially used”
+    /// •	Move it to the “fragmented list”
+    /// •	Return its index
     pub fn alloc_free_extent(&mut self) -> Option<u32> {
         let buf = &mut self.buf;
 
@@ -245,10 +275,14 @@ impl<'a> PageFrame<'a> {
         Some(index as u32)
     }
 
-    /* 
-    frees a single page and moves extent between lists based on usage
-    
-    */
+    /// Frees a single page and moves the extent between lists based on usage.
+    ///
+    /// This method marks a page as free and updates the extent's state. If all pages
+    /// in the extent become free, the extent is moved from the FREE_FRAG list to the
+    /// FREE list.
+    ///
+    /// # Arguments
+    /// * `page_no` - The page number to free
     pub fn free_page(&mut self, page_no: u32) {
         let buf = &mut self.buf;
 
@@ -285,17 +319,19 @@ impl<'a> PageFrame<'a> {
             xdes.set_state(XDES_FREE_FRAG);
         }
     }
-    
-    
-    /*
-    This method is responsible for allocating one page from the tablespace. It typically works by:
-	1.	Searching partially used extents (i.e., FSP_FREE_FRAG list).
-	2.	Picking the first extent descriptor from that list.
-	3.	Asking that extent for a free page via ExtentDescriptor::alloc_page().
-	4.	Updating the list pointers and state if the extent becomes full.
 
-    */
-    pub fn alloc_page(&mut self) -> Option<u32> { 
+    /// Allocates one page from the tablespace.
+    ///
+    /// This method is responsible for allocating one page from the tablespace. It works by:
+    /// 1. Searching partially used extents (i.e., FSP_FREE_FRAG list)
+    /// 2. Picking the first extent descriptor from that list
+    /// 3. Asking that extent for a free page via `ExtentDescriptor::alloc_page()`
+    /// 4. Updating the list pointers and state if the extent becomes full
+    ///
+    /// # Returns
+    /// * `Some(page_no)` - The page number of the allocated page
+    /// * `None` - If no free page could be allocated
+    pub fn alloc_page(&mut self) -> Option<u32> {
         // Get the FSP FREE_FRAG_LIST
         let head = &mut self.buf[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
         let first = FilAddr::first(head);
@@ -306,18 +342,16 @@ impl<'a> PageFrame<'a> {
         let (header_part, xdes_area) = self.buf.split_at_mut(XDES_ARR_OFFSET);
         let rel_off = extent_off - XDES_ARR_OFFSET;
         let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
-        
+
         let mut xdes = ExtentDescriptor::new(xdes_buf);
-        
+
         let extent_no = rel_off / XDES_SIZE;
         let page_no = xdes.alloc_page(extent_no as u32)?;
 
         if xdes.is_full() {
             // If extent is now full, move it to FSP_FULL_FRAG
-            let this_addr = FilAddr {
-                page_no: 0,
-                byte_off: extent_off as u16,
-            };
+            let this_addr =
+                FilAddr { page_no: 0, byte_off: extent_off as u16 };
 
             // remove from FSP_FREE_FRAG
             this_addr.remove(
@@ -340,10 +374,10 @@ impl<'a> PageFrame<'a> {
     /*
     IMP
     Allocate one page from the tablespace, using this order of preference:
-	1.	Try to find a partially-used extent (a FREE_FRAG extent) and allocate a page from it.
-	2.	If no such extent exists, allocate a brand new extent (FREE extent), 
-	convert it into a FREE_FRAG, and allocate the first page from it.
-    
+    1.	Try to find a partially-used extent (a FREE_FRAG extent) and allocate a page from it.
+    2.	If no such extent exists, allocate a brand new extent (FREE extent),
+    convert it into a FREE_FRAG, and allocate the first page from it.
+
     */
     pub fn alloc_single_page(&mut self) -> Option<u32> {
         // Step 1: Try to allocate from existing partially used extents
@@ -365,14 +399,12 @@ impl<'a> PageFrame<'a> {
         xdes.alloc_page(extent_no)
     }
 
-   
-   
-   /*
-   This method tries to allocate n pages from a tablespace. But InnoDB (and our simplified model) only supports:
-	•	allocating 1 page (from a partially-free extent),
-	•	or a full extent of 64 pages (all pages from a fresh extent).
-   
-   */
+    /*
+    This method tries to allocate n pages from a tablespace. But InnoDB (and our simplified model) only supports:
+     •	allocating 1 page (from a partially-free extent),
+     •	or a full extent of 64 pages (all pages from a fresh extent).
+
+    */
     pub fn alloc_n_pages(&mut self, n: usize) -> Option<Vec<u32>> {
         if n == 0 {
             return None;
@@ -387,16 +419,14 @@ impl<'a> PageFrame<'a> {
         if n == FSP_EXTENT_SIZE {
             let extent_no = self.alloc_free_extent()?;
             let base_page = extent_no * (FSP_EXTENT_SIZE as u32);
-            let pages = (0..FSP_EXTENT_SIZE)
-                .map(|i| base_page + i as u32)
-                .collect();
+            let pages =
+                (0..FSP_EXTENT_SIZE).map(|i| base_page + i as u32).collect();
             return Some(pages); // Returning page numbers
         }
 
         // InnoDB doesn't support allocating partial extents
         None
     }
-
 
     /// Extends the space by one extent and returns the new extent number
     pub fn extend_space(&mut self) -> Option<u32> {
@@ -418,7 +448,8 @@ impl<'a> PageFrame<'a> {
         xdes.set_state(XDES_FREE);
 
         // 5. Add this extent to FSP_FREE list
-        let free_head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
+        let free_head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE
+            ..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
         let this_addr = FilAddr {
             page_no: 0, // Can be 0 because we're not using it here
             byte_off: extent_off as u16,
@@ -431,8 +462,7 @@ impl<'a> PageFrame<'a> {
 
         Some(new_extent_no)
     }
-    
-    
+
     pub fn read_u32_le(&self, offset: usize) -> u32 {
         let bytes = &self.buf[offset..offset + 4];
         u32::from_le_bytes(bytes.try_into().expect("Failed to read u32"))
@@ -469,7 +499,9 @@ impl<'a> PageFrame<'a> {
 
     pub fn space_available(&mut self) -> usize {
         let mut free_pages = 0;
-        let total_extents = (self.read_u32_le(FSP_HEADER_OFFSET + FSP_SIZE) as usize) / FSP_EXTENT_SIZE;
+        let total_extents = (self.read_u32_le(FSP_HEADER_OFFSET + FSP_SIZE)
+            as usize)
+            / FSP_EXTENT_SIZE;
 
         let (_, xdes_area) = self.buf.split_at_mut(XDES_ARR_OFFSET);
 
@@ -483,15 +515,30 @@ impl<'a> PageFrame<'a> {
 
         free_pages
     }
-    
-    
 }
 
+/// Represents an extent descriptor in the InnoDB tablespace.
+///
+/// An extent descriptor manages a group of 64 pages (an "extent") and tracks
+/// which pages are free or used. It also maintains the state of the extent
+/// (free, partially free, or full) and provides methods to allocate and
+/// deallocate pages within the extent.
 pub struct ExtentDescriptor<'a> {
+    /// The raw byte buffer containing the extent descriptor data
     buf: &'a mut [u8],
 }
 
 impl<'a> ExtentDescriptor<'a> {
+    /// Creates a new `ExtentDescriptor` by wrapping a raw buffer.
+    ///
+    /// This method takes ownership of a mutable byte slice and provides
+    /// a structured interface for manipulating it as an extent descriptor.
+    ///
+    /// # Arguments
+    /// * `buf` - A mutable byte slice of at least XDES_SIZE bytes in length
+    ///
+    /// # Panics
+    /// Panics if the provided buffer is smaller than XDES_SIZE
     pub fn new(buf: &'a mut [u8]) -> Self {
         assert!(
             buf.len() >= XDES_SIZE,
@@ -601,6 +648,13 @@ impl<'a> ExtentDescriptor<'a> {
         // TODO: emit MTR log record for this bit change
     }
 
+    /// Returns the count of pages in this extent that are currently in use.
+    ///
+    /// This method counts how many pages have their XDES_FREE_BIT cleared,
+    /// indicating that they are allocated and in use.
+    ///
+    /// # Returns
+    /// The number of pages (0-64) that are currently in use
     pub fn used_count(&self) -> usize {
         let mut used = 0;
         for page_idx in 0..FSP_EXTENT_SIZE {
@@ -611,6 +665,13 @@ impl<'a> ExtentDescriptor<'a> {
         used
     }
 
+    /// Returns the count of pages in this extent that are currently free.
+    ///
+    /// This method counts how many pages have their XDES_FREE_BIT set,
+    /// indicating that they are available for allocation.
+    ///
+    /// # Returns
+    /// The number of pages (0-64) that are currently free
     pub fn free_count(&self) -> usize {
         let mut count = 0;
         for i in 0..FSP_EXTENT_SIZE {

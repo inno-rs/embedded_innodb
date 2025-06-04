@@ -2,7 +2,7 @@ use crate::btr::btr0btr::BTree;
 use crate::buf::buf0types::{BufBlock, BufPage};
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
-use crate::fsp::fspOfsp::Fsp;
+use crate::fsp::fsp0fsp::Fsp;
 use crate::innodb::innodb0types::DbErr;
 use crate::innodb::innodb0types::DbErr::{DbFail, DbSuccess, DbTooBigRecord};
 use crate::lock::lock0lock::LockSys;

@@ -37,7 +37,7 @@ mod utils;
 /// If RUST_LOG is not set, the default level is INFO.
 ///
 /// # Usage in code
-/// 
+///
 /// After initialization, you can use the following macros from the tracing crate:
 /// - `info!`: For general information messages
 /// - `warn!`: For warning messages

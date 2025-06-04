@@ -7,7 +7,7 @@ use crate::buf::buf0types::{BufBlock, Request};
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
 use crate::fil::fil0types::{FilSpace, FILL_NULL};
-use crate::fsp::fspOfsp::Fsp;
+use crate::fsp::fsp0fsp::Fsp;
 use crate::innodb::innodb0types::PageId;
 use crate::lock::lock0lock::LockSys;
 use crate::mtr::mtr0mtr::Mtr;
