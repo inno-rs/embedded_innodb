@@ -6,3 +6,4 @@ pub(crate) mod buf0lru;
 mod buf0lru_tests;
 pub(crate) mod buf0rea;
 pub(crate) mod buf0types;
+mod buf0flu_tests;

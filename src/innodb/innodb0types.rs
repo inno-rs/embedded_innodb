@@ -15,6 +15,8 @@ pub type SpaceId = u32;
 pub type PageNo = u32;
 pub type TxnId = u64;
 
+pub struct PageFrame<'a>(pub &'a mut [u8; UNIV_PAGE_SIZE]);
+
 #[derive(Hash, Clone, Copy, Eq, PartialEq)]
 pub struct PageId {
     /// The space id of the page.
@@ -41,7 +43,7 @@ impl PageId {
 /// InnoDB error codes.
 /// Most of the error codes are internal to the engine and will not be seen by user applications.
 /// The partial error codes reflect the substate of an operation within InnoDB.
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Debug)]
 pub enum DbErr {
     /// A successful result.
     DbSuccess,

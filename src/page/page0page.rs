@@ -4,10 +4,10 @@ use crate::data::data0types::{
 };
 use crate::dict::dict0types::Index;
 use crate::fil::fil0types::{
-    SpaceId, FIL_PAGE_DATA_END, FIL_PAGE_NEXT, FIL_PAGE_OFFSET,
-    FIL_PAGE_PREV, FIL_PAGE_SPACE_ID, FSEG_PAGE_DATA,
+    FIL_PAGE_DATA_END, FIL_PAGE_NEXT, FIL_PAGE_OFFSET, FIL_PAGE_PREV,
+    FIL_PAGE_SPACE_ID, FSEG_PAGE_DATA,
 };
-use crate::innodb::innodb0types::{PageNo, UNIV_PAGE_SIZE};
+use crate::innodb::innodb0types::{PageNo, SpaceId, UNIV_PAGE_SIZE};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::rem::rem0rec::{
     Record, REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM,

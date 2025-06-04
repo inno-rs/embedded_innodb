@@ -1,4 +1,4 @@
-pub(crate) use crate::innodb::innodb0types::SpaceId;
+use crate::innodb::innodb0types::SpaceId;
 use crate::os::os0file::OsFile;
 use intrusive_collections::{intrusive_adapter, LinkedList, LinkedListLink};
 use std::cell::RefCell;
@@ -168,7 +168,7 @@ pub struct FilSpace {
     /// space id.
     pub space_id: SpaceId,
 
-    ///
+    /// Tablespace version.
     pub tablespace_version: i64,
 
     /// FIL_TABLESPACE or FIL_LOG

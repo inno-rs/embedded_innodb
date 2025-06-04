@@ -133,7 +133,7 @@ pub const XDES_ARR_OFFSET: usize = FSP_HEADER_OFFSET + FSP_HEADER_SIZE;
 pub struct Fsp {}
 
 impl Fsp {
-    fn new() -> Fsp {
+    pub(crate) fn new() -> Fsp {
         Fsp {}
     }
 }
