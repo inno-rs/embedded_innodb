@@ -4,7 +4,7 @@ mod tests {
         FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET,
         FIL_PAGE_SPACE_ID,
     };
-    use crate::fsp::fspOfsp::*;
+    use crate::fsp::fsp0fsp::*;
     use crate::fut::fut0lst::*;
     use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
 
@@ -383,8 +383,7 @@ mod tests {
             assert_eq!(FilAddr::len(free_frag), 0);
         }
     }
-    
-    
+
     #[test]
     fn test_alloc_page_from_free_frag_list() {
         let mut buf = vec![0u8; UNIV_PAGE_SIZE];
@@ -408,12 +407,11 @@ mod tests {
             xdes.xdes_init();
             xdes.set_state(XDES_FREE_FRAG);
 
-            let this_addr = FilAddr {
-                page_no: 0,
-                byte_off: extent_off as u16,
-            };
+            let this_addr =
+                FilAddr { page_no: 0, byte_off: extent_off as u16 };
 
-            let free_frag_head = &mut head_part[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
+            let free_frag_head =
+                &mut head_part[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
             this_addr.add_last(free_frag_head, xdes_buf, None);
         }
 
@@ -445,7 +443,8 @@ mod tests {
 
         // Step 1: Setup extent descriptor and add it to FSP_FREE
         {
-            let (header_part, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET); 
+            let (header_part, xdes_area) =
+                page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
             let extent_off = XDES_ARR_OFFSET;
             let rel_off = extent_off - XDES_ARR_OFFSET;
             let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
@@ -454,11 +453,10 @@ mod tests {
             xdes.xdes_init();
             xdes.set_state(XDES_FREE);
 
-            let head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
-            let this_addr = FilAddr {
-                page_no: 0,
-                byte_off: extent_off as u16,
-            };
+            let head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE
+                ..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
+            let this_addr =
+                FilAddr { page_no: 0, byte_off: extent_off as u16 };
             this_addr.add_last(head, xdes_buf, None);
         }
 
@@ -470,14 +468,14 @@ mod tests {
 
         // Step 3: Check that bit is marked as used
         {
-            let (_, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+            let (_, xdes_area) =
+                page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
             let rel_off = 0;
             let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
             let xdes = ExtentDescriptor::new(xdes_buf);
             assert_eq!(xdes.get_bit(0, XDES_FREE_BIT), false);
         }
     }
-
 
     #[test]
     fn test_alloc_n_pages_zero() {
@@ -497,14 +495,17 @@ mod tests {
 
         // Setup a FREE extent at offset 0
         {
-            let (header_part, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+            let (header_part, xdes_area) =
+                page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
             let xdes_buf = &mut xdes_area[0..XDES_SIZE];
             let mut xdes = ExtentDescriptor::new(xdes_buf);
             xdes.xdes_init();
             xdes.set_state(XDES_FREE);
 
-            let head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
-            let this_addr = FilAddr { page_no: 0, byte_off: XDES_ARR_OFFSET as u16 };
+            let head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE
+                ..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
+            let this_addr =
+                FilAddr { page_no: 0, byte_off: XDES_ARR_OFFSET as u16 };
             this_addr.add_last(head, xdes_buf, None);
         }
 
@@ -520,14 +521,17 @@ mod tests {
 
         // Setup a FREE extent at offset 0
         {
-            let (header_part, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+            let (header_part, xdes_area) =
+                page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
             let xdes_buf = &mut xdes_area[0..XDES_SIZE];
             let mut xdes = ExtentDescriptor::new(xdes_buf);
             xdes.xdes_init();
             xdes.set_state(XDES_FREE);
 
-            let head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
-            let this_addr = FilAddr { page_no: 0, byte_off: XDES_ARR_OFFSET as u16 };
+            let head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE
+                ..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
+            let this_addr =
+                FilAddr { page_no: 0, byte_off: XDES_ARR_OFFSET as u16 };
             this_addr.add_last(head, xdes_buf, None);
         }
 
@@ -544,9 +548,8 @@ mod tests {
         let result = page.alloc_n_pages(5);
         assert!(result.is_none());
     }
-    
-    #[test]
 
+    #[test]
     #[test]
     fn test_extend_space_creates_new_extent() {
         let mut buf = vec![0u8; UNIV_PAGE_SIZE];
@@ -585,7 +588,8 @@ mod tests {
 
         // Initialize extent descriptor for extent 0
         {
-            let (_, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+            let (_, xdes_area) =
+                page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
             let xdes_buf = &mut xdes_area[0..XDES_SIZE];
             let mut xdes = ExtentDescriptor::new(xdes_buf);
             xdes.xdes_init(); // All pages free
@@ -607,7 +611,8 @@ mod tests {
 
         // Initialize extent descriptor for extent 0
         {
-            let (_, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+            let (_, xdes_area) =
+                page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
             let xdes_buf = &mut xdes_area[0..XDES_SIZE];
             let mut xdes = ExtentDescriptor::new(xdes_buf);
             xdes.xdes_init(); // All pages free
@@ -620,7 +625,8 @@ mod tests {
         // Initialize extent descriptor for extent 1
         {
             let rel_off = XDES_SIZE; // Offset for extent 1
-            let (_, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+            let (_, xdes_area) =
+                page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
             let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
             let mut xdes = ExtentDescriptor::new(xdes_buf);
             xdes.xdes_init(); // All pages free
@@ -638,7 +644,8 @@ mod tests {
 
         // Initialize extent descriptor for extent 0
         {
-            let (_, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+            let (_, xdes_area) =
+                page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
             let xdes_buf = &mut xdes_area[0..XDES_SIZE];
             let mut xdes = ExtentDescriptor::new(xdes_buf);
             xdes.xdes_init(); // All pages free
@@ -648,8 +655,4 @@ mod tests {
         // Test space_available (should be 63)
         assert_eq!(page.space_available(), 63);
     }
-        
-        
-    
-    
 }

@@ -1,5 +1,5 @@
 use crate::buf::buf0types::BufBlock;
-use crate::fsp::fspOfsp::Fsp;
+use crate::fsp::fsp0fsp::Fsp;
 use crate::innodb::innodb0types::{PageNo, SpaceId, UNIV_PAGE_SIZE};
 use crate::some_or_panic;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
