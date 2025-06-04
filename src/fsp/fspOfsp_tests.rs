@@ -545,5 +545,111 @@ mod tests {
         assert!(result.is_none());
     }
     
+    #[test]
+
+    #[test]
+    fn test_extend_space_creates_new_extent() {
+        let mut buf = vec![0u8; UNIV_PAGE_SIZE];
+        let mut page = PageFrame::new(&mut buf);
+
+        // Initialize header with 64 pages (1 extent)
+        page.header_init(99, 64);
+
+        // Call extend_space
+        let new_extent = page.extend_space();
+        assert_eq!(new_extent, Some(1)); // This should be extent #1
+
+        // Verify that the space size was updated
+        let new_size = page.read_u32_le(FSP_HEADER_OFFSET + FSP_SIZE);
+        assert_eq!(new_size, 128); // 64 (old) + 64 (new extent)
+
+        // Get extent descriptor at new extent offset
+        let extent_off = XDES_ARR_OFFSET + 1 * XDES_SIZE;
+        let rel_off = extent_off - XDES_ARR_OFFSET;
+        let (_, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+        let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+        let xdes = ExtentDescriptor::new(xdes_buf);
+
+        // Check the extent is free
+        assert_eq!(xdes.state(), XDES_FREE);
+        for i in 0..FSP_EXTENT_SIZE {
+            assert!(xdes.get_bit(i, XDES_FREE_BIT));
+        }
+    }
+
+    #[test]
+    fn test_is_page_free() {
+        let mut buf = vec![0u8; UNIV_PAGE_SIZE];
+        let mut page = PageFrame::new(&mut buf);
+        page.header_init(0, 64); // Initialize with 1 extent (64 pages)
+
+        // Initialize extent descriptor for extent 0
+        {
+            let (_, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+            let xdes_buf = &mut xdes_area[0..XDES_SIZE];
+            let mut xdes = ExtentDescriptor::new(xdes_buf);
+            xdes.xdes_init(); // All pages free
+            xdes.set_bit(0, XDES_FREE_BIT, false); // Mark page 0 as used
+        }
+
+        // Test page 0 (should be used)
+        assert_eq!(page.is_page_free(0), false);
+
+        // Test page 1 (should be free)
+        assert_eq!(page.is_page_free(1), true);
+    }
+
+    #[test]
+    fn test_is_extent_used() {
+        let mut buf = vec![0u8; UNIV_PAGE_SIZE];
+        let mut page = PageFrame::new(&mut buf);
+        page.header_init(0, 64); // Initialize with 1 extent (64 pages)
+
+        // Initialize extent descriptor for extent 0
+        {
+            let (_, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+            let xdes_buf = &mut xdes_area[0..XDES_SIZE];
+            let mut xdes = ExtentDescriptor::new(xdes_buf);
+            xdes.xdes_init(); // All pages free
+            xdes.set_bit(0, XDES_FREE_BIT, false); // Mark page 0 as used
+        }
+
+        // Test extent 0 (should be used)
+        assert_eq!(page.is_extent_used(0), true);
+
+        // Initialize extent descriptor for extent 1
+        {
+            let rel_off = XDES_SIZE; // Offset for extent 1
+            let (_, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+            let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+            let mut xdes = ExtentDescriptor::new(xdes_buf);
+            xdes.xdes_init(); // All pages free
+        }
+
+        // Test extent 1 (should be free)
+        assert_eq!(page.is_extent_used(1), false);
+    }
+
+    #[test]
+    fn test_space_available() {
+        let mut buf = vec![0u8; UNIV_PAGE_SIZE];
+        let mut page = PageFrame::new(&mut buf);
+        page.header_init(0, 64); // Initialize with 1 extent (64 pages)
+
+        // Initialize extent descriptor for extent 0
+        {
+            let (_, xdes_area) = page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+            let xdes_buf = &mut xdes_area[0..XDES_SIZE];
+            let mut xdes = ExtentDescriptor::new(xdes_buf);
+            xdes.xdes_init(); // All pages free
+            xdes.set_bit(0, XDES_FREE_BIT, false); // Mark page 0 as used
+        }
+
+        // Test space_available (should be 63)
+        assert_eq!(page.space_available(), 63);
+    }
+        
+        
+    
     
 }
