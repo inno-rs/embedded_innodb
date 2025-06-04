@@ -396,6 +396,95 @@ impl<'a> PageFrame<'a> {
         // InnoDB doesn't support allocating partial extents
         None
     }
+
+
+    /// Extends the space by one extent and returns the new extent number
+    pub fn extend_space(&mut self) -> Option<u32> {
+        // 1. Read current space size
+        let current_pages = self.read_u32_le(FSP_HEADER_OFFSET + FSP_SIZE); // Read 4 bytes - Byte 46-49
+
+        // 2. Determine new extent number and its byte offset
+        let new_extent_no = current_pages / FSP_EXTENT_SIZE as u32;
+        let extent_off = XDES_ARR_OFFSET + new_extent_no as usize * XDES_SIZE;
+        let rel_off = extent_off - XDES_ARR_OFFSET;
+
+        // 3. SAFELY split buffer once into header and xdes area
+        let (header_part, xdes_area) = self.buf.split_at_mut(XDES_ARR_OFFSET);
+
+        // 4. Get mutable slice for the new extent descriptor
+        let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+        let mut xdes = ExtentDescriptor::new(xdes_buf);
+        xdes.xdes_init(); // All pages free
+        xdes.set_state(XDES_FREE);
+
+        // 5. Add this extent to FSP_FREE list
+        let free_head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
+        let this_addr = FilAddr {
+            page_no: 0, // Can be 0 because we're not using it here
+            byte_off: extent_off as u16,
+        };
+        this_addr.add_last(free_head, xdes_buf, None);
+
+        // 6. Update space size
+        let new_size = current_pages + FSP_EXTENT_SIZE as u32;
+        self.write_u32_le(FSP_HEADER_OFFSET + FSP_SIZE, new_size);
+
+        Some(new_extent_no)
+    }
+    
+    
+    pub fn read_u32_le(&self, offset: usize) -> u32 {
+        let bytes = &self.buf[offset..offset + 4];
+        u32::from_le_bytes(bytes.try_into().expect("Failed to read u32"))
+    }
+
+    pub fn write_u32_le(&mut self, offset: usize, value: u32) {
+        let bytes = value.to_le_bytes();
+        self.buf[offset..offset + 4].copy_from_slice(&bytes);
+    }
+
+    pub fn is_page_free(&mut self, page_no: u32) -> bool {
+        let extent_no = page_no / FSP_EXTENT_SIZE as u32;
+        let page_idx = (page_no % FSP_EXTENT_SIZE as u32) as usize;
+        let extent_off = XDES_ARR_OFFSET + extent_no as usize * XDES_SIZE;
+
+        // SAFELY access the descriptor
+        let (_, xdes_area) = self.buf.split_at_mut(XDES_ARR_OFFSET);
+        let rel_off = extent_off - XDES_ARR_OFFSET;
+        let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+        let xdes = ExtentDescriptor::new(xdes_buf);
+
+        xdes.get_bit(page_idx, XDES_FREE_BIT)
+    }
+    pub fn is_extent_used(&mut self, extent_no: u32) -> bool {
+        let extent_off = XDES_ARR_OFFSET + extent_no as usize * XDES_SIZE;
+
+        let (_, xdes_area) = self.buf.split_at_mut(XDES_ARR_OFFSET);
+        let rel_off = extent_off - XDES_ARR_OFFSET;
+        let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+        let xdes = ExtentDescriptor::new(xdes_buf);
+
+        xdes.used_count() > 0
+    }
+
+    pub fn space_available(&mut self) -> usize {
+        let mut free_pages = 0;
+        let total_extents = (self.read_u32_le(FSP_HEADER_OFFSET + FSP_SIZE) as usize) / FSP_EXTENT_SIZE;
+
+        let (_, xdes_area) = self.buf.split_at_mut(XDES_ARR_OFFSET);
+
+        for extent_no in 0..total_extents {
+            let rel_off = extent_no * XDES_SIZE;
+            let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+            let xdes = ExtentDescriptor::new(xdes_buf);
+
+            free_pages += xdes.free_count(); // how many pages in this extent are marked free
+        }
+
+        free_pages
+    }
+    
+    
 }
 
 pub struct ExtentDescriptor<'a> {
@@ -520,6 +609,16 @@ impl<'a> ExtentDescriptor<'a> {
             }
         }
         used
+    }
+
+    pub fn free_count(&self) -> usize {
+        let mut count = 0;
+        for i in 0..FSP_EXTENT_SIZE {
+            if self.get_bit(i, XDES_FREE_BIT) {
+                count += 1;
+            }
+        }
+        count
     }
 
     /// Find the first page index where `which` bit is set, or None if none found.
