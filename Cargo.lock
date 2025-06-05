@@ -143,6 +143,7 @@ version = "0.1.0"
 dependencies = [
  "derive_builder",
  "intrusive-collections",
+ "parking_lot",
  "rstest",
  "strum_macros",
  "tokio",

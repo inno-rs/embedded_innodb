@@ -5,15 +5,20 @@ use crate::buf::buf0types::{
 };
 use crate::fil::fil0fil::Fil;
 use crate::fsp::fsp0types::SYS_TABLESPACE;
-use crate::innodb::innodb0types::{Lsn, PageFrame, SpaceId, UNIV_PAGE_SIZE};
+use crate::innodb::innodb0types::{
+    Lsn, PageFrame, PageId, SpaceId, UNIV_PAGE_SIZE,
+};
 use crate::log::log0log::{Log, LogWaitMode};
 use crate::os::os0file::IORequest;
 use crate::trx::trx0sys::TRX_SYS_SPACE;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use crate::{some_or_panic, ut_panic};
+use intrusive_collections::linked_list::CursorMut;
 use intrusive_collections::LinkedList;
 use std::cell::RefCell;
 use std::cmp::PartialEq;
+use std::ops::DerefMut;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -114,6 +119,54 @@ impl BufFlush {
         }
 
         self.write_block_low(buf_block);
+    }
+
+    /// Flushes a batch of buffer blocks from the end of the flush list or lru list.
+    pub fn batch(
+        &mut self,
+        flush_type: BufFlushType,
+        min_n: usize,
+        lsn_limit: Lsn,
+        neighborhood: usize,
+    ) {
+        ut_ad!(flush_type == BufFlushList || flush_type == BufFlushLru);
+        // The number of pages flushed.
+        let page_count = 0;
+
+        while page_count < min_n {
+            let page_id = Option::<PageId>::None;
+
+            if flush_type == BufFlushList {
+                let mut flush_list_ref = self.flush_list.borrow_mut();
+                let cursor = flush_list_ref.back_mut();
+            }
+        }
+    }
+
+    /// Checks if a buffer block is modified and ready for flushing.
+    pub fn ready_for_flush(
+        &self,
+        buf_block: &BufBlock,
+        flush_type: BufFlushType,
+    ) -> bool {
+        let buf_page = buf_block.buf_block_get_page();
+        let buf_page_ref = buf_page.borrow();
+        ut_ad!(buf_page_ref.in_file());
+        ut_ad!(flush_type == BufFlushList || flush_type == BufFlushLru);
+
+        if buf_page_ref.get_oldest_modification() != 0
+            && buf_page_ref.buf_page_get_io_fix() == BufIoFix::BufIoNone
+        {
+            if flush_type != BufFlushLru {
+                ut_ad!(buf_page_ref.is_in_flush_list());
+
+                return true;
+            } else if buf_page_ref.buf_page_io_fix_count() == 0 {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Performs the low-level write operation for a buffer block.

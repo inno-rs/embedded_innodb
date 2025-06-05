@@ -57,6 +57,10 @@ impl Index {
     pub fn is_clustered(&self) -> bool {
         false
     }
+
+    pub fn get_page_id(&self) -> PageId {
+        self.page_id
+    }
 }
 
 pub struct Column {
