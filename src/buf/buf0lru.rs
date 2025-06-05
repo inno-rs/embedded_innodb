@@ -302,7 +302,7 @@ impl BufLRU {
         let buf_pool_ref = buf_pool.borrow_mut();
         changes.iter().for_each(|change| {
             buf_pool_ref.get(Request {
-                rw_latch: ReadWriteLatch::RW_NO_LATCH,
+                rw_latch: ReadWriteLatch::NoLatch,
                 page_id: change.page_id,
                 mode: 0,
                 mtr: &mut mtr,

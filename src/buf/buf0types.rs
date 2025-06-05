@@ -415,7 +415,7 @@ pub struct BufBlock {
     /// Pointer to the actual page data in memory
     frame: Frame,
     /// Lock for concurrency control when accessing this buffer block
-    pub(crate) lock: Arc<RwLock<()>>,
+    pub(crate) rw_lock: Arc<RwLock<()>>,
 }
 
 impl BufBlock {
@@ -432,7 +432,7 @@ impl BufBlock {
             modify_clock: 0,
             buf_page,
             frame,
-            lock: Arc::new(Default::default()),
+            rw_lock: Arc::new(Default::default()),
         }
     }
 
