@@ -7,6 +7,7 @@ edition = "2024"
 rstest = { version = "0.25.0" }
 
 [dependencies]
+parking_lot = { version = "0.12.1" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 derive_builder = { version = "0.20.2" }

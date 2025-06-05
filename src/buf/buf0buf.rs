@@ -9,11 +9,15 @@ use crate::innodb::innodb0types::{
 };
 use crate::mtr::mtr0mtr::Mtr;
 use crate::mtr::mtr0types::MtrState;
+use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::ut_ad;
+use crate::ut_2_power_up;
 use intrusive_collections::{LinkedList, UnsafeRef};
+use parking_lot::RwLockReadGuard;
 use std::alloc::{alloc_zeroed, Layout};
 use std::cell::RefCell;
+use std::cmp::min;
 use std::collections::HashMap;
 use std::ops::DerefMut;
 use std::rc::{Rc, Weak};
@@ -141,6 +145,18 @@ impl BufPool {
         }
 
         Some(block.clone())
+    }
+
+    /// Calculates the size of the read-ahead area.
+    ///
+    /// This method determines the appropriate size for read-ahead operations
+    /// based on the current buffer pool size. It returns the minimum of either
+    /// the next power of 2 of (buffer pool size / 32) or 64.
+    ///
+    /// # Returns
+    /// * `u64` - The calculated read-ahead area size
+    pub fn get_read_ahead_area(&self) -> u64 {
+        min(ut_2_power_up!(self.curr_size / 32), 64)
     }
 
     /// Retrieves a buffer block by its space ID and page number.
