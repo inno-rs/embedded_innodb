@@ -86,7 +86,7 @@ impl BTree {
             // Fetch the page from buffer_pool
             let pool = self.buf_pool.write().unwrap();
             let buf_block = pool.get(Request {
-                rw_latch: ReadWriteLatch::RW_S_LATCH,
+                rw_latch: ReadWriteLatch::SLatch,
                 page_id: PageId {
                     space_id: page.page_get_space_id(),
                     page_no: prev_page_no,
@@ -197,7 +197,7 @@ impl BTree {
             // Fetch the page from buffer_pool
             let pool = self.buf_pool.write().unwrap();
             let buf_block = pool.get(Request {
-                rw_latch: ReadWriteLatch::RW_S_LATCH,
+                rw_latch: ReadWriteLatch::SLatch,
                 page_id: PageId {
                     space_id: page.page_get_space_id(),
                     page_no: next_page_no,

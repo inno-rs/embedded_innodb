@@ -9,12 +9,11 @@ use crate::innodb::innodb0types::{
 };
 use crate::mtr::mtr0mtr::Mtr;
 use crate::mtr::mtr0types::MtrState;
-use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::ut_ad;
-use crate::ut_2_power_up;
+use crate::{lock_exclusive, lock_shared, ut_2_power_up};
 use intrusive_collections::{LinkedList, UnsafeRef};
-use parking_lot::RwLockReadGuard;
+use parking_lot::lock_api::RawRwLock;
 use std::alloc::{alloc_zeroed, Layout};
 use std::cell::RefCell;
 use std::cmp::min;
@@ -109,13 +108,13 @@ impl BufPool {
     pub fn get(&self, request: Request) -> Option<Arc<RwLock<BufBlock>>> {
         ut_ad!(request.mtr.get_mtr_state() == MtrState::MTR_ACTIVE);
         ut_ad!(
-            request.rw_latch == ReadWriteLatch::RW_NO_LATCH
-                || request.rw_latch == ReadWriteLatch::RW_S_LATCH
-                || request.rw_latch == ReadWriteLatch::RW_X_LATCH
+            request.rw_latch == ReadWriteLatch::NoLatch
+                || request.rw_latch == ReadWriteLatch::SLatch
+                || request.rw_latch == ReadWriteLatch::XLatch
         );
         ut_ad!(
             request.mode != BUF_GET_NO_LATCH
-                || request.rw_latch == ReadWriteLatch::RW_NO_LATCH
+                || request.rw_latch == ReadWriteLatch::NoLatch
         );
         ut_ad!(
             request.mode == BUF_GET_ALWAYS
@@ -135,11 +134,15 @@ impl BufPool {
         }
 
         let block = block_opt.unwrap();
-
+        let block_ref = block.write().unwrap();
         match request.rw_latch {
-            ReadWriteLatch::RW_S_LATCH => {}
-            ReadWriteLatch::RW_X_LATCH => {}
-            ReadWriteLatch::RW_NO_LATCH => {
+            ReadWriteLatch::SLatch => {
+                lock_exclusive!(block_ref);
+            }
+            ReadWriteLatch::XLatch => {
+                lock_shared!(block_ref);
+            }
+            ReadWriteLatch::NoLatch => {
                 // The caller does not need any latch.
             }
         }
