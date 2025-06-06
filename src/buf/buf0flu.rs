@@ -89,7 +89,7 @@ impl BufFlush {
         buf_block: &mut BufBlock,
         flush_type: BufFlushType,
     ) {
-        ut_ad!(buf_block.get_state() == BufPageState::BufBlockFilePage);
+        ut_ad!(buf_block.buf_block_get_state() == BufPageState::BufBlockFilePage);
         ut_ad!(flush_type == BufFlushLru || flush_type == BufFlushList);
 
         {
@@ -121,14 +121,31 @@ impl BufFlush {
         self.write_block_low(buf_block);
     }
 
-    /// Flushes a batch of buffer blocks from the end of the flush list or lru list.
+    /// Flushes a batch of buffer blocks from the end of the flush list or LRU list.
+    ///
+    /// This method attempts to flush a specified minimum number of pages from either
+    /// the flush list or the LRU list, depending on the flush type. It processes pages
+    /// in batches for better I/O efficiency, and can limit the flush operation to pages
+    /// with a log sequence number (LSN) below a certain threshold.
+    ///
+    /// # Parameters
+    /// * `flush_type` - The type of flush operation (BufFlushList or BufFlushLru)
+    /// * `min_n` - The minimum number of pages to flush
+    /// * `lsn_limit` - Only flush pages with LSN less than this value
+    /// * `neighborhood` - The size of the neighborhood to scan for contiguous pages
+    ///
+    /// # Returns
+    /// * `usize` - The number of pages actually flushed
+    ///
+    /// # Panics
+    /// Panics if the flush type is not BufFlushList or BufFlushLru
     pub fn batch(
         &mut self,
         flush_type: BufFlushType,
         min_n: usize,
         lsn_limit: Lsn,
         neighborhood: usize,
-    ) {
+    ) -> usize {
         ut_ad!(flush_type == BufFlushList || flush_type == BufFlushLru);
         // The number of pages flushed.
         let page_count = 0;
@@ -141,9 +158,31 @@ impl BufFlush {
                 let cursor = flush_list_ref.back_mut();
             }
         }
+
+        page_count
     }
 
     /// Checks if a buffer block is modified and ready for flushing.
+    ///
+    /// This method determines whether a buffer block can be flushed to disk based on
+    /// its current state and the requested flush type. A block is ready for flushing if:
+    /// 1. It has been modified (has a non-zero oldest modification LSN)
+    /// 2. It is not currently involved in an I/O operation
+    /// 3. For LRU flushes, it must also have no buffer fixes
+    ///
+    /// # Parameters
+    /// * `buf_block` - The buffer block to check
+    /// * `flush_type` - The type of flush operation (BufFlushList or BufFlushLru)
+    ///
+    /// # Returns
+    /// * `true` - If the block is ready for flushing
+    /// * `false` - If the block cannot be flushed at this time
+    ///
+    /// # Panics
+    /// Panics if:
+    /// - The buffer page is not in a file
+    /// - The flush type is not BufFlushList or BufFlushLru
+    /// - For list flushes, if the page is not in the flush list
     pub fn ready_for_flush(
         &self,
         buf_block: &BufBlock,
