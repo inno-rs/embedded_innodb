@@ -1,7 +1,9 @@
 use crate::buf::buf0lru::BufLRU;
+use crate::buf::buf0types::BufIoFix::BufIoRead;
 use crate::buf::buf0types::{
-    BufBlock, BufChunk, BufPage, FlushListAdapter, FreeListAdapter,
-    LruAdapter, Request, BUF_GET_ALWAYS, BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH,
+    BufBlock, BufChunk, BufPage, BufPageState, BufPoolStats,
+    FlushListAdapter, FreeListAdapter, LruAdapter, Request, BUF_GET_ALWAYS,
+    BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH,
 };
 use crate::fil::fil0fil::Fil;
 use crate::innodb::innodb0types::{
@@ -11,14 +13,17 @@ use crate::mtr::mtr0mtr::Mtr;
 use crate::mtr::mtr0types::MtrState;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::ut_ad;
-use crate::{lock_exclusive, lock_shared, ut_2_power_up};
+use crate::{
+    lock_exclusive, lock_shared, some_or_panic, ut_2_power_up, ut_panic,
+};
 use intrusive_collections::{LinkedList, UnsafeRef};
 use parking_lot::lock_api::RawRwLock;
 use std::alloc::{alloc_zeroed, Layout};
-use std::cell::RefCell;
+use std::cell;
+use std::cell::{Cell, RefCell};
 use std::cmp::min;
 use std::collections::HashMap;
-use std::ops::DerefMut;
+use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, RwLock};
 use tracing::info;
@@ -42,8 +47,10 @@ pub struct BufPool {
     fil: Arc<RwLock<Fil>>,
     /// reference to BufLru.
     buf_lru: Arc<RefCell<BufLRU>>,
-
+    /// List of memory chunks allocated for the buffer pool
     chunks: Vec<Arc<RwLock<BufChunk>>>,
+    /// Statistics about the buffer pool
+    stat: RefCell<BufPoolStats>,
 }
 impl BufPool {
     /// Creates a new Buffer Pool instance.
@@ -62,6 +69,7 @@ impl BufPool {
             fil,
             buf_lru,
             chunks: vec![],
+            stat: RefCell::new(BufPoolStats::new()),
         }
     }
 
@@ -122,9 +130,18 @@ impl BufPool {
                 || request.mode == BUF_GET_NO_LATCH
         );
 
+        self.stat.borrow_mut().n_pages_get += 1;
+
+        // TODO(Rahul): Understand the logic of `guess`.
+
+        // TODO: Implement retry logic for getting a page for n number of times.
+
+        // 1. First, check if the page is already in the buffer pool.
         let block_opt = self.page_hash.get(&request.page_id);
 
         match block_opt {
+            // 2. The page is not in the buffer pool, and the request mode is BUF_GET_NO_LATCH.
+            // Return None.
             None => {
                 if request.mode == BUF_GET_IF_IN_POOL {
                     return None;
@@ -133,8 +150,44 @@ impl BufPool {
             Some(_) => {}
         }
 
-        let block = block_opt.unwrap();
-        let block_ref = block.write().unwrap();
+        let block =
+            some_or_panic!(block_opt, "failed to get block from page hash");
+        {
+            let block_ref = block.read().unwrap();
+            // The page is being read.
+            let page_read_io =
+                block_ref.buf_block_get_page().borrow().buf_page_get_io_fix()
+                    == BufIoRead;
+
+            if page_read_io && request.mode == BUF_GET_IF_IN_POOL {
+                // If the page is being read, we cannot return it immediately.
+                // We need to wait for the read operation to complete.
+                return None;
+            }
+        }
+
+        let mut block_guard = block.write().unwrap();
+        let block_ref = block_guard.deref_mut();
+        let state = block_ref.buf_block_get_state();
+        match &state {
+            BufPageState::BufBlockFilePage => {}
+            _rest_of_the_types => {
+                ut_panic!(
+                    "Unexpected buffer block state: {:?}",
+                    _rest_of_the_types
+                );
+            }
+        }
+
+        ut_ad!(state == BufPageState::BufBlockFilePage);
+        // Increment the buffix count for the page.
+        block_ref.buf_block_get_page().borrow_mut().buf_page_io_fix_count();
+        let buf_page = block_ref.buf_block_get_page();
+        let access_time =
+            self.buf_page_accessed_time(buf_page.borrow_mut().deref());
+
+        self.set_accessed_make_young(block_ref, access_time);
+
         match request.rw_latch {
             ReadWriteLatch::SLatch => {
                 lock_exclusive!(block_ref);
@@ -145,6 +198,10 @@ impl BufPool {
             ReadWriteLatch::NoLatch => {
                 // The caller does not need any latch.
             }
+        }
+
+        if access_time == 0 {
+            // TODO: Implement logic for read ahead.
         }
 
         Some(block.clone())
@@ -467,5 +524,35 @@ impl BufPool {
         self.chunks.push(chunk);
 
         self.curr_size = pool_size;
+    }
+
+    /// Sets the first access time of the page and potentially makes it young in the LRU list.
+    ///
+    /// This method updates the access time of a buffer page and, if the page is considered
+    /// old enough based on the access time, moves it to the start of the buffer pool's LRU list
+    /// to prevent it from being evicted soon.
+    ///
+    /// # Parameters
+    /// * `buf_page` - The buffer block to update
+    /// * `access_time` - The current access time to compare against the page's last access time
+    pub fn set_accessed_make_young(
+        &self,
+        buf_page: &mut BufBlock,
+        access_time: u64,
+    ) {
+    }
+
+    /// Gets the last access time of a buffer page.
+    ///
+    /// This method retrieves the timestamp of when the buffer page was last accessed.
+    /// The access time is used to determine if a page should be made young in the LRU list.
+    ///
+    /// # Parameters
+    /// * `buf_page` - The buffer page to get the access time for
+    ///
+    /// # Returns
+    /// * `u64` - The last access time of the buffer page
+    pub fn buf_page_accessed_time(&self, buf_page: &BufPage) -> u64 {
+        0
     }
 }

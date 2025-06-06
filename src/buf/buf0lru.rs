@@ -103,12 +103,16 @@ impl BufLRU {
         }
     }
 
-    /// Tries to remove LRU flushed blocks from the end of the LRU list, and put them to the free list.
-    /// This is beneficial for the efficiency of the insert operation
-    /// as flushed pages from non-unique non-clustered indexes are taken out of the buffer pool,
-    /// and their inserts are redirected to the insert buffer.
-    /// Otherwise, the flushed blocks can be modified again before read operations need new buffer blocks,
-    /// and the i/o work done in flushing would be waster.
+    /// Tries to remove LRU flushed blocks from the end of the LRU list and put them to the free list.
+    ///
+    /// This method improves the efficiency of insert operations by removing flushed pages
+    /// from non-unique non-clustered indexes from the buffer pool. This allows their inserts
+    /// to be redirected to the insert buffer. Without this optimization, the flushed blocks
+    /// might be modified again before read operations need new buffer blocks, wasting the I/O
+    /// work done in flushing.
+    ///
+    /// # Returns
+    /// * `bool` - True if a block was successfully freed, false otherwise
     pub fn try_free_flushed_block(&mut self) {}
 
     /// Adds a buffer page to the LRU list.
@@ -123,8 +127,17 @@ impl BufLRU {
     }
 
     /// Moves a page to the start of the buffer pool LRU list.
-    /// This high level function can be used
-    /// to prevent an important page from slipping out of the buffer pool.
+    ///
+    /// This high-level function can be used to prevent an important page from being
+    /// evicted from the buffer pool. By moving the page to the start of the LRU list,
+    /// it becomes the most recently used page and will be one of the last candidates
+    /// for eviction when the buffer pool needs to free space.
+    ///
+    /// # Parameters
+    /// * `buf_page` - The buffer page to make young
+    ///
+    /// # Panics
+    /// Panics if the page is not in a file
     pub fn make_young(&mut self, buf_page: &mut BufPage) {
         ut_ad!(buf_page.in_file());
 
@@ -133,6 +146,17 @@ impl BufLRU {
     }
 
     /// Moves a page to the end of the buffer pool LRU list.
+    ///
+    /// This method makes a page the least recently used by moving it to the end
+    /// of the LRU list. This is useful when a page is known to be less important
+    /// or unlikely to be accessed again soon, making it a prime candidate for
+    /// eviction when the buffer pool needs to free space.
+    ///
+    /// # Parameters
+    /// * `buf_page` - The buffer page to move to the end of the LRU list
+    ///
+    /// # Panics
+    /// Panics if the page is not in a file
     pub fn make_block(&mut self, buf_page: &mut BufPage) {
         ut_ad!(buf_page.in_file());
 
@@ -383,7 +407,7 @@ impl BufLRU {
     /// # Panics
     /// Panics if the block is not in a valid state to be freed
     pub fn block_free_non_file_page(&mut self, block: &mut BufBlock) {
-        match block.get_state() {
+        match block.buf_block_get_state() {
             n if n == BufPageState::BufBlockMemory
                 || n == BufBlockReadyForUse =>
             {

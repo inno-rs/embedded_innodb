@@ -6,6 +6,7 @@ use crate::innodb::innodb0types::{
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
+use crate::tests::test0utils::OwningPage;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use intrusive_collections::{intrusive_adapter, LinkedListLink, UnsafeRef};
 use parking_lot::RwLock;
@@ -14,6 +15,7 @@ use std::cmp::PartialEq;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use strum_macros::Display;
+use tracing::subscriber::NoSubscriber;
 
 /// The frame is a pointer to a memory location where the block's data is stored.
 /// It points to the actual page content in memory.
@@ -33,6 +35,40 @@ pub const BUF_GET_IF_IN_POOL: usize = 11;
 /// Get the page and mark it as fixed, but don't set any latch on it.
 /// This mode is used when the caller doesn't need exclusive access to the page.
 pub const BUF_GET_NO_LATCH: usize = 14;
+
+pub struct BufPoolStats {
+    /// Number of gets performed.
+    pub n_pages_get: u64,
+    /// Number of read operations performed.
+    pub n_pages_read: u64,
+    /// Number of write operations performed.
+    pub n_pages_written: u64,
+    /// Number of pages created in the pool with no read.
+    pub n_pages_created: u64,
+    /// Number of pages read as part of read ahead.
+    pub n_ra_pages_read: u64,
+    /// Number of read ahead pages that were evicted without being read.
+    pub n_ra_pages_evicted: u64,
+    /// Number of pages made young.
+    pub n_pages_made_young: u64,
+    /// The Number of pages isn't made young because the first access was not long enough.
+    pub n_pages_not_made_young: u64,
+}
+
+impl BufPoolStats {
+    pub fn new() -> Self {
+        Self {
+            n_pages_get: 0,
+            n_pages_read: 0,
+            n_pages_written: 0,
+            n_pages_created: 0,
+            n_ra_pages_read: 0,
+            n_ra_pages_evicted: 0,
+            n_pages_made_young: 0,
+            n_pages_not_made_young: 0,
+        }
+    }
+}
 
 /// Represents the I/O status of a buffer page.
 ///
@@ -138,6 +174,13 @@ impl BufPage {
         }
     }
 
+    /// Gets the page ID of this buffer page.
+    ///
+    /// This method creates and returns a PageId struct that uniquely identifies
+    /// this page within the database, combining the space ID and page number.
+    ///
+    /// # Returns
+    /// * `PageId` - The unique identifier for this page
     pub fn get_page_id(&self) -> PageId {
         PageId { space_id: self.space_id, page_no: self.page_no }
     }
@@ -278,7 +321,15 @@ impl BufPage {
         self.old = old;
     }
 
-    /// Check if the block is mapped to a tablespace.
+    /// Checks if the buffer page is mapped to a tablespace file.
+    ///
+    /// This method determines whether the buffer page represents a page in a tablespace file
+    /// (as opposed to a memory-only page or an unused page). Only pages in the BufBlockFilePage
+    /// state are considered to be mapped to a file.
+    ///
+    /// # Returns
+    /// * `true` - If the page is mapped to a tablespace file
+    /// * `false` - If the page is not mapped to a file (e.g., it's a memory page or unused)
     pub fn in_file(&self) -> bool {
         match self.state.clone() {
             BufPageState::BufBlockFilePage => true,
@@ -319,6 +370,20 @@ impl BufPage {
     pub fn buf_page_set_io_fix(&mut self, io_fix: BufIoFix) {
         self.io_fix = io_fix.clone();
         ut_ad!(self.buf_page_get_io_fix() == io_fix);
+    }
+
+    /// Increments the buffer fix count for this page.
+    ///
+    /// This method increases the buffer fix count, which tracks how many operations
+    /// are currently accessing this page. A page with a non-zero fix count cannot
+    /// be evicted from the buffer pool. This is used to ensure that pages being
+    /// actively used remain in memory.
+    ///
+    /// # Returns
+    /// * `usize` - The new buffer fix count after incrementing
+    pub fn buf_block_buf_fix_inc(&mut self) -> usize {
+        self.buf_fix_count += 1;
+        self.buf_fix_count
     }
 
     /// Gets the current flush type of the buffer page.
@@ -448,7 +513,7 @@ impl BufBlock {
     ///
     /// # Returns
     /// The current state of the buffer page
-    pub fn get_state(&self) -> BufPageState {
+    pub fn buf_block_get_state(&self) -> BufPageState {
         self.buf_page.borrow().borrow().state.clone()
     }
 
