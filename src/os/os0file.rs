@@ -27,7 +27,7 @@ pub type OsFile = File;
 ///
 /// This enum is used to specify whether an I/O operation should be
 /// synchronous or asynchronous, and whether it's a read or write operation.
-#[derive(Display, PartialEq, Clone)]
+#[derive(Display, PartialEq, Clone, Debug)]
 pub enum IORequest {
     /// No I/O operation.
     None,
@@ -109,7 +109,7 @@ impl IORequest {
 /// This struct is returned when a read operation completes successfully.
 /// It can be extended in the future to include additional information about the read operation,
 /// such as the number of bytes read or performance metrics.
-pub struct ReadResult {}
+pub struct ReadResult();
 
 /// Contains the result of a write operation.
 ///
@@ -118,7 +118,7 @@ pub struct ReadResult {}
 /// such as the number of bytes written or performance metrics.
 /// The struct implements Eq, PartialEq, and Debug traits for comparison and debugging purposes.
 #[derive(Eq, PartialEq, Debug)]
-pub struct WriteResult {}
+pub struct WriteResult();
 
 /// Represents the result of an I/O operation.
 ///

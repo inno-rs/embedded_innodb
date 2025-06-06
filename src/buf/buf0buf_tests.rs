@@ -2,11 +2,15 @@
 pub(super) mod tests {
     use crate::buf::buf0buf::BufPool;
     use crate::buf::buf0lru::BufLRU;
+    use crate::buf::buf0rea::BufRea;
+    use crate::buf::buf0types::{Request, BUF_GET_IF_IN_POOL};
     use crate::fil::fil0fil::Fil;
-    use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
+    use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
     use crate::mtr::mtr0mtr::Mtr;
     use crate::mtr::mtr0mtr::MtrState::MTR_ACTIVE;
     use crate::os::os0io::OsIo;
+    use crate::sync::sync0rw::ReadWriteLatch;
+    use crate::ut::ut0dbg::init_tracing;
     use rstest::{fixture, rstest};
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -19,11 +23,19 @@ pub(super) mod tests {
 
     impl BufPoolFixture {
         pub fn new() -> Self {
+            init_tracing();
+
             let os_io = Arc::new(Mutex::new(OsIo::new()));
             let fil = Arc::new(RwLock::new(Fil::new(1, os_io)));
+
+            let buf_rea = Arc::new(RefCell::new(BufRea::new(fil.clone())));
+
             let buf_lru = Arc::new(RefCell::new(BufLRU::new()));
-            let buf_pool_rc =
-                Rc::new(RefCell::new(BufPool::new(fil, buf_lru.clone())));
+            let buf_pool_rc = Rc::new(RefCell::new(BufPool::new(
+                fil,
+                buf_lru.clone(),
+                buf_rea,
+            )));
             buf_lru.borrow_mut().init(Rc::downgrade(&buf_pool_rc));
 
             BufPoolFixture { buf_lru, buf_pool: buf_pool_rc }
@@ -37,7 +49,7 @@ pub(super) mod tests {
 
     #[rstest]
     fn create_buf_pool(buf_pool_fixture: BufPoolFixture) {
-        let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
+        let buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
 
         let page = buf_pool.hash_get_page(0, 0);
 
@@ -84,11 +96,60 @@ pub(super) mod tests {
         // The total number of items in the free list should decrease by 1.
         assert_eq!(buf_pool.get_free_list_size(), 9);
 
-        for i in 0..9 {
-            let resp = buf_pool.create(0, 0, &mut mtr);
+        for i in 1..10 {
+            let resp = buf_pool.create(i, i, &mut mtr);
             assert!(resp.is_some());
 
-            assert_eq!(buf_pool.get_free_list_size(), 9 - i - 1);
+            assert_eq!(buf_pool.get_free_list_size(), 9 - (i as usize));
+        }
+    }
+
+    #[rstest]
+    fn test_buf_pool_get_page(buf_pool_fixture: BufPoolFixture) {
+        let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
+        let mut mtr = Mtr::new();
+        mtr.set_mtr_state(MTR_ACTIVE);
+
+        // Initialize a chunk to have some pages.
+        let _result = buf_pool.chunk_init(10 * UNIV_PAGE_SIZE);
+        assert_eq!(buf_pool.get_free_list_size(), 10);
+
+        let resp = buf_pool.create(0, 0, &mut mtr);
+        assert!(resp.is_some());
+
+        // Get a page from the pool.
+        let page = buf_pool.get(Request {
+            rw_latch: ReadWriteLatch::SLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_IF_IN_POOL,
+            mtr: &mut mtr,
+        });
+        assert!(page.is_some());
+    }
+
+    #[rstest]
+    fn test_buf_pool_get_multiple(buf_pool_fixture: BufPoolFixture) {
+        let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
+        let mut mtr = Mtr::new();
+        mtr.set_mtr_state(MTR_ACTIVE);
+
+        // Add some pages, and then retry creating.
+        let _result = buf_pool.chunk_init(10 * UNIV_PAGE_SIZE);
+        assert_eq!(buf_pool.get_free_list_size(), 10);
+
+        for i in 0..10 {
+            let resp = buf_pool.create(i, i, &mut mtr);
+            assert!(resp.is_some());
+        }
+
+        for i in 1..10 {
+            let page = buf_pool.get(Request {
+                rw_latch: ReadWriteLatch::SLatch,
+                page_id: PageId { space_id: i, page_no: i },
+                mode: BUF_GET_IF_IN_POOL,
+                mtr: &mut mtr,
+            });
+            assert!(page.is_some(), "Failed to get page for space_id: {}, page_no: {}", i, i);
         }
     }
 }

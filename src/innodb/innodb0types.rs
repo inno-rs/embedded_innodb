@@ -1,5 +1,7 @@
 use std::alloc::{alloc, dealloc, Layout};
 
+use strum_macros::Display;
+
 /** The 2-logarithm of UNIV_PAGE_SIZE: */
 pub const UNIV_PAGE_SIZE_SHIFT: usize = 14;
 
@@ -120,7 +122,7 @@ impl PageId {
 /// InnoDB error codes.
 /// Most of the error codes are internal to the engine and will not be seen by user applications.
 /// The partial error codes reflect the substate of an operation within InnoDB.
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug, Display)]
 pub enum DbErr {
     /// A successful result.
     DbSuccess,

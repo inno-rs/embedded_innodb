@@ -8,13 +8,13 @@ use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use intrusive_collections::{intrusive_adapter, LinkedListLink, UnsafeRef};
-use parking_lot::RwLock;
+use parking_lot::RwLock as ParkingLotRwLock;
 use std::cell::RefCell;
 use std::cmp::PartialEq;
-use std::rc::{Rc, Weak};
-use std::sync::Arc;
+use std::rc::Rc;
+use std::sync::RwLock;
+use std::sync::{Arc, Weak};
 use strum_macros::Display;
-
 /// Magic number used to identify buffer pool pages that do not have a checksum.
 pub const BUF_NO_CHECKSUM_MAGIC: usize = 0xDEADBEEF;
 
@@ -77,7 +77,7 @@ impl BufPoolStats {
 /// (read or write) or is free from I/O operations. It's used to track the
 /// I/O state of pages in the buffer pool and prevent operations on pages
 /// that are currently involved in I/O.
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub enum BufIoFix {
     /// No pending I/O operations on this page.
     /// The page is not being read from or written to disk.
@@ -95,7 +95,7 @@ pub enum BufIoFix {
 /// BufPage contains metadata about a database page that is cached in the buffer pool.
 /// It tracks the page's identity, state, modification history, and maintains links
 /// for various buffer pool management lists (free, LRU, flush).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BufPage {
     /// Table space identifier.
     space_id: SpaceId,
@@ -133,7 +133,7 @@ pub struct BufPage {
     /// Indicates if the page is currently in the LRU list.
     is_in_lru_list: bool,
 
-    buf_block: Weak<RefCell<BufBlock>>,
+    buf_block: Weak<RwLock<BufBlock>>,
 }
 
 // Adapter for intrusive collections to manage flush lists of buffer pages.
@@ -192,7 +192,7 @@ impl BufPage {
     ///
     /// # Parameters
     /// * `buf_block` - A weak reference to the buffer block containing this page
-    pub fn set_buf_block_ref(&mut self, buf_block: Weak<RefCell<BufBlock>>) {
+    pub fn set_buf_block_ref(&mut self, buf_block: Weak<RwLock<BufBlock>>) {
         self.buf_block = buf_block;
     }
 
@@ -251,7 +251,7 @@ impl BufPage {
     /// # Returns
     /// * `true` if the page is in the free list, `false` otherwise
     pub fn is_in_free_list(&self) -> bool {
-        self.state == BufPageState::BufBlockNotUsed
+        self.is_in_free_list
     }
 
     /// Sets whether the buffer page is in the LRU list.
@@ -442,7 +442,7 @@ impl BufPage {
     ///
     /// # Returns
     /// * `Weak<RefCell<BufBlock>>` - A weak reference to the buffer block
-    pub fn buf_page_get_buf_block(&self) -> Weak<RefCell<BufBlock>> {
+    pub fn buf_page_get_buf_block(&self) -> Weak<RwLock<BufBlock>> {
         Weak::clone(&self.buf_block)
     }
 
@@ -481,7 +481,7 @@ pub struct BufBlock {
     /// Pointer to the actual page data in memory
     frame: Frame,
     /// Lock for concurrency control when accessing this buffer block
-    pub(crate) rw_lock: Arc<RwLock<()>>,
+    pub(crate) rw_lock: Arc<ParkingLotRwLock<()>>,
 }
 
 impl BufBlock {
@@ -531,7 +531,7 @@ impl BufBlock {
     /// # Note
     /// This method is currently a placeholder and needs to be implemented.
     pub fn buf_block_set_state(&mut self, state: BufPageState) {
-        // TODO: Implement this method to update the page state
+        self.buf_page.borrow_mut().borrow_mut().state = state;
     }
 
     /// Gets the buffer page metadata for this buffer block.
@@ -612,5 +612,5 @@ pub struct BufChunk {
     pub mem_size: usize,
     pub size: usize,
     pub mem: *mut u8,
-    pub buf_pages: Vec<RefCell<Rc<RefCell<BufBlock>>>>,
+    pub buf_pages: Vec<Arc<RwLock<BufBlock>>>,
 }

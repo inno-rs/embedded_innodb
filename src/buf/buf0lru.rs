@@ -12,6 +12,7 @@ use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use crate::{some_or_panic, ut_panic};
 use intrusive_collections::{LinkedList, UnsafeRef};
+use parking_lot::RwLock as ParkingLotRwLock;
 use std::cell::RefCell;
 use std::cmp::min;
 use std::ops::{Deref, DerefMut};
@@ -322,7 +323,7 @@ impl BufLRU {
         let mut mtr = Mtr::new();
         let buf_pool =
             some_or_panic!(self.buf_pool.upgrade(), "buf_pool is empty");
-        let buf_pool_ref = buf_pool.borrow_mut();
+        let mut buf_pool_ref = buf_pool.borrow_mut();
         changes.iter().for_each(|change| {
             buf_pool_ref.get(Request {
                 rw_latch: ReadWriteLatch::NoLatch,
@@ -364,12 +365,33 @@ impl BufLRU {
     /// # Returns
     /// * `Some(BufBlock)` - A free buffer block if available on the free list
     /// * `None` - If the free list is empty
-    pub fn get_free_only(&mut self) -> Option<Rc<RefCell<BufBlock>>> {
+    pub fn get_free_only(&mut self) -> Option<Arc<RwLock<BufBlock>>> {
         let buf_page = self.free_list.borrow_mut().pop_front();
 
         if let Some(buf_page) = buf_page {
             let buf_block = buf_page.buf_page_get_buf_block();
-            return buf_block.upgrade();
+            if let Some(block) = buf_block.upgrade().clone() {
+                let mut block_ref = block.write().unwrap();
+
+                {
+                    let buf_page = block_ref.buf_block_get_page();
+                    let mut buf_page_ref = buf_page.borrow_mut();
+
+                    ut_ad!(buf_page_ref.is_in_free_list());
+                    ut_ad!(buf_page_ref.is_in_lru_list() == false);
+                    ut_ad!(buf_page_ref.is_in_flush_list() == false);
+                    ut_ad!(buf_page_ref.in_file() == false);
+
+                    // Set the page is not in free list anymore
+                    buf_page_ref.set_is_in_free_list(false);
+                }
+
+                block_ref.buf_block_set_state(BufBlockReadyForUse);
+
+                return Some(block.clone());
+            }
+
+            ut_panic!("cannot set state for buf_block");
         }
 
         None
@@ -384,7 +406,7 @@ impl BufLRU {
     /// # Returns
     /// * `Some(BufBlock)` - A free buffer block
     /// * `None` - If no blocks could be freed (should not happen in a properly sized buffer pool)
-    pub fn get_free_block(&mut self) -> Option<Rc<RefCell<BufBlock>>> {
+    pub fn get_free_block(&mut self) -> Option<Arc<RwLock<BufBlock>>> {
         // First try to get a block from the free list
         if let Some(block) = self.get_free_only() {
             return Some(block);
@@ -443,11 +465,12 @@ impl BufLRU {
     /// # Parameters
     /// * `buf_page` - The buffer page to add to the free list
     pub fn add_to_free_list(&mut self, buf_page: &mut BufPage) {
+        ut_ad!(buf_page.is_in_free_list() == false);
         let mut free_list_ref = self.free_list.borrow_mut();
         unsafe {
             free_list_ref.push_back(UnsafeRef::from_raw(buf_page));
         }
-        buf_page.set_is_in_lru_list(true);
+        buf_page.set_is_in_free_list(true);
     }
 
     /// Removes a buffer page from the LRU list.
@@ -541,7 +564,7 @@ impl BufLRU {
                 if let Some(buf_block) =
                     buf_page.buf_page_get_buf_block().upgrade()
                 {
-                    let mut buf_block_ref = buf_block.borrow_mut();
+                    let mut buf_block_ref = buf_block.write().unwrap();
                     buf_block_ref.buf_block_incr_clock();
                 } else {
                     ut_panic!("buf_block cannot be accessed from buf_page");
