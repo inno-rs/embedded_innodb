@@ -1,13 +1,15 @@
+use crate::block_on;
 /// This module provides file I/O operations for the embedded InnoDB storage engine.
 /// It includes functionality for file creation, opening, reading, writing, and size retrieval.
 use crate::innodb::innodb0types::IB_FILE_BLOCK_SIZE;
 use crate::ut::ut0dbg::ut_ad;
+use crate::ut::ut0ut::GLOBAL_RUNTIME;
+use std::cmp::min;
 use std::io::SeekFrom;
 use strum_macros::Display;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::runtime::Runtime;
-
 
 /// Represents a file handle in the operating system.
 ///
@@ -25,7 +27,7 @@ pub type OsFile = File;
 ///
 /// This enum is used to specify whether an I/O operation should be
 /// synchronous or asynchronous, and whether it's a read or write operation.
-#[derive(Display, PartialEq)]
+#[derive(Display, PartialEq, Clone)]
 pub enum IORequest {
     /// No I/O operation.
     None,
@@ -33,16 +35,88 @@ pub enum IORequest {
     AsyncRead,
     /// Asynchronous write operation.
     AsyncWrite,
+    /// Asynchronous log read operation.
+    AsyncLogRead,
+    /// Asynchronous log write operation.
+    AsyncLogWrite,
     /// Synchronous read operation.
     SyncRead,
     /// Synchronous write operation.
     SyncWrite,
+    /// Synchronous log read operation.
+    SyncLogRead,
+    /// Synchronous log write operation.
+    SyncLogWrite,
+}
+
+impl IORequest {
+    /// Checks if the I/O request is a read operation.
+    pub fn is_read(&self) -> bool {
+        matches!(
+            self,
+            IORequest::AsyncRead
+                | IORequest::SyncRead
+                | IORequest::AsyncLogRead
+                | IORequest::SyncLogRead
+        )
+    }
+
+    /// Checks if the I/O request is a write operation.
+    pub fn is_write(&self) -> bool {
+        matches!(
+            self,
+            IORequest::AsyncWrite
+                | IORequest::SyncWrite
+                | IORequest::AsyncLogWrite
+                | IORequest::SyncLogWrite
+        )
+    }
+
+    /// Checks if the I/O request is a log read operation.
+    ///
+    /// # Returns
+    ///
+    /// * `true` if the request is either AsyncLogRead or SyncLogRead.
+    /// * `false` otherwise.
+    pub fn is_log_read(&self) -> bool {
+        matches!(self, IORequest::AsyncLogRead | IORequest::SyncLogRead)
+    }
+
+    /// Checks if the I/O request is a log write operation.
+    ///
+    /// # Returns
+    ///
+    /// * `true` if the request is either AsyncLogWrite or SyncLogWrite.
+    /// * `false` otherwise.
+    pub fn is_log_write(&self) -> bool {
+        matches!(self, IORequest::AsyncLogWrite | IORequest::SyncLogWrite)
+    }
+
+    /// Checks if the I/O request is synchronous.
+    pub fn is_sync(&self) -> bool {
+        matches!(
+            self,
+            IORequest::SyncRead
+                | IORequest::SyncWrite
+                | IORequest::SyncLogRead
+                | IORequest::SyncLogWrite
+        )
+    }
 }
 
 /// Contains the result of a read operation.
+///
+/// This struct is returned when a read operation completes successfully.
+/// It can be extended in the future to include additional information about the read operation,
+/// such as the number of bytes read or performance metrics.
 pub struct ReadResult {}
 
 /// Contains the result of a write operation.
+///
+/// This struct is returned when a write operation completes successfully.
+/// It can be extended in the future to include additional information about the write operation,
+/// such as the number of bytes written or performance metrics.
+/// The struct implements Eq, PartialEq, and Debug traits for comparison and debugging purposes.
 #[derive(Eq, PartialEq, Debug)]
 pub struct WriteResult {}
 
@@ -187,4 +261,115 @@ pub fn os_file_read(
         }
         Err(err) => Err(format!("Failed to seek in file: {}", err)),
     }
+}
+
+/// Asynchronously sets the size of a file.
+///
+/// This function will either extend or truncate the file to the specified size.
+/// If the file needs to be extended, it will be filled with zeros.
+///
+/// # Arguments
+///
+/// * `os_file` - A mutable reference to the file whose size is to be set
+/// * `size` - The new size of the file in bytes
+///
+/// # Returns
+///
+/// * `Ok(())` - If the operation was successful
+/// * `Err(String)` - If an error occurred during the operation, with an error message
+pub async fn os_file_set_size_async(
+    os_file: &mut OsFile,
+    size: i64,
+) -> Result<(), String> {
+    let current_len = os_file
+        .metadata()
+        .await
+        .map_err(|e| format!("Failed to get metadata: {}", e))?
+        .len();
+    let new_len = size as u64;
+
+    if new_len > current_len {
+        // Seek to the current end of the file.
+        os_file
+            .seek(SeekFrom::Start(current_len))
+            .await
+            .map_err(|e| format!("Failed to seek: {}", e))?;
+
+        // Write zeroes to the new area
+        const CHUNK_SIZE: usize = IB_FILE_BLOCK_SIZE;
+        let zeros = [0u8; CHUNK_SIZE];
+        let mut remaining = new_len - current_len;
+
+        while remaining > 0 {
+            let write_size = min(CHUNK_SIZE as u64, remaining) as usize;
+            os_file
+                .write_all(&zeros[..write_size])
+                .await
+                .map_err(|e| format!("Failed to write zeros: {}", e))?;
+            remaining -= write_size as u64;
+        }
+    }
+
+    // Finalize with set_len to ensure the correct size (in case of race).
+    os_file
+        .set_len(new_len)
+        .await
+        .map_err(|e| format!("Failed to set length: {}", e))?;
+
+    Ok(())
+}
+
+/// Sets the size of a file synchronously.
+///
+/// This is a synchronous wrapper around `os_file_set_size_async` that blocks the current thread
+/// until the operation completes.
+///
+/// # Arguments
+///
+/// * `os_file` - A mutable reference to the file whose size is to be set
+/// * `size` - The new size of the file in bytes
+///
+/// # Returns
+///
+/// * `Ok(())` - If the operation was successful
+/// * `Err(String)` - If an error occurred during the operation, with an error message
+pub fn os_file_set_size(
+    os_file: &mut OsFile,
+    size: i64,
+) -> Result<(), String> {
+    let rt = Runtime::new().unwrap();
+    rt.block_on(os_file_set_size_async(os_file, size))
+}
+
+/// Asynchronously removes a file from the file system.
+///
+/// # Arguments
+///
+/// * `name` - The path to the file to be removed
+///
+/// # Returns
+///
+/// * `Ok(())` - If the file was successfully removed
+/// * `Err(String)` - If an error occurred during the operation, with an error message
+pub async fn os_remove_file_async(name: &str) -> Result<(), String> {
+    tokio::fs::remove_file(name)
+        .await
+        .map_err(|e| format!("Failed to remove file '{}': {}", name, e))
+}
+
+/// Synchronously removes a file from the file system.
+///
+/// This is a synchronous wrapper around `os_remove_file_async` that uses the global runtime
+/// to block the current thread until the operation completes.
+///
+/// # Arguments
+///
+/// * `name` - The path to the file to be removed
+///
+/// # Returns
+///
+/// * `Ok(())` - If the file was successfully removed
+/// * `Err(String)` - If an error occurred during the operation, with an error message
+pub fn os_remove_file(name: &str) -> Result<(), String> {
+    GLOBAL_RUNTIME.block_on(os_remove_file_async(name))
 }

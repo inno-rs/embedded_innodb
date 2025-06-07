@@ -23,8 +23,9 @@ use crate::innodb::innodb0types::{
 };
 use crate::os::os0file::CreateMode::OsFileOpen;
 use crate::os::os0file::{os_file_create, IORequest, IOResult, WriteResult};
+use crate::os::os0io::{IoContext, OsIo};
 use crate::some_or_panic;
-use crate::ut::ut0dbg::ut_ad;
+use crate::ut::ut0dbg::{ut_a, ut_ad};
 use intrusive_collections::{
     intrusive_adapter, LinkedList, LinkedListLink, UnsafeRef,
 };
@@ -32,7 +33,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::DerefMut;
 use std::rc::Rc;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use tracing::{error, warn};
 
 // Adapter for the unflushed spaces list. This allows FilSpaceContainer to be stored in a linked list
@@ -66,6 +67,8 @@ pub struct Fil {
     unflushed_space_list: LinkedList<UnflushedSpaceListAdapter>,
     /// List of all spaces managed by this Fil instance.
     space_list: LinkedList<FileSpaceListAdapter>,
+    /// The OS I/O manager used for performing I/O operations.
+    os_io: Arc<Mutex<OsIo>>,
 }
 
 impl Fil {
@@ -79,7 +82,7 @@ impl Fil {
     ///
     /// * A new Fil instance.
     ///
-    pub fn new(max_n_open: usize) -> Self {
+    pub fn new(max_n_open: usize, os_io: Arc<Mutex<OsIo>>) -> Self {
         Fil {
             space_by_id: HashMap::new(),
             space_by_name: HashMap::new(),
@@ -90,6 +93,7 @@ impl Fil {
             max_assigned_id: 0,
             unflushed_space_list: Default::default(),
             space_list: Default::default(),
+            os_io,
         }
     }
 
@@ -365,7 +369,7 @@ impl Fil {
                 return Err(DbErr::DbTablespaceDeleted);
             }
             Some(sp) => {
-                fil_space = Some(sp);
+                fil_space.replace(sp.clone());
             }
         }
 
@@ -374,14 +378,30 @@ impl Fil {
 
         let space_ref = fil_space_container.write().unwrap();
         let mut space = space_ref.fil_space.borrow_mut();
+        let mut new_page_no = page_no as usize;
         let node = {
-            let cursor = space.chain.cursor_mut();
-            let file_node_container = some_or_panic!(
-                cursor.get(),
-                "failed to get file node from space chain"
-            );
+            let fil_node = Option::<Rc<RefCell<FilNode>>>::None;
+            let mut cursor = space.chain.cursor_mut();
+            let mut has_next = cursor.get().is_some();
+            while has_next {
+                {
+                    let file_node_container = cursor.get().unwrap();
+                    let fil_node = file_node_container.fil_node.borrow();
+                    if fil_node.get_size_in_pages() > page_no as usize {
+                        break;
+                    }
 
-            file_node_container.fil_node.clone()
+                    new_page_no -= fil_node.get_size_in_pages();
+                }
+
+                cursor.move_next();
+                has_next = cursor.get().is_some();
+            }
+
+            some_or_panic!(
+                fil_node,
+                "failed to get fil node from file node container"
+            )
         };
 
         self.node_prepare_for_io(
@@ -393,7 +413,39 @@ impl Fil {
 
         // Check that at least the start offset is within the bounds of a single-table tablespace.
 
-        Ok(IOResult::Write(WriteResult {}))
+        ut_a!(byte_offset % IB_FILE_BLOCK_SIZE == 0);
+        ut_a!(offset % IB_FILE_BLOCK_SIZE == 0);
+
+        let result = {
+            let os_io = self.os_io.lock().unwrap();
+            let mut node = node.borrow_mut();
+            os_io.submit(
+                IoContext {
+                    batch: false,
+                    request: io_request.clone(),
+                    fil_node: node.deref_mut(),
+                    buf: page_frame.0,
+                },
+                len,
+                offset,
+            )
+        };
+
+        match result {
+            Ok(_) => {
+                if io_request.is_sync() {
+                    // Do something with the modification counter
+                }
+                Ok(IOResult::Write(WriteResult {}))
+            }
+            Err(err) => {
+                error!(
+                    "Failed to perform I/O operation: {}. Error: {}",
+                    io_request, err
+                );
+                Err(DbErr::DbIoError)
+            }
+        }
     }
 
     /// Prepares a file node for I/O. Opens a file if it is closed.
@@ -519,4 +571,24 @@ impl Fil {
     /// * `fil_type` - The type of tablespaces to flush (e.g., FIL_TABLESPACE or FIL_LOG).
     ///
     pub fn flush_file_space(&mut self, fil_type: FilType) {}
+
+    /// Creates a new single-table space with the specified name, ID, flags, and size.
+    ///
+    /// # Arguments
+    /// * `name` - The name of the new single-table space.
+    /// * `space_id` - The ID of the new single-table space.
+    /// * `flags` - The flags for the new single-table space.
+    /// * `size` - The size of the new single-table space in pages.
+    ///
+    pub fn create_new_single_table_space(
+        &mut self,
+        name: String,
+        space_id: SpaceId,
+        flags: usize,
+        size: usize,
+    ) -> bool {
+        // Create a new single-table space with the specified name, ID, and flags.
+        // This is a simplified version of space_create for single-table spaces.
+        self.space_create(name, space_id, flags, FilType::FilTablespace)
+    }
 }

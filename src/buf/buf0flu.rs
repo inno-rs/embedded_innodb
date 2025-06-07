@@ -80,7 +80,7 @@ impl BufFlush {
     /// * `buf_block` - The buffer block to flush
     /// * `flush_type` - The type of flush operation to perform (LRU or List)
     ///
-    /// # Panics
+    /// # Panic
     /// Panics if:
     /// - The buffer block is not in the BufBlockFilePage state
     /// - The flush type is not BufFlushLru or BufFlushList
@@ -89,7 +89,9 @@ impl BufFlush {
         buf_block: &mut BufBlock,
         flush_type: BufFlushType,
     ) {
-        ut_ad!(buf_block.buf_block_get_state() == BufPageState::BufBlockFilePage);
+        ut_ad!(
+            buf_block.buf_block_get_state() == BufPageState::BufBlockFilePage
+        );
         ut_ad!(flush_type == BufFlushLru || flush_type == BufFlushList);
 
         {
@@ -137,7 +139,7 @@ impl BufFlush {
     /// # Returns
     /// * `usize` - The number of pages actually flushed
     ///
-    /// # Panics
+    /// # Panic
     /// Panics if the flush type is not BufFlushList or BufFlushLru
     pub fn batch(
         &mut self,
@@ -178,7 +180,7 @@ impl BufFlush {
     /// * `true` - If the block is ready for flushing
     /// * `false` - If the block cannot be flushed at this time
     ///
-    /// # Panics
+    /// # Panic
     /// Panics if:
     /// - The buffer page is not in a file
     /// - The flush type is not BufFlushList or BufFlushLru
@@ -218,7 +220,7 @@ impl BufFlush {
     /// # Parameters
     /// * `buf_block` - The buffer block to write
     ///
-    /// # Panics
+    /// # Panic
     /// Panics if:
     /// - The buffer page is not in a file
     /// - The buffer page's I/O fix is not set to BufIoWrite
@@ -281,7 +283,7 @@ impl BufFlush {
     /// # Parameters
     /// * `buf_block` - The buffer block to post to the double write buffer
     ///
-    /// # Panics
+    /// # Panic
     /// Panics if the buffer page is not in the BufBlockFilePage state
     pub fn post_to_double_write_buf(&mut self, buf_block: &mut BufBlock) {
         let mut continue_writing = true;
@@ -318,7 +320,7 @@ impl BufFlush {
     /// crashes during a page write, the copy in the double write buffer can be
     /// used to recover the page.
     ///
-    /// # Panics
+    /// # Panic
     /// Panics if:
     /// - Failed to get a raw block from the double write buffer
     /// - Failed to write to the file

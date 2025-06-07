@@ -1,5 +1,16 @@
+/// Alias for the standard `assert` macro, used for assertions that should always be checked.
+///
+/// This is used for critical assertions that must be verified in all build configurations,
+/// including release builds. Use this for conditions that, if false, would lead to data corruption
+/// or other serious issues.
 pub(crate) use assert as ut_a;
+
+/// Alias for the standard `debug_assert` macro, used for assertions that should only be checked in debug builds.
+///
+/// This is used for assertions that are important for debugging but might impact performance
+/// in release builds. These assertions are only checked in debug builds and are no-ops in release builds.
 pub(crate) use debug_assert as ut_ad;
+
 use std::sync::Once;
 
 /// Macro for triggering a panic with a custom error message.
@@ -18,7 +29,7 @@ use std::sync::Once;
 #[macro_export]
 macro_rules! ut_panic {
     ($msg:expr $(, $args:tt)* ) => {
-        assert!(false, $msg $(, $args)*);
+        panic!($msg $(, $args)*);
     };
 }
 
@@ -50,8 +61,28 @@ macro_rules! some_or_panic {
     };
 }
 
+/// Static guard to ensure tracing is initialized only once.
+///
+/// This uses the `Once` type from the standard library to ensure that the tracing
+/// initialization code is executed exactly once, even if `init_tracing` is called
+/// multiple times from different parts of the code.
 static INIT: Once = Once::new();
 
+/// Initializes the tracing system for logging and diagnostics.
+///
+/// This function sets up the tracing subscriber with a test writer and TRACE level logging.
+/// It uses the `Once` guard to ensure that initialization happens only once, regardless
+/// of how many times this function is called.
+///
+/// # Examples
+///
+/// ```
+/// // Initialize tracing at the start of your program or tests
+/// init_tracing();
+/// 
+/// // Now you can use tracing macros
+/// tracing::info!("Application started");
+/// ```
 pub fn init_tracing() {
     INIT.call_once(|| {
         tracing_subscriber::fmt()
