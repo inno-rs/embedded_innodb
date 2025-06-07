@@ -1,6 +1,4 @@
-use crate::sync::sync0rw::ReadWriteLatch::{
-    NoLatch, SLatch, XLatch,
-};
+use crate::sync::sync0rw::ReadWriteLatch::{NoLatch, SLatch, XLatch};
 
 /// Represents the different latch modes used during B-tree operations.
 ///

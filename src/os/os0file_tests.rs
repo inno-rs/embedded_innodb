@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use crate::innodb::innodb0types::IB_FILE_BLOCK_SIZE;
+    use crate::innodb::innodb0types::{IB_FILE_BLOCK_SIZE, UNIV_PAGE_SIZE};
     use crate::os::os0file::{
-        os_file_create, os_file_get_size, os_file_read, os_file_write,
-        CreateMode, WriteResult,
+        os_file_create, os_file_get_size, os_file_read, os_file_set_size,
+        os_file_write, os_remove_file, CreateMode, WriteResult,
     };
 
     #[test]
@@ -46,7 +46,7 @@ mod tests {
     fn test_os_file_get_size() {
         // Create a test file
         let file_creation_result =
-            os_file_create("test_file_size.txt", CreateMode::OsFileOpen);
+            os_file_create("test.txt", CreateMode::OsFileOpen);
         assert!(file_creation_result.is_some());
 
         let mut os_file = file_creation_result.unwrap();
@@ -70,5 +70,29 @@ mod tests {
             data.len(),
             "File size should match written data length"
         );
+    }
+
+    #[test]
+    fn test_os_file_set_size() {
+        let file_name = format!("test_{}", uuid::Uuid::new_v4()).to_string();
+        let file_creation_result =
+            os_file_create(&file_name, CreateMode::OsFileOpen);
+        assert!(file_creation_result.is_some());
+
+        let mut os_file = file_creation_result.unwrap();
+
+        assert_eq!(os_file_get_size(&os_file), 0);
+
+        let new_size = (UNIV_PAGE_SIZE * 10) as i64;
+
+        let result = os_file_set_size(&mut os_file, new_size);
+        assert!(result.is_ok());
+        assert_eq!(
+            os_file_get_size(&os_file),
+            new_size,
+            "File size should match set size"
+        );
+
+        os_remove_file(&file_name).expect("should remove file");
     }
 }

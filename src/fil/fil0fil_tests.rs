@@ -2,10 +2,18 @@
 mod tests {
     use crate::fil::fil0fil::Fil;
     use crate::fil::fil0types::FilType;
+    use crate::innodb::innodb0types::DbErr::DbTablespaceDeleted;
+    use crate::innodb::innodb0types::{
+        PageFrame, IB_FILE_BLOCK_SIZE, UNIV_PAGE_SIZE,
+    };
+    use crate::os::os0file::IORequest;
+    use crate::os::os0io::OsIo;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_create_fil_space() {
-        let mut fil = Fil::new(10);
+        let os_io = Arc::new(Mutex::new(OsIo::new()));
+        let mut fil = Fil::new(10, os_io);
 
         let result = fil.space_create(
             "test".to_string(),
@@ -57,7 +65,8 @@ mod tests {
 
     #[test]
     fn test_get_space_by_name() {
-        let mut fil = Fil::new(10);
+        let os_io = Arc::new(Mutex::new(OsIo::new()));
+        let mut fil = Fil::new(10, os_io);
 
         // No space is present, the result should be None.
         let file_name = "test";
@@ -80,7 +89,8 @@ mod tests {
 
     #[test]
     fn test_space_get_by_id() {
-        let mut fil = Fil::new(10);
+        let os_io = Arc::new(Mutex::new(OsIo::new()));
+        let mut fil = Fil::new(10, os_io);
 
         // No space is present, the result should be None.
         let space_id = 20;
@@ -104,7 +114,8 @@ mod tests {
 
     #[test]
     fn test_node_create() {
-        let mut fil = Fil::new(10);
+        let os_io = Arc::new(Mutex::new(OsIo::new()));
+        let mut fil = Fil::new(10, os_io);
 
         // No space is present, the result should be false.
         let file_name = "test";
@@ -126,7 +137,8 @@ mod tests {
 
     #[test]
     fn test_space_get_version() {
-        let mut fil = Fil::new(10);
+        let os_io = Arc::new(Mutex::new(OsIo::new()));
+        let mut fil = Fil::new(10, os_io);
 
         // No space is present, the result should be None.
         let file_name = "test";
@@ -151,7 +163,8 @@ mod tests {
 
     #[test]
     fn test_tablespace_version_increments() {
-        let mut fil = Fil::new(10);
+        let os_io = Arc::new(Mutex::new(OsIo::new()));
+        let mut fil = Fil::new(10, os_io);
         // Check initial version
         let initial_version = fil.space_get_version(0);
         assert!(initial_version.is_none());
@@ -175,7 +188,8 @@ mod tests {
 
     #[test]
     fn test_space_get_type() {
-        let mut fil = Fil::new(10);
+        let os_io = Arc::new(Mutex::new(OsIo::new()));
+        let mut fil = Fil::new(10, os_io);
 
         // No space is present, the result should be None.
         let file_name = "test";
@@ -219,7 +233,8 @@ mod tests {
 
     #[test]
     fn test_space_free() {
-        let mut fil = Fil::new(10);
+        let os_io = Arc::new(Mutex::new(OsIo::new()));
+        let mut fil = Fil::new(10, os_io);
 
         // No space is present, the result should be false.
         let file_name = "test";
@@ -242,9 +257,65 @@ mod tests {
 
         assert_eq!(fil.unflushed_space_list_len(), 0);
     }
-    
+
     #[test]
-    fn test_io_read(){
-        
+    fn test_io_read_with_no_filespace() {
+        let os_io = Arc::new(Mutex::new(OsIo::new()));
+        let mut fil = Fil::new(10, os_io);
+
+        let mut data = b"Hello, world!".to_vec();
+        data.resize(UNIV_PAGE_SIZE, 0);
+        let page_frame = PageFrame(data.as_mut_slice().try_into().unwrap());
+
+        let result = fil.io(
+            IORequest::SyncRead,
+            false,
+            0,
+            0,
+            100,
+            page_frame,
+            IB_FILE_BLOCK_SIZE,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(result.err().unwrap(), DbTablespaceDeleted);
+    }
+
+    #[ignore]
+    #[test]
+    fn test_io_read_with_filespace() {
+        let os_io = Arc::new(Mutex::new(OsIo::new()));
+        let mut fil = Fil::new(10, os_io);
+
+        let file_name = "test";
+        let space_id = 20;
+        let fil_space_result = fil.space_create(
+            file_name.to_string(),
+            space_id,
+            20,
+            FilType::FilTablespace,
+        );
+        assert!(fil_space_result);
+
+        // Create a fil_node
+        let result = fil.node_create(file_name, 100, 20, false);
+        assert!(result);
+
+        let mut data = b"Hello, world!".to_vec();
+        data.resize(UNIV_PAGE_SIZE, 0);
+        let page_frame = PageFrame(data.as_mut_slice().try_into().unwrap());
+
+        // Perform a read operation
+        let read_result = fil.io(
+            IORequest::SyncRead,
+            false,
+            space_id,
+            0,
+            100,
+            page_frame,
+            IB_FILE_BLOCK_SIZE,
+        );
+
+        assert!(read_result.is_ok());
     }
 }

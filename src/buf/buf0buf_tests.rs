@@ -6,10 +6,11 @@ pub(super) mod tests {
     use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
     use crate::mtr::mtr0mtr::Mtr;
     use crate::mtr::mtr0mtr::MtrState::MTR_ACTIVE;
+    use crate::os::os0io::OsIo;
     use rstest::{fixture, rstest};
     use std::cell::RefCell;
     use std::rc::Rc;
-    use std::sync::{Arc, RwLock};
+    use std::sync::{Arc, Mutex, RwLock};
 
     pub struct BufPoolFixture {
         buf_lru: Arc<RefCell<BufLRU>>,
@@ -18,7 +19,8 @@ pub(super) mod tests {
 
     impl BufPoolFixture {
         pub fn new() -> Self {
-            let fil = Arc::new(RwLock::new(Fil::new(1)));
+            let os_io = Arc::new(Mutex::new(OsIo::new()));
+            let fil = Arc::new(RwLock::new(Fil::new(1, os_io)));
             let buf_lru = Arc::new(RefCell::new(BufLRU::new()));
             let buf_pool_rc =
                 Rc::new(RefCell::new(BufPool::new(fil, buf_lru.clone())));
