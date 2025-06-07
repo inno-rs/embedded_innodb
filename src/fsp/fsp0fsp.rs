@@ -175,7 +175,7 @@ impl<'a> PageFrame<'a> {
     /// # Arguments
     /// * `buf` - A mutable byte slice of at least UNIV_PAGE_SIZE (16 KiB) in length
     ///
-    /// # Panics
+    /// # Panic
     /// Panics if the provided buffer is smaller than UNIV_PAGE_SIZE
     pub fn new(buf: &'a mut [u8]) -> Self {
         assert!(
@@ -401,7 +401,7 @@ impl<'a> PageFrame<'a> {
 
     /*
     This method tries to allocate n pages from a tablespace. But InnoDB (and our simplified model) only supports:
-     •	allocating 1 page (from a partially-free extent),
+     •	allocating 1 page (from a partially free extent),
      •	or a full extent of 64 pages (all pages from a fresh extent).
 
     */
@@ -441,13 +441,13 @@ impl<'a> PageFrame<'a> {
         // 3. SAFELY split buffer once into header and xdes area
         let (header_part, xdes_area) = self.buf.split_at_mut(XDES_ARR_OFFSET);
 
-        // 4. Get mutable slice for the new extent descriptor
+        // 4. Get a mutable slice of the new extent descriptor
         let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
         let mut xdes = ExtentDescriptor::new(xdes_buf);
         xdes.xdes_init(); // All pages free
         xdes.set_state(XDES_FREE);
 
-        // 5. Add this extent to FSP_FREE list
+        // 5. Add this extent to the FSP_FREE list
         let free_head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE
             ..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
         let this_addr = FilAddr {
@@ -559,6 +559,20 @@ impl<'a> ExtentDescriptor<'a> {
     #[cfg(not(debug_assertions))]
     fn univ_mem_invalid(&mut self) {}
 
+    /// Initializes a file page with basic header information.
+    ///
+    /// This method performs the low-level initialization of a page buffer:
+    /// - Zeros out the entire page
+    /// - Sets the page number
+    /// - Clears the LSN field
+    /// - Sets the space ID
+    /// - Clears the trailer (checksum) area
+    ///
+    /// # Arguments
+    ///
+    /// * `page_no` - The page number to assign to this page
+    /// * `space_id` - The space ID to assign to this page
+    ///
     pub fn init_file_page_low(&mut self, page_no: u32, space_id: u32) {
         // debug‐only memory invalidation
         self.univ_mem_invalid();
@@ -586,7 +600,18 @@ impl<'a> ExtentDescriptor<'a> {
             .copy_from_slice(&space_id.to_be_bytes());
     }
 
-    /// Wraps the low‐level init in a mini‐trx and emits a redo‐log stub
+    /// Initializes a file page with transaction logging.
+    ///
+    /// This method wraps the low-level page initialization in a mini-transaction
+    /// and would emit a redo log record in a full implementation. It provides a
+    /// higher-level interface for page initialization that ensures proper recovery.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_no` - The page number to assign to this page
+    /// * `space_id` - The space ID to assign to this page
+    /// /* `mtr` - The mini-transaction context (commented out in current implementation) */
+    ///
     pub fn init_file_page(
         &mut self,
         page_no: u32,
@@ -682,7 +707,19 @@ impl<'a> ExtentDescriptor<'a> {
         count
     }
 
-    /// Find the first page index where `which` bit is set, or None if none found.
+    /// Finds the first page index where the specified bit is set.
+    ///
+    /// This method searches through all pages in the extent to find the first one
+    /// where the specified bit (free or clean) is set to 1.
+    ///
+    /// # Arguments
+    ///
+    /// * `which` - The bit to check, either XDES_FREE_BIT (0) or XDES_CLEAN_BIT (1)
+    ///
+    /// # Returns
+    ///
+    /// * `Some(page_idx)` with the index of the first page where the bit is set
+    /// * `None` if no pages have the specified bit set
     pub fn find_bit(&self, which: usize) -> Option<usize> {
         for page_idx in 0..FSP_EXTENT_SIZE {
             if self.get_bit(page_idx, which) {
@@ -692,7 +729,18 @@ impl<'a> ExtentDescriptor<'a> {
         None
     }
 
-    /// Read the 4-byte descriptor state (FULL, FREE, FREE_FRAG...).
+    /// Reads the 4-byte descriptor state.
+    ///
+    /// This method retrieves the current state of the extent descriptor, which can be
+    /// one of the following values:
+    /// - XDES_FREE: All pages in the extent are free
+    /// - XDES_FREE_FRAG: Some pages in the extent are free, some are used
+    /// - XDES_FULL_FRAG: All pages in the extent are used
+    /// - XDES_FSEG: The extent belongs to a specific segment
+    ///
+    /// # Returns
+    ///
+    /// The current state of the extent descriptor as a usize value
     pub fn state(&self) -> usize {
         let bytes: [u8; 4] = self.buf[XDES_STATE..XDES_STATE + 4]
             .try_into()
@@ -700,7 +748,14 @@ impl<'a> ExtentDescriptor<'a> {
         u32::from_le_bytes(bytes) as usize
     }
 
-    /// Write the 4-byte descriptor state.
+    /// Writes the 4-byte descriptor state.
+    ///
+    /// This method updates the state of the extent descriptor to reflect its current
+    /// allocation status.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - The new state to set, one of XDES_FREE, XDES_FREE_FRAG, XDES_FULL_FRAG, or XDES_FSEG
     pub fn set_state(&mut self, state: usize) {
         let state_bytes = (state as u32).to_le_bytes();
         self.buf[XDES_STATE..XDES_STATE + 4].copy_from_slice(&state_bytes);
