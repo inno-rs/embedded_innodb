@@ -11,7 +11,7 @@ mod tests {
             "test".to_string(),
             10,
             0,
-            FilType::FIL_TABLESPACE,
+            FilType::FilTablespace,
         );
 
         // FilSpace is empty. Creating a new one should return true.
@@ -23,7 +23,7 @@ mod tests {
                 "test".to_string(),
                 10,
                 0,
-                FilType::FIL_TABLESPACE,
+                FilType::FilTablespace,
             );
 
             assert!(!result);
@@ -35,7 +35,7 @@ mod tests {
                 "test_2".to_string(),
                 10,
                 0,
-                FilType::FIL_TABLESPACE,
+                FilType::FilTablespace,
             );
 
             assert!(!result);
@@ -48,11 +48,58 @@ mod tests {
                 "test_2".to_string(),
                 11,
                 0,
-                FilType::FIL_TABLESPACE,
+                FilType::FilTablespace,
             );
 
             assert!(result);
         }
+    }
+
+    #[test]
+    fn test_get_space_by_name() {
+        let mut fil = Fil::new(10);
+
+        // No space is present, the result should be None.
+        let file_name = "test";
+        let result = fil.space_get_by_name(file_name);
+        assert!(result.is_none());
+
+        // Create a space
+        let fil_space_result = fil.space_create(
+            file_name.to_string(),
+            20,
+            20,
+            FilType::FilTablespace,
+        );
+        assert!(fil_space_result);
+
+        // Now we should be able to retrieve it
+        let result = fil.space_get_by_name(file_name);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_space_get_by_id() {
+        let mut fil = Fil::new(10);
+
+        // No space is present, the result should be None.
+        let space_id = 20;
+        let result = fil.space_get_by_id(space_id);
+        assert!(result.is_none());
+
+        // Create a space
+        let file_name = "test";
+        let fil_space_result = fil.space_create(
+            file_name.to_string(),
+            space_id,
+            20,
+            FilType::FilTablespace,
+        );
+        assert!(fil_space_result);
+
+        // Now we should be able to retrieve it
+        let result = fil.space_get_by_id(space_id);
+        assert!(result.is_some());
     }
 
     #[test]
@@ -68,13 +115,106 @@ mod tests {
             file_name.to_string(),
             20,
             20,
-            FilType::FIL_TABLESPACE,
+            FilType::FilTablespace,
         );
         assert!(fil_space_result);
 
         // Retry creating fil_node
         let result = fil.node_create(file_name, 100, 20, false);
         assert!(result);
+    }
+
+    #[test]
+    fn test_space_get_version() {
+        let mut fil = Fil::new(10);
+
+        // No space is present, the result should be None.
+        let file_name = "test";
+        let space_id = 20;
+        let result = fil.space_get_version(space_id);
+        assert!(result.is_none());
+
+        // Create a space
+        let fil_space_result = fil.space_create(
+            file_name.to_string(),
+            space_id,
+            20,
+            FilType::FilTablespace,
+        );
+        assert!(fil_space_result);
+
+        // Now we should be able to retrieve the version
+        let result = fil.space_get_version(space_id);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), 1);
+    }
+
+    #[test]
+    fn test_tablespace_version_increments() {
+        let mut fil = Fil::new(10);
+        // Check initial version
+        let initial_version = fil.space_get_version(0);
+        assert!(initial_version.is_none());
+
+        let mut version_id = 1;
+        for space_id in 0..10 {
+            let fil_space_result = fil.space_create(
+                format!("test_{}", space_id).to_string(),
+                space_id,
+                20,
+                FilType::FilTablespace,
+            );
+            assert!(fil_space_result);
+
+            // Check the new version
+            let new_version = fil.space_get_version(space_id).unwrap();
+            assert_eq!(new_version, version_id);
+            version_id += 1;
+        }
+    }
+
+    #[test]
+    fn test_space_get_type() {
+        let mut fil = Fil::new(10);
+
+        // No space is present, the result should be None.
+        let file_name = "test";
+        let space_id = 20;
+        let result = fil.space_get_type(space_id);
+        assert!(result.is_none());
+
+        {
+            // Create a space
+            let fil_space_result = fil.space_create(
+                file_name.to_string(),
+                space_id,
+                20,
+                FilType::FilTablespace,
+            );
+            assert!(fil_space_result);
+
+            // Now we should be able to retrieve the type
+            let result = fil.space_get_type(space_id);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), FilType::FilTablespace);
+        }
+
+        {
+            let space_id = 21;
+            // Create a space
+            let fil_space_result = fil.space_create(
+                "log_space".to_string(),
+                space_id,
+                20,
+                FilType::FilLog,
+            );
+            assert!(fil_space_result);
+
+            // Now we should be able to retrieve the type
+            let result = fil.space_get_type(space_id);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), FilType::FilLog);
+        }
     }
 
     #[test]
@@ -88,7 +228,7 @@ mod tests {
             file_name.to_string(),
             20,
             20,
-            FilType::FIL_TABLESPACE,
+            FilType::FilTablespace,
         );
         assert!(fil_space_result);
 
@@ -101,5 +241,10 @@ mod tests {
         assert!(result);
 
         assert_eq!(fil.unflushed_space_list_len(), 0);
+    }
+    
+    #[test]
+    fn test_io_read(){
+        
     }
 }

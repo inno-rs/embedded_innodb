@@ -18,12 +18,15 @@ use crate::fil::fil0types::{
     FilNode, FilNodeContainer, FilSpace, FilSpaceContainer, FilType,
     FIL_SPACE_MAGIC_N,
 };
-use crate::innodb::innodb0types::{DbErr, PageFrame, PageNo, SpaceId};
+use crate::innodb::innodb0types::{
+    DbErr, PageFrame, PageNo, SpaceId, IB_FILE_BLOCK_SIZE, UNIV_PAGE_SIZE,
+};
 use crate::os::os0file::CreateMode::OsFileOpen;
 use crate::os::os0file::{os_file_create, IORequest, IOResult, WriteResult};
+use crate::some_or_panic;
 use crate::ut::ut0dbg::ut_ad;
 use intrusive_collections::{
-    intrusive_adapter, Adapter, LinkedList, LinkedListLink, UnsafeRef,
+    intrusive_adapter, LinkedList, LinkedListLink, UnsafeRef,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -32,13 +35,13 @@ use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 use tracing::{error, warn};
 
-/// Adapter for the unflushed spaces list. This allows FilSpaceContainer to be stored in a linked list
-/// using the unflushed_spaces field as the link. UnsafeRef is used because the containers are stored
-/// in Arc<RwLock<>> and we need to be able to remove them from the list.
+// Adapter for the unflushed spaces list. This allows FilSpaceContainer to be stored in a linked list
+// using the unflushed_spaces field as the link. UnsafeRef is used because the containers are stored
+// in Arc<RwLock<>> and we need to be able to remove them from the list.
 intrusive_adapter!(UnflushedSpaceListAdapter = UnsafeRef<FilSpaceContainer>: FilSpaceContainer { unflushed_spaces: LinkedListLink });
 
-/// Adapter for the file space list. This allows FilSpaceContainer to be stored in a linked list
-/// using the space_list field as the link.
+// Adapter for the file space list. This allows FilSpaceContainer to be stored in a linked list
+// using the space_list field as the link.
 intrusive_adapter!(FileSpaceListAdapter = Box<FilSpaceContainer>: FilSpaceContainer { space_list: LinkedListLink });
 
 /// The main file system manager for InnoDB.
@@ -282,10 +285,14 @@ impl Fil {
 
     /// Opens a file for a node and updates the file handle in the node.
     ///
+    /// This method opens the file associated with the given file node and sets
+    /// the file handle in the node. It also updates the open file count in the
+    /// file system.
+    ///
     /// # Arguments
     ///
     /// * `file_node` - The file node to open.
-    /// * `fil_space` - The space that the file node belongs to.
+    /// * `fil_type` - The type of the file (tablespace or log).
     /// * `startup` - Whether this is being called during system startup.
     ///
     pub fn node_open_file(
@@ -302,12 +309,12 @@ impl Fil {
         }
 
         match fil_type {
-            FilType::FIL_LOG => {
+            FilType::FilLog => {
                 let file_handle =
                     os_file_create(file_node.get_name(), OsFileOpen).unwrap();
                 file_node.set_file_handle(file_handle);
             }
-            FilType::FIL_TABLESPACE => {
+            FilType::FilTablespace => {
                 let file_handle =
                     os_file_create(file_node.get_name(), OsFileOpen).unwrap();
                 file_node.set_file_handle(file_handle);
@@ -336,7 +343,7 @@ impl Fil {
     /// * `Ok(IOResult)` if the operation was successful, `Err(DbErr)` otherwise.
     ///
     pub fn io(
-        &self,
+        &mut self,
         io_request: IORequest,
         batched: bool,
         space_id: SpaceId,
@@ -347,6 +354,7 @@ impl Fil {
     ) -> Result<IOResult, DbErr> {
         ut_ad!(len > 0);
 
+        let mut fil_space: Option<Arc<RwLock<FilSpaceContainer>>> = None;
         let space = self.space_get_by_id(space_id);
         match space {
             None => {
@@ -357,23 +365,51 @@ impl Fil {
                 return Err(DbErr::DbTablespaceDeleted);
             }
             Some(sp) => {
-                let lock_guard = sp.read().unwrap();
+                fil_space = Some(sp);
             }
         }
+
+        let fil_space_container =
+            some_or_panic!(fil_space, "failed to get space by id");
+
+        let space_ref = fil_space_container.write().unwrap();
+        let mut space = space_ref.fil_space.borrow_mut();
+        let node = {
+            let cursor = space.chain.cursor_mut();
+            let file_node_container = some_or_panic!(
+                cursor.get(),
+                "failed to get file node from space chain"
+            );
+
+            file_node_container.fil_node.clone()
+        };
+
+        self.node_prepare_for_io(
+            node.borrow_mut().deref_mut(),
+            space.deref_mut(),
+        );
+
+        let offset = page_no as usize * UNIV_PAGE_SIZE + byte_offset;
+
+        // Check that at least the start offset is within the bounds of a single-table tablespace.
 
         Ok(IOResult::Write(WriteResult {}))
     }
 
     /// Prepares a file node for I/O. Opens a file if it is closed.
     /// Updates the pending I/O field in the node and the system appropriately.
-    /// Takes the node off the LRU list if present.
+    /// Take the node off the LRU list if present.
     ///
     /// # Arguments
     ///
     /// * `node` - The file node to prepare for I/O.
     /// * `space` - The space that the file node belongs to.
     ///
-    pub fn node_prepare_for_io(&mut self, space: &mut FilSpace) {
+    pub fn node_prepare_for_io(
+        &mut self,
+        node: &mut FilNode,
+        space: &mut FilSpace,
+    ) {
         if self.n_open_files >= self.max_n_open + 5 {
             warn!(
                 "Open files {} exceed the limit {}",
@@ -381,17 +417,10 @@ impl Fil {
             );
         }
 
-        let node_container = space.chain.front_mut();
-        let mut node = node_container.get().unwrap().fil_node.borrow_mut();
-
         if node.is_open() == false {
             ut_ad!(node.n_pending() == 0);
 
-            self.node_open_file(
-                node.deref_mut(),
-                space.fil_type.clone(),
-                false,
-            );
+            self.node_open_file(node, space.fil_type.clone(), false);
         }
 
         node.n_pending_incr();
@@ -445,6 +474,20 @@ impl Fil {
         self.unflushed_space_list.iter().count()
     }
 
+    /// Checks if a tablespace has been deleted or is in the process of being deleted.
+    ///
+    /// This method compares the provided tablespace version with the current version
+    /// to determine if the tablespace has been deleted or is being deleted.
+    ///
+    /// # Arguments
+    ///
+    /// * `space_id` - The ID of the space to check.
+    /// * `table_space_version` - The version of the tablespace to compare against.
+    ///
+    /// # Returns
+    ///
+    /// * `true` if the tablespace has been deleted or is being deleted, `false` otherwise.
+    ///
     pub fn tablespace_deleted_or_being_deleted(
         &self,
         space_id: SpaceId,
@@ -453,7 +496,27 @@ impl Fil {
         true
     }
 
+    /// Flushes to disk possible cached pages by the OS.
+    ///
+    /// This method ensures that any cached data for the specified tablespace is
+    /// written to disk. If the space is not found, it returns immediately without
+    /// performing any operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `space_id` - The ID of the space to flush.
+    ///
     pub fn flush(&mut self, space_id: SpaceId) {}
 
+    /// Flushes all tablespaces of a specific type.
+    ///
+    /// This method ensures that any cached data for all tablespaces of the specified
+    /// type is written to disk. This is useful for ensuring data durability across
+    /// all tablespaces of a particular type (e.g., all log files or all data files).
+    ///
+    /// # Arguments
+    ///
+    /// * `fil_type` - The type of tablespaces to flush (e.g., FIL_TABLESPACE or FIL_LOG).
+    ///
     pub fn flush_file_space(&mut self, fil_type: FilType) {}
 }

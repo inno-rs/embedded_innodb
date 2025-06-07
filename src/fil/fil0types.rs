@@ -65,6 +65,16 @@ pub struct FilNode {
 }
 
 impl FilNode {
+    /// Creates a new file node with the specified name and size.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The path to the file.
+    /// * `size_in_pages` - The size of the file in database pages.
+    ///
+    /// # Returns
+    ///
+    /// A new `FilNode` instance with default values and the specified name and size.
     pub fn new(name: &str, size_in_pages: usize) -> FilNode {
         FilNode {
             name: name.to_string(),
@@ -81,68 +91,139 @@ impl FilNode {
         }
     }
 
+    /// Returns a reference to the file name.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the file name string.
     pub fn get_name(&self) -> &String {
         &self.name
     }
 
+    /// Sets the file handle for this node.
+    ///
+    /// # Arguments
+    ///
+    /// * `f_handle` - The OS file handle to set.
     pub fn set_file_handle(&mut self, f_handle: OsFile) {
         self.f_handle = Some(f_handle);
     }
 
+    /// Returns the size of the file in database pages.
+    ///
+    /// # Returns
+    ///
+    /// The size of the file in pages.
     pub fn get_size_in_pages(&self) -> usize {
         self.size_in_pages
     }
 
+    /// Marks the file as open.
+    ///
+    /// This method sets the `open` flag to true, indicating that the file
+    /// is currently open and accessible.
     pub fn set_is_open(&mut self) {
         self.open = true;
     }
 
+    /// Checks if the file is currently open.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the file is open, `false` otherwise.
     pub fn is_open(&self) -> bool {
         self.open
     }
 
+    /// Returns a reference to the file name as a string slice.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the file name as a string slice.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Checks if the file is currently open.
+    ///
+    /// This is an alias for `is_open()`.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the file is open, `false` otherwise.
     pub fn open(&self) -> bool {
         self.open
     }
 
+    /// Returns a reference to the file handle.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the optional file handle.
     pub fn f_handle(&self) -> &Option<OsFile> {
         &self.f_handle
     }
 
+    /// Returns the size of the file in database pages.
+    ///
+    /// This is an alias for `get_size_in_pages()`.
+    ///
+    /// # Returns
+    ///
+    /// The size of the file in pages.
     pub fn size_in_pages(&self) -> usize {
         self.size_in_pages
     }
 
+    /// Returns the number of pending I/O operations on this file.
+    ///
+    /// # Returns
+    ///
+    /// The count of pending I/O operations.
     pub fn n_pending(&self) -> usize {
         self.n_pending
     }
 
+    /// Increments the count of pending I/O operations.
+    ///
+    /// This method increases the pending I/O counter by 1, indicating
+    /// that a new I/O operation has been started on this file.
     pub fn n_pending_incr(&mut self) {
         self.n_pending += 1;
     }
 
+    /// Returns a reference to the chain link for linked list operations.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the LinkedListLink used for chaining file nodes.
     pub fn chain(&self) -> &LinkedListLink {
         &self.chain
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FilType {
     /// Tablespace
-    FIL_TABLESPACE,
+    FilTablespace,
 
     /// Redo Log
-    FIL_LOG,
+    FilLog,
 }
 
 impl FilType {
+    /// Creates a clone of this FilType.
+    ///
+    /// This method provides an explicit implementation of the clone operation
+    /// for FilType values, returning a new instance with the same variant.
+    ///
+    /// # Returns
+    ///
+    /// A new FilType instance with the same variant as this one.
     pub(crate) fn clone(&self) -> FilType {
         match self {
-            FilType::FIL_TABLESPACE => FilType::FIL_TABLESPACE,
-            FilType::FIL_LOG => FilType::FIL_LOG,
+            FilType::FilTablespace => FilType::FilTablespace,
+            FilType::FilLog => FilType::FilLog,
         }
     }
 }
@@ -161,29 +242,37 @@ pub struct FilNodeContainer {
 
 intrusive_adapter!(pub FilNodeAdapter = Box<FilNodeContainer>: FilNodeContainer { chain: LinkedListLink });
 
+/// Represents a tablespace in the InnoDB file system.
+///
+/// A `FilSpace` manages a collection of files that make up a single logical tablespace.
+/// It tracks metadata about the tablespace such as its name, ID, version, and size,
+/// as well as maintaining a chain of file nodes that represent the physical files.
 pub struct FilSpace {
-    /// space name = the path to the first file in it.
+    /// Space name, which is the path to the first file in the tablespace.
     pub name: String,
 
-    /// space id.
+    /// Unique identifier for this tablespace.
     pub space_id: SpaceId,
 
-    /// Tablespace version.
+    /// Version number of the tablespace, incremented on certain operations.
     pub tablespace_version: i64,
 
-    /// FIL_TABLESPACE or FIL_LOG
+    /// Type of the tablespace (FIL_TABLESPACE or FIL_LOG).
     pub fil_type: FilType,
 
-    /// space size in pages; 0 if a single-table namespace whose size we do not know yet. The last incomplete megabytes in data files may be ignored if space = 0.
+    /// Total size of the tablespace in pages.
+    /// A value of 0 indicates a single-table namespace whose size is not yet known.
+    /// The last incomplete megabytes in data files may be ignored if space = 0.
     pub size_in_pages: usize,
 
-    /// File format, or 0.
+    /// File format flags, or 0 if not specified.
     pub flags: usize,
 
-    /// Chain of file nodes.
+    /// Linked list of file nodes that make up this tablespace.
     pub chain: LinkedList<FilNodeAdapter>,
 
-    /// FIL_SPACE_MAGIC_N
+    /// Magic number used to verify the integrity of the structure.
+    /// Should always be set to FIL_SPACE_MAGIC_N.
     pub magic_n: usize,
 }
 
