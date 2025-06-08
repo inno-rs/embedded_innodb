@@ -6,12 +6,19 @@ use crate::mtr::mtr0types::MlogType;
 use crate::page::page0page::Page;
 
 pub struct MLog {
-    buf: Vec<u8>,
+    pub buf: Vec<u8>,
 }
 
 impl MLog {
     pub fn new() -> Self {
-        Self { buf: vec![0; 0] }
+        MLog { buf: Vec::new() }
+    }
+
+    pub fn clear(&mut self) {
+        self.buf.clear();
+    }
+    pub fn append(&mut self, bytes: &[u8]) {
+        self.buf.extend_from_slice(bytes);
     }
 
     /// Write 1-4 bytes to file page buffered in the buffer pool. And, write the corresponding log recording to the mini-transaction log.
