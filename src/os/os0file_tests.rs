@@ -2,8 +2,8 @@
 mod tests {
     use crate::innodb::innodb0types::{IB_FILE_BLOCK_SIZE, UNIV_PAGE_SIZE};
     use crate::os::os0file::{
-        os_file_create, os_file_get_size, os_file_read, os_file_set_size,
-        os_file_write, os_remove_file, CreateMode, WriteResult,
+        os_file_create, os_file_delete, os_file_get_size, os_file_read,
+        os_file_set_size, os_file_write, CreateMode, WriteResult,
     };
 
     #[test]
@@ -85,7 +85,7 @@ mod tests {
 
         let new_size = (UNIV_PAGE_SIZE * 10) as i64;
 
-        let result = os_file_set_size(&mut os_file, new_size);
+        let result = os_file_set_size(&mut os_file, new_size as u64);
         assert!(result.is_ok());
         assert_eq!(
             os_file_get_size(&os_file),
@@ -93,6 +93,6 @@ mod tests {
             "File size should match set size"
         );
 
-        os_remove_file(&file_name).expect("should remove file");
+        os_file_delete(&file_name).expect("should remove file");
     }
 }

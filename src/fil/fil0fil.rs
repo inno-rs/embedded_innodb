@@ -14,24 +14,33 @@
  * 0x1A   | 2    | FIL_PAGE_FILE_FLUSH_LSN | Flush LSN for redo logs    *
  * 0x1C   | 8    | FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID | Varies by version *
  ************************************************************************/
+use crate::buf::buf0flu::BufFlush;
 use crate::fil::fil0types::{
     FilNode, FilNodeContainer, FilSpace, FilSpaceContainer, FilType,
     FIL_SPACE_MAGIC_N,
 };
+use crate::fil::fil0types::{FIL_IBD_FILE_INITIAL_SIZE, FIL_PAGE_SPACE_ID};
+use crate::fsp::fsp0fsp::Fsp;
+use crate::fsp::fsp0types::SYS_TABLESPACE;
 use crate::innodb::innodb0types::{
-    DbErr, PageFrame, PageNo, SpaceId, IB_FILE_BLOCK_SIZE, UNIV_PAGE_SIZE,
+    DbErr, PageFrame, PageNo, RawPage, SpaceId, IB_FILE_BLOCK_SIZE,
+    UNIV_PAGE_SIZE,
 };
-use crate::os::os0file::CreateMode::OsFileOpen;
-use crate::os::os0file::{os_file_create, IORequest, IOResult, WriteResult};
+use crate::os::os0file::CreateMode::{OsFileCreate, OsFileOpen};
+use crate::os::os0file::{
+    os_file_create, os_file_set_size, os_file_write, IORequest, IOResult,
+    WriteResult,
+};
 use crate::os::os0io::{IoContext, OsIo};
 use crate::some_or_panic;
+use crate::srv::srv0srv::Config;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use intrusive_collections::{
     intrusive_adapter, LinkedList, LinkedListLink, UnsafeRef,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ops::DerefMut;
+use std::ops::{DerefMut, Range};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 use tracing::{error, warn};
@@ -69,6 +78,8 @@ pub struct Fil {
     space_list: LinkedList<FileSpaceListAdapter>,
     /// The OS I/O manager used for performing I/O operations.
     os_io: Arc<Mutex<OsIo>>,
+    /// Server configuration, used for various settings related to the file system.
+    srv_config: Arc<Config>,
 }
 
 impl Fil {
@@ -94,6 +105,7 @@ impl Fil {
             unflushed_space_list: Default::default(),
             space_list: Default::default(),
             os_io,
+            srv_config: Arc::new(Config::default()),
         }
     }
 
@@ -167,13 +179,13 @@ impl Fil {
     ///
     pub fn space_create(
         &mut self,
-        name: String,
+        name: &String,
         space_id: SpaceId,
         flags: usize,
         fil_type: FilType,
     ) -> bool {
         // Check if the space already exists by name
-        if self.space_by_name.contains_key(&name) {
+        if self.space_by_name.contains_key(name) {
             return false;
         }
 
@@ -202,7 +214,7 @@ impl Fil {
         }));
 
         // Insert the new space into both maps
-        self.space_by_name.insert(name, new_space.clone());
+        self.space_by_name.insert(name.clone(), new_space.clone());
         self.space_by_id.insert(space_id, new_space.clone());
 
         {
@@ -547,7 +559,7 @@ impl Fil {
     ) -> bool {
         true
     }
-
+    
     /// Flushes to disk possible cached pages by the OS.
     ///
     /// This method ensures that any cached data for the specified tablespace is
@@ -582,13 +594,111 @@ impl Fil {
     ///
     pub fn create_new_single_table_space(
         &mut self,
-        name: String,
         space_id: SpaceId,
+        table_name: String,
         flags: usize,
         size: usize,
-    ) -> bool {
+    ) -> Result<(), DbErr> {
+        ut_a!(flags == 0);
+        ut_a!(size >= FIL_IBD_FILE_INITIAL_SIZE);
+
+        let path = self.make_ibd_filename(&table_name);
+        let os_file = os_file_create(&path, OsFileCreate);
+
+        // TODO(Rahul): Handle the other errors.
+        if os_file.is_none() {
+            error!("Failed to create file for single-table space: {}", path);
+            return Err(DbErr::DbFail);
+        }
+
+        let mut os_file = some_or_panic!(
+            os_file,
+            "Failed to create file for single-table space"
+        );
+
+        // Set the size of the file to the specified size in pages.
+        // This expands the file to the required size, and fills it with zeros in the new space.
+        let result =
+            os_file_set_size(&mut os_file, (size * UNIV_PAGE_SIZE) as u64);
+        match result {
+            Ok(_) => {}
+            Err(_) => {
+                error!(
+                    "Failed to set size for single-table space file: {}",
+                    path
+                );
+                return Err(DbErr::DbOutOfFileSpace);
+            }
+        }
+
+        let file_space_id = if space_id == SYS_TABLESPACE as u32 {
+            self.assign_new_space_id()
+        } else {
+            space_id
+        };
+
+        let mut raw_page = RawPage::new();
+        let mut page_frame = raw_page.as_page_frame();
+        Fsp::init_fields(page_frame.0, file_space_id, flags);
+        page_frame.0[Range::from(0..FIL_PAGE_SPACE_ID)]
+            .copy_from_slice(file_space_id.to_le_bytes().as_slice());
+
+        BufFlush::init_for_writing(&mut page_frame, 0);
+
+        if let Err(e) =
+            os_file_write(&mut os_file, page_frame.0, 0, UNIV_PAGE_SIZE)
+        {
+            error!(
+                "Failed to write initial page for single-table space: {}. Error: {}",
+                path, e
+            );
+            return Err(DbErr::DbFail);
+        }
+
         // Create a new single-table space with the specified name, ID, and flags.
         // This is a simplified version of space_create for single-table spaces.
-        self.space_create(name, space_id, flags, FilType::FilTablespace)
+        self.space_create(&path, file_space_id, flags, FilType::FilTablespace);
+
+        // Create a new file node for the single-table space.
+        self.node_create(&path, size, file_space_id, false);
+
+        Ok(())
+    }
+
+    /// Assigns a new unique space ID for a tablespace.
+    ///
+    /// This method generates a new unique space ID by incrementing the maximum
+    /// assigned ID tracked by the file system. This ensures that each tablespace
+    /// has a unique identifier within the database.
+    ///
+    /// # Returns
+    ///
+    /// * `SpaceId` - A new unique space ID for a tablespace.
+    ///
+    pub fn assign_new_space_id(&mut self) -> SpaceId {
+        // Assign a new space ID by incrementing the maximum assigned ID.
+        // This is used to ensure that each tablespace has a unique ID.
+        self.max_assigned_id += 1;
+        self.max_assigned_id as SpaceId
+    }
+
+    /// Generates a filename for an IBD (InnoDB Data) file.
+    ///
+    /// This method creates a full path for an IBD file by combining the data home
+    /// directory from the server configuration with the provided file name and
+    /// adding the .ibd extension. IBD files are used for single-table tablespaces.
+    ///
+    /// # Arguments
+    ///
+    /// * `file_name` - The base name of the file (typically the table name).
+    ///
+    /// # Returns
+    ///
+    /// * `String` - The full path to the IBD file.
+    ///
+    pub fn make_ibd_filename(&self, file_name: &str) -> String {
+        // Generate a filename for an IBD file based on the space ID and file number.
+        // This is typically used for single-table spaces.
+        format!("{}{}.ibd", self.srv_config.data_home, file_name)
     }
 }

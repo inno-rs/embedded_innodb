@@ -168,6 +168,18 @@ pub fn os_file_create(name: &str, create_mode: CreateMode) -> Option<OsFile> {
                 .open(name);
             Some(Runtime::new().unwrap().block_on(fil_fut).unwrap())
         }
+        CreateMode::OsFileCreate => {
+            let fil_fut = open_options
+                .create_new(true)
+                .write(true)
+                .read(true)
+                .custom_flags(libc::O_DSYNC)
+                .open(name);
+            match Runtime::new().unwrap().block_on(fil_fut) {
+                Ok(file) => Some(file),
+                Err(_) => None,
+            }
+        }
         _ => None,
     }
 }
@@ -279,7 +291,7 @@ pub fn os_file_read(
 /// * `Err(String)` - If an error occurred during the operation, with an error message
 pub async fn os_file_set_size_async(
     os_file: &mut OsFile,
-    size: i64,
+    size: u64,
 ) -> Result<(), String> {
     let current_len = os_file
         .metadata()
@@ -335,7 +347,7 @@ pub async fn os_file_set_size_async(
 /// * `Err(String)` - If an error occurred during the operation, with an error message
 pub fn os_file_set_size(
     os_file: &mut OsFile,
-    size: i64,
+    size: u64,
 ) -> Result<(), String> {
     let rt = Runtime::new().unwrap();
     rt.block_on(os_file_set_size_async(os_file, size))
@@ -351,7 +363,7 @@ pub fn os_file_set_size(
 ///
 /// * `Ok(())` - If the file was successfully removed
 /// * `Err(String)` - If an error occurred during the operation, with an error message
-pub async fn os_remove_file_async(name: &str) -> Result<(), String> {
+pub async fn os_file_delete_async(name: &str) -> Result<(), String> {
     tokio::fs::remove_file(name)
         .await
         .map_err(|e| format!("Failed to remove file '{}': {}", name, e))
@@ -370,6 +382,6 @@ pub async fn os_remove_file_async(name: &str) -> Result<(), String> {
 ///
 /// * `Ok(())` - If the file was successfully removed
 /// * `Err(String)` - If an error occurred during the operation, with an error message
-pub fn os_remove_file(name: &str) -> Result<(), String> {
-    GLOBAL_RUNTIME.block_on(os_remove_file_async(name))
+pub fn os_file_delete(name: &str) -> Result<(), String> {
+    GLOBAL_RUNTIME.block_on(os_file_delete_async(name))
 }
