@@ -1,8 +1,10 @@
 use crate::fil::fil0types::FilNode;
 use crate::innodb::innodb0types::IB_FILE_BLOCK_SIZE;
-use crate::os::os0file::{os_file_read, os_file_write, IORequest};
+use crate::os::os0file::{os_file_read, os_file_write, os_file_write_async, IORequest};
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use crate::ut_panic;
+use std::sync::Arc;
+use tokio::runtime::Runtime;
 
 /// Context for I/O operations in the database system.
 ///
@@ -24,16 +26,23 @@ pub struct IoContext<'a> {
 ///
 /// This struct provides methods for performing synchronous and asynchronous
 /// read and write operations on files.
-pub struct OsIo {}
+pub struct OsIo {
+    /// The runtime environment for executing asynchronous tasks.
+    runtime: Arc<Runtime>,
+}
 
 impl OsIo {
     /// Creates a new instance of the OsIo struct.
     ///
+    /// # Arguments
+    ///
+    /// * `runtime` - The Tokio runtime for executing asynchronous operations.
+    ///
     /// # Returns
     ///
     /// * A new OsIo instance.
-    pub fn new() -> Self {
-        OsIo {}
+    pub fn new(runtime: Arc<Runtime>) -> Self {
+        Self { runtime }
     }
 
     /// Submits an I/O operation for execution.
@@ -63,7 +72,8 @@ impl OsIo {
         ut_ad!(len % IB_FILE_BLOCK_SIZE == 0);
         ut_ad!(offset % IB_FILE_BLOCK_SIZE == 0);
 
-        if io_context.request.is_sync() {
+        let is_sync = io_context.request.is_sync();
+        if is_sync {
             let read_op = io_context.request.is_read();
             let f_handle = &mut io_context.fil_node.f_handle;
 

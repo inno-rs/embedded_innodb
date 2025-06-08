@@ -9,6 +9,7 @@ mod tests {
     use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
     use crate::log::log0log::Log;
     use crate::os::os0io::OsIo;
+    use crate::os::os0runtime::create_runtime;
     use rstest::{fixture, rstest};
     use std::sync::{Arc, Mutex, RwLock};
 
@@ -30,8 +31,9 @@ mod tests {
                 UNIV_PAGE_SIZE,
             )));
 
-            let os_io = Arc::new(Mutex::new(OsIo::new()));
-            let fil = Arc::new(Mutex::new(Fil::new(100, os_io)));
+            let runtime = create_runtime(1);
+            let os_io = Arc::new(Mutex::new(OsIo::new(runtime.clone())));
+            let fil = Arc::new(Mutex::new(Fil::new(100, os_io, runtime)));
             let redo_log = Arc::new(Mutex::new(Log::new(UNIV_PAGE_SIZE)));
             Self { buf_flu: BufFlush::new(dblwr_buf, fil, redo_log) }
         }

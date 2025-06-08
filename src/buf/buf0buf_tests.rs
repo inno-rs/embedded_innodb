@@ -9,6 +9,7 @@ pub(super) mod tests {
     use crate::mtr::mtr0mtr::Mtr;
     use crate::mtr::mtr0mtr::MtrState::MTR_ACTIVE;
     use crate::os::os0io::OsIo;
+    use crate::os::os0runtime::create_runtime;
     use crate::sync::sync0rw::ReadWriteLatch;
     use rstest::{fixture, rstest};
     use std::cell::RefCell;
@@ -22,8 +23,9 @@ pub(super) mod tests {
 
     impl BufPoolFixture {
         pub fn new() -> Self {
-            let os_io = Arc::new(Mutex::new(OsIo::new()));
-            let fil = Arc::new(RwLock::new(Fil::new(1, os_io)));
+            let runtime = create_runtime(1);
+            let os_io = Arc::new(Mutex::new(OsIo::new(runtime.clone())));
+            let fil = Arc::new(RwLock::new(Fil::new(1, os_io, runtime)));
 
             let buf_rea = Arc::new(RefCell::new(BufRea::new(fil.clone())));
 

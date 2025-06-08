@@ -8,14 +8,28 @@ mod tests {
     };
     use crate::os::os0file::IORequest;
     use crate::os::os0io::OsIo;
+    use crate::os::os0runtime::create_runtime;
+    use rstest::{fixture, rstest};
     use std::sync::{Arc, Mutex};
     use uuid::Uuid;
 
-    #[test]
-    fn test_create_fil_space() {
-        let os_io = Arc::new(Mutex::new(OsIo::new()));
-        let mut fil = Fil::new(10, os_io);
+    #[fixture]
+    fn runtime() -> Arc<tokio::runtime::Runtime> {
+        create_runtime(1)
+    }
 
+    #[fixture]
+    fn os_io(runtime: Arc<tokio::runtime::Runtime>) -> Arc<Mutex<OsIo>> {
+        Arc::new(Mutex::new(OsIo::new(runtime)))
+    }
+
+    #[fixture]
+    fn fil(runtime: Arc<tokio::runtime::Runtime>, os_io: Arc<Mutex<OsIo>>) -> Fil {
+        Fil::new(10, os_io, runtime)
+    }
+
+    #[rstest]
+    fn test_create_fil_space(mut fil: Fil) {
         let result = fil.space_create(
             &"test".to_string(),
             10,
@@ -64,11 +78,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_get_space_by_name() {
-        let os_io = Arc::new(Mutex::new(OsIo::new()));
-        let mut fil = Fil::new(10, os_io);
-
+    #[rstest]
+    fn test_get_space_by_name(mut fil: Fil) {
         // No space is present, the result should be None.
         let file_name = "test";
         let result = fil.space_get_by_name(file_name);
@@ -88,11 +99,8 @@ mod tests {
         assert!(result.is_some());
     }
 
-    #[test]
-    fn test_space_get_by_id() {
-        let os_io = Arc::new(Mutex::new(OsIo::new()));
-        let mut fil = Fil::new(10, os_io);
-
+    #[rstest]
+    fn test_space_get_by_id(mut fil: Fil) {
         // No space is present, the result should be None.
         let space_id = 20;
         let result = fil.space_get_by_id(space_id);
@@ -113,11 +121,8 @@ mod tests {
         assert!(result.is_some());
     }
 
-    #[test]
-    fn test_node_create() {
-        let os_io = Arc::new(Mutex::new(OsIo::new()));
-        let mut fil = Fil::new(10, os_io);
-
+    #[rstest]
+    fn test_node_create(mut fil: Fil) {
         // No space is present, the result should be false.
         let file_name = "test";
         let result = fil.node_create(file_name, 100, 20, false);
@@ -136,11 +141,8 @@ mod tests {
         assert!(result);
     }
 
-    #[test]
-    fn test_space_get_version() {
-        let os_io = Arc::new(Mutex::new(OsIo::new()));
-        let mut fil = Fil::new(10, os_io);
-
+    #[rstest]
+    fn test_space_get_version(mut fil: Fil) {
         // No space is present, the result should be None.
         let file_name = "test";
         let space_id = 20;
@@ -162,10 +164,8 @@ mod tests {
         assert_eq!(result.unwrap(), 1);
     }
 
-    #[test]
-    fn test_tablespace_version_increments() {
-        let os_io = Arc::new(Mutex::new(OsIo::new()));
-        let mut fil = Fil::new(10, os_io);
+    #[rstest]
+    fn test_tablespace_version_increments(mut fil: Fil) {
         // Check initial version
         let initial_version = fil.space_get_version(0);
         assert!(initial_version.is_none());
@@ -187,56 +187,31 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_space_get_type() {
-        let os_io = Arc::new(Mutex::new(OsIo::new()));
-        let mut fil = Fil::new(10, os_io);
-
+    #[rstest]
+    #[case(FilType::FilTablespace, "test", 20)]
+    #[case(FilType::FilLog, "log_space", 21)]
+    fn test_space_get_type(mut fil: Fil, #[case] fil_type: FilType, #[case] file_name: &str, #[case] space_id: u32) {
         // No space is present, the result should be None.
-        let file_name = "test";
-        let space_id = 20;
         let result = fil.space_get_type(space_id);
         assert!(result.is_none());
 
-        {
-            // Create a space
-            let fil_space_result = fil.space_create(
-                &file_name.to_string(),
-                space_id,
-                20,
-                FilType::FilTablespace,
-            );
-            assert!(fil_space_result);
+        // Create a space
+        let fil_space_result = fil.space_create(
+            &file_name.to_string(),
+            space_id,
+            20,
+            fil_type,
+        );
+        assert!(fil_space_result);
 
-            // Now we should be able to retrieve the type
-            let result = fil.space_get_type(space_id);
-            assert!(result.is_some());
-            assert_eq!(result.unwrap(), FilType::FilTablespace);
-        }
-
-        {
-            let space_id = 21;
-            // Create a space
-            let fil_space_result = fil.space_create(
-                &"log_space".to_string(),
-                space_id,
-                20,
-                FilType::FilLog,
-            );
-            assert!(fil_space_result);
-
-            // Now we should be able to retrieve the type
-            let result = fil.space_get_type(space_id);
-            assert!(result.is_some());
-            assert_eq!(result.unwrap(), FilType::FilLog);
-        }
+        // Now we should be able to retrieve the type
+        let result = fil.space_get_type(space_id);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), fil_type);
     }
 
-    #[test]
-    fn test_space_free() {
-        let os_io = Arc::new(Mutex::new(OsIo::new()));
-        let mut fil = Fil::new(10, os_io);
-
+    #[rstest]
+    fn test_space_free(mut fil: Fil) {
         // No space is present, the result should be false.
         let file_name = "test";
 
@@ -259,11 +234,8 @@ mod tests {
         assert_eq!(fil.unflushed_space_list_len(), 0);
     }
 
-    #[test]
-    fn test_io_read_with_no_filespace() {
-        let os_io = Arc::new(Mutex::new(OsIo::new()));
-        let mut fil = Fil::new(10, os_io);
-
+    #[rstest]
+    fn test_io_read_with_no_filespace(mut fil: Fil) {
         let mut data = b"Hello, world!".to_vec();
         data.resize(UNIV_PAGE_SIZE, 0);
         let page_frame = PageFrame(data.as_mut_slice().try_into().unwrap());
@@ -282,11 +254,8 @@ mod tests {
         assert_eq!(result.err().unwrap(), DbTablespaceDeleted);
     }
 
-    #[test]
-    fn test_io_read_with_filespace() {
-        let os_io = Arc::new(Mutex::new(OsIo::new()));
-        let mut fil = Fil::new(10, os_io);
-
+    #[rstest]
+    fn test_io_read_with_filespace(mut fil: Fil) {
         let file_name = format!("{}_{}", "test", Uuid::new_v4());
         let space_id = 20;
         fil.create_new_single_table_space(
@@ -317,14 +286,13 @@ mod tests {
         assert!(read_result.is_ok());
     }
 
-    #[test]
-    fn test_make_fil_name() {
-        let os_io = Arc::new(Mutex::new(OsIo::new()));
-        let fil = Fil::new(10, os_io);
-
+    #[rstest]
+    #[case("test_file", "/tmp/test_file.ibd")]
+    #[case("another_test", "/tmp/another_test.ibd")]
+    #[case("data_file", "/tmp/data_file.ibd")]
+    fn test_make_fil_name(fil: Fil, #[case] file_name: &str, #[case] expected: &str) {
         // Test with a valid file name
-        let file_name = "test_file";
         let result = fil.make_ibd_filename(file_name);
-        assert_eq!(result, "/tmp/test_file.ibd");
+        assert_eq!(result, expected);
     }
 }
