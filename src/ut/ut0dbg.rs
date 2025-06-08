@@ -54,10 +54,27 @@ macro_rules! ut_panic {
 /// ```
 #[macro_export]
 macro_rules! some_or_panic {
-    ($opt:expr, $msg:expr $(, $args:tt)* ) => {
+    // Case 1: only option, no message
+    ($opt:expr) => {
         match $opt {
             Some(val) => val,
-            None => panic!($msg $(, $args)*),
+            None => panic!("Expected Some(_), got None"),
+        }
+    };
+
+    // Case 2: message only (no formatting args)
+    ($opt:expr, $msg:expr) => {
+        match $opt {
+            Some(val) => val,
+            None => panic!("{}", $msg),
+        }
+    };
+
+    // Case 3: message with formatting args
+    ($opt:expr, $fmt:expr, $($arg:tt)+) => {
+        match $opt {
+            Some(val) => val,
+            None => panic!($fmt, $($arg)+),
         }
     };
 }

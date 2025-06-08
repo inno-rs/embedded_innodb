@@ -1,8 +1,6 @@
 use crate::buf::buf0flu::BufFlushType;
 use crate::buf::buf0types::BufIoFix::BufIoNone;
-use crate::innodb::innodb0types::{
-    Lsn, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
-};
+use crate::innodb::innodb0types::{Lsn, PageFrame, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
@@ -502,6 +500,26 @@ impl BufBlock {
         }
     }
 
+    /// Checks if the buffer block is latched in exclusive mode.
+    ///
+    /// # Returns
+    ///
+    /// * `true` if the block is latched in exclusive mode, `false` otherwise
+    ///
+    pub fn is_frame_x_latched(&self) -> bool {
+        self.rw_lock.is_locked_exclusive()
+    }
+
+    /// Checks if the buffer block is latched in shared mode.
+    ///
+    /// # Returns
+    ///
+    /// * `true` if the block is latched in shared mode, `false` otherwise
+    ///
+    pub fn is_frame_s_latched(&self) -> bool {
+        self.rw_lock.is_locked()
+    }
+
     /// Gets the frame pointer for this buffer block.
     ///
     /// # Returns
@@ -568,6 +586,11 @@ impl BufBlock {
     /// A Page object initialized with this buffer block's frame
     pub fn get_page(&self) -> Page {
         Page::new(self.frame)
+    }
+
+    pub fn get_page_frame(&self) -> PageFrame {
+        let page_frame = unsafe { PageFrame(&mut *(self.frame as *mut [u8; UNIV_PAGE_SIZE])) };
+        page_frame
     }
 }
 

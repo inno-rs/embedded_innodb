@@ -26,7 +26,7 @@ use std::cmp::min;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use tracing::info;
 
 /// Buffer Pool manages the caching of database pages in memory.
@@ -45,7 +45,7 @@ pub struct BufPool {
     /// List of modified pages that need to be flushed to disk
     flush_list: LinkedList<FlushListAdapter>,
     /// File system interface for I/O operations
-    fil: Arc<RwLock<Fil>>,
+    fil: Arc<Mutex<Fil>>,
     /// reference to BufLru.
     buf_lru: Arc<RefCell<BufLRU>>,
     /// List of memory chunks allocated for the buffer pool
@@ -64,7 +64,7 @@ impl BufPool {
     /// # Returns
     /// A new BufPool instance with initialized data structures
     pub fn new(
-        fil: Arc<RwLock<Fil>>,
+        fil: Arc<Mutex<Fil>>,
         buf_lru: Arc<RefCell<BufLRU>>,
         buf_rea: Arc<RefCell<BufRea>>,
     ) -> Self {
@@ -383,7 +383,7 @@ impl BufPool {
 
         /* 2. Check if the tablespace is being deleted or already deleted. */
         {
-            let fil = self.fil.read().unwrap();
+            let fil = self.fil.lock().unwrap();
             if fil.tablespace_deleted_or_being_deleted(
                 space_id,
                 table_space_version,
