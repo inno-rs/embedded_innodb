@@ -1,6 +1,6 @@
 use crate::buf::buf0types::{BufBlock, Frame};
 use crate::data::data0types::{
-    DTuple, DATA_ENGLISH, DATA_NOT_NULL, DATA_VARCHAR,
+    DATA_ENGLISH, DATA_NOT_NULL, DATA_VARCHAR, DTuple,
 };
 use crate::dict::dict0types::Index;
 use crate::fil::fil0types::{
@@ -12,7 +12,7 @@ use crate::innodb::innodb0types::{
 };
 use crate::mtr::mtr0mtr::Mtr;
 use crate::rem::rem0rec::{
-    Record, REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM,
+    REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM, Record,
 };
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use crate::utils::TxnId;

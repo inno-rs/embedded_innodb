@@ -1,4 +1,4 @@
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 
 /** The 2-logarithm of UNIV_PAGE_SIZE: */
 pub const UNIV_PAGE_SIZE_SHIFT: usize = 14;

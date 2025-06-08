@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::innodb::innodb0types::{Lsn, IB_FILE_BLOCK_SIZE};
+    use crate::innodb::innodb0types::{IB_FILE_BLOCK_SIZE, Lsn};
     use crate::log::log0log::Log;
     use crate::log::log0types::LOG_BLOCK_HDR_SIZE;
 

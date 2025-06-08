@@ -7,7 +7,7 @@ use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
-use intrusive_collections::{intrusive_adapter, LinkedListLink, UnsafeRef};
+use intrusive_collections::{LinkedListLink, UnsafeRef, intrusive_adapter};
 use parking_lot::RwLock;
 use std::cell::RefCell;
 use std::cmp::PartialEq;

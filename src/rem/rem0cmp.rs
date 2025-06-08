@@ -1,7 +1,7 @@
 use crate::data::data0types::DATA_FLOAT;
 use crate::dict::dict0types::Index;
 use crate::innodb::innodb0types::UNIV_SQL_NULL;
-use crate::rem::rem0rec::{Record, REC_INFO_MIN_REC_FLAG};
+use crate::rem::rem0rec::{REC_INFO_MIN_REC_FLAG, Record};
 use std::cmp::Ordering;
 
 /// Compare two data fields for which the data types are such that we must compare whole fields.

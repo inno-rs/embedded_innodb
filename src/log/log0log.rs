@@ -1,4 +1,4 @@
-use crate::innodb::innodb0types::{Lsn, IB_FILE_BLOCK_SIZE};
+use crate::innodb::innodb0types::{IB_FILE_BLOCK_SIZE, Lsn};
 use crate::log::log0types::{
     LOG_BLOCK_CHECKPOINT_NO, LOG_BLOCK_FIRST_REC_GROUP,
     LOG_BLOCK_FLUSH_BIT_MASK, LOG_BLOCK_HDR_DATA_LENGTH, LOG_BLOCK_HDR_NO,

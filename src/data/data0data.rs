@@ -1,6 +1,6 @@
 use crate::data::data0types::{
-    BigRec, DField, DTuple, DType, DATA_CHAR, DATA_CLIENT, DATA_INT,
-    DATA_VARCHAR,
+    BigRec, DATA_CHAR, DATA_CLIENT, DATA_INT, DATA_VARCHAR, DField, DTuple,
+    DType,
 };
 use crate::innodb::innodb0types::UNIV_SQL_NULL;
 use crate::ut::ut0dbg::{ut_a, ut_ad};

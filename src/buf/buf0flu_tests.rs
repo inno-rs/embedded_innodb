@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::buf::buf0dblwr::{
-        Block, DoubleWriteBuffer, DOUBLE_WRITE_BUFFER_SIZE,
+        Block, DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer,
     };
     use crate::buf::buf0flu::BufFlush;
     use crate::fil::fil0fil::Fil;

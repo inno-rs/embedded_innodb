@@ -1,9 +1,9 @@
 use crate::buf::buf0lru::BufLRU;
 use crate::buf::buf0types::BufIoFix::BufIoRead;
 use crate::buf::buf0types::{
-    BufBlock, BufChunk, BufPage, BufPageState, BufPoolStats,
-    FlushListAdapter, FreeListAdapter, LruAdapter, Request, BUF_GET_ALWAYS,
-    BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH,
+    BUF_GET_ALWAYS, BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH, BufBlock, BufChunk,
+    BufPage, BufPageState, BufPoolStats, FlushListAdapter, FreeListAdapter,
+    LruAdapter, Request,
 };
 use crate::fil::fil0fil::Fil;
 use crate::innodb::innodb0types::{
@@ -18,7 +18,7 @@ use crate::{
 };
 use intrusive_collections::{LinkedList, UnsafeRef};
 use parking_lot::lock_api::RawRwLock;
-use std::alloc::{alloc_zeroed, Layout};
+use std::alloc::{Layout, alloc_zeroed};
 use std::cell;
 use std::cell::{Cell, RefCell};
 use std::cmp::min;
