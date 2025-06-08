@@ -39,12 +39,21 @@
 //!
 //!
 
+use crate::buf::buf0buf::BufPool;
+use crate::buf::buf0types::{BufBlock, Request, BUF_GET_ALWAYS};
 use crate::fil::fil0types::{
     FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
 };
 use crate::fut::fut0lst::{flst_init, FilAddr};
-use crate::innodb::innodb0types::{SpaceId, UNIV_PAGE_SIZE};
+use crate::innodb::innodb0types::PageFrame as InnoPageFrame;
+use crate::innodb::innodb0types::{PageId, SpaceId, UNIV_PAGE_SIZE};
+use crate::mtr::mtr0mtr::Mtr;
+use crate::page::page0page::Page;
+use crate::sync::sync0rw::ReadWriteLatch;
+use crate::ut::ut0dbg::ut_ad;
+use crate::{mach_read_from_4, some_or_panic};
 use std::ops::Range;
+use std::sync::{Arc, RwLock};
 
 /// Offset of the page data area inside a raw page
 pub const FIL_PAGE_DATA: usize = 38;
@@ -140,14 +149,19 @@ const FSP_SPACE_FLAGS_RANGE: Range<usize> = FSP_HEADER_OFFSET + FSP_SPACE_FLAGS
 ///
 /// The `Fsp` struct provides an interface for managing tablespace files,
 /// including operations for allocating and deallocating pages and extents.
-pub struct Fsp {}
+pub struct Fsp {
+    /// The buffer pool used for managing page buffers.
+    buf_pool: Arc<RwLock<BufPool>>,
+}
 
 impl Fsp {
     /// Creates a new file space manager instance.
     ///
     /// Returns an empty `Fsp` struct that can be used to manage tablespace operations.
-    pub fn new() -> Fsp {
-        Fsp {}
+    pub fn new(buf_pool: Arc<RwLock<BufPool>>) -> Fsp {
+        Fsp {
+            buf_pool,
+        }
     }
 
     /// Initializes the basic fields in a file space header.
@@ -168,6 +182,71 @@ impl Fsp {
         buf[FSP_SPACE_FLAGS_RANGE]
             .copy_from_slice(&(flags as u32).to_le_bytes());
     }
+
+    /// Retrieves the space header block for a given tablespace.
+    ///
+    /// # Arguments
+    ///
+    /// * `space_id` - The ID of the tablespace to retrieve the header for
+    /// * `mtr` - A mutable reference to the multi-versioning transaction record
+    ///
+    /// # Returns
+    ///
+    /// An `Arc<RwLock<BufBlock>>` containing the space header block.
+    pub fn get_space_header_block(&self, space_id: SpaceId, mtr: &mut Mtr) -> Arc<RwLock<BufBlock>> {
+        let buf_block = self.buf_pool.write().unwrap().get(
+            Request {
+                rw_latch: ReadWriteLatch::XLatch,
+                page_id: PageId {
+                    space_id,
+                    page_no: 0,
+                },
+                mode: BUF_GET_ALWAYS,
+                mtr,
+            });
+
+        let block = some_or_panic!(buf_block);
+
+        let block_read = block.read().unwrap();
+        let frame = block_read.get_page_frame();
+
+        ut_ad!(block_read.is_frame_x_latched());
+        ut_ad!(some_or_panic!(Self::get_space_header_from_page(frame)) == space_id);
+
+        block.clone()
+    }
+
+    /// Extracts the space ID from a given page frame.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_frame` - The page frame from which to extract the space ID.
+    ///
+    /// # Returns
+    ///
+    /// An `Option<SpaceId>` containing the space ID if it can be read, or `None` if the page frame is invalid.
+    pub fn get_space_header_from_page(page_frame: InnoPageFrame) -> Option<SpaceId> {
+        Some(mach_read_from_4!(page_frame.0, FSP_SPACE_ID_RANGE))
+    }
+
+    /// Retrieves the header page for a given tablespace.
+    ///
+    /// # Arguments
+    ///
+    /// * `space_id` - The ID of the tablespace to retrieve the header for
+    /// * `mtr` - A mutable reference to the multi-versioning transaction record
+    ///
+    /// # Returns
+    ///
+    /// A `Page` representing the header page of the specified tablespace.
+    fn get_header_page(&self, space_id: SpaceId, mtr: &mut Mtr) -> Page {
+        let header_block = self.get_space_header_block(space_id, mtr);
+        let read_guard = header_block.read().unwrap();
+
+        ut_ad!(read_guard.is_frame_x_latched());
+
+        read_guard.get_page()
+    }
 }
 
 /// Represents a full 16 KiB InnoDB page buffer in memory.
@@ -178,20 +257,22 @@ impl Fsp {
 /// extent descriptors.
 ///
 /// The struct wraps a mutable byte slice and provides methods to read and write
-/// various fields in the page according to InnoDB's on-disk format.
-pub struct PageFrame<'a> {
+/// various fields on the page according to InnoDB's on-disk format.
+pub struct FspHeaderPage<'a> {
     /// The raw byte buffer representing the page
-    buf: &'a mut [u8],
+    buf: &'a mut [u8; UNIV_PAGE_SIZE],
 }
 
 #[cfg(test)]
-impl<'a> PageFrame<'a> {
-    pub fn get_buf_mut(&mut self) -> &mut [u8] {
+impl<'a> FspHeaderPage<'a> {
+    pub fn get_buf_mut(&mut self) -> &mut [u8; UNIV_PAGE_SIZE] {
+        ut_ad!(self.buf.as_ptr() as usize % UNIV_PAGE_SIZE ==0);
+
         &mut self.buf
     }
 }
 
-impl<'a> PageFrame<'a> {
+impl<'a> FspHeaderPage<'a> {
     /// Creates a new `PageFrame` by wrapping a raw 16 KiB buffer.
     ///
     /// This method takes ownership of a mutable byte slice and provides
@@ -202,12 +283,12 @@ impl<'a> PageFrame<'a> {
     ///
     /// # Panic
     /// Panics if the provided buffer is smaller than UNIV_PAGE_SIZE
-    pub fn new(buf: &'a mut [u8]) -> Self {
-        assert!(
+    pub fn new(buf: &'a mut [u8; UNIV_PAGE_SIZE]) -> Self {
+        ut_ad!(
             buf.len() >= UNIV_PAGE_SIZE,
             "PageFrame needs a full UNIV_PAGE_SIZE buffer"
         );
-        PageFrame { buf }
+        FspHeaderPage { buf }
     }
 
     /// Initializes the FSP (File Space) header in this page.

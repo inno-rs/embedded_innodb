@@ -5,7 +5,7 @@ use crate::os::os0file::{IORequest, IOResult};
 use crate::trx::trx0sys::TRX_SYS_SPACE;
 use crate::ut::ut0dbg::ut_a;
 use crate::ut_panic;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use tracing::{error, warn};
 
 /// Manages read operations for the buffer pool.
@@ -15,7 +15,7 @@ use tracing::{error, warn};
 /// to optimize I/O performance.
 pub struct BufRea {
     /// Reference to the file system interface for I/O operations
-    fil: Arc<RwLock<Fil>>,
+    fil: Arc<Mutex<Fil>>,
 }
 
 impl BufRea {
@@ -27,7 +27,7 @@ impl BufRea {
     ///
     /// # Returns
     /// A new BufRea instance
-    pub fn new(fil: Arc<RwLock<Fil>>) -> Self {
+    pub fn new(fil: Arc<Mutex<Fil>>) -> Self {
         BufRea { fil }
     }
 
@@ -52,7 +52,7 @@ impl BufRea {
     ) -> bool {
         // TODO(rahul) Check if the page is from double write buffer.
 
-        let fil = self.fil.read().unwrap();
+        let fil = self.fil.lock().unwrap();
         let table_space_version = fil.space_get_version(space_id);
 
         self.buf_read_page_low(
@@ -113,7 +113,7 @@ impl BufRea {
         };
 
         let io_result = {
-            let mut fil_guard = self.fil.write().unwrap();
+            let mut fil_guard = self.fil.lock().unwrap();
             fil_guard.io(
                 io_request.clone(),
                 batch,

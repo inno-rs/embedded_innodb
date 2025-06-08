@@ -14,7 +14,7 @@ pub(super) mod tests {
     use rstest::{fixture, rstest};
     use std::cell::RefCell;
     use std::rc::Rc;
-    use std::sync::{Arc, Mutex, RwLock};
+    use std::sync::{Arc, Mutex};
 
     pub struct BufPoolFixture {
         buf_lru: Arc<RefCell<BufLRU>>,
@@ -25,10 +25,8 @@ pub(super) mod tests {
         pub fn new() -> Self {
             let runtime = create_runtime(1);
             let os_io = Arc::new(Mutex::new(OsIo::new(runtime.clone())));
-            let fil = Arc::new(RwLock::new(Fil::new(1, os_io, runtime)));
-
+            let fil = Arc::new(Mutex::new(Fil::new(1, os_io, runtime)));
             let buf_rea = Arc::new(RefCell::new(BufRea::new(fil.clone())));
-
             let buf_lru = Arc::new(RefCell::new(BufLRU::new()));
             let buf_pool_rc = Rc::new(RefCell::new(BufPool::new(
                 fil,
