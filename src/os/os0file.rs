@@ -216,7 +216,7 @@ pub fn os_file_get_size(os_file: &OsFile) -> i64 {
 ///
 /// * `Ok(WriteResult)` - If the write operation was successful
 /// * `Err(String)` - If an error occurred during the write operation, with an error message
-pub fn os_file_write(
+pub async fn os_file_write_async(
     os_file: &mut OsFile,
     data: &[u8],
     offset: usize,
@@ -225,18 +225,46 @@ pub fn os_file_write(
     ut_ad!(offset % IB_FILE_BLOCK_SIZE == 0);
     ut_ad!(len % IB_FILE_BLOCK_SIZE == 0);
 
-    let rt = Runtime::new().unwrap();
-    let seek_fut = os_file.seek(SeekFrom::Start(offset as u64));
-    match rt.block_on(seek_fut) {
-        Ok(_) => {
-            let write_fut = os_file.write(&data[..len]);
-            match rt.block_on(write_fut) {
-                Ok(_) => Ok(WriteResult {}),
-                Err(err) => Err(format!("Failed to write to file: {}", err)),
-            }
-        }
-        Err(err) => Err(format!("Failed to seek to file: {}", err)),
+    if let Err(err) = os_file.seek(SeekFrom::Start(offset as u64)).await
+    {
+        return Err(format!("Failed to seek in file: {}", err));
     }
+
+    if let Err(err) = os_file.write(data).await
+    {
+        return Err(format!("Failed to write to file: {}", err));
+    }
+
+    Ok(WriteResult {})
+}
+
+/// Writes data to a file at the specified offset.
+///
+/// This is a synchronous wrapper around the asynchronous `os_file_write_async` function.
+///
+/// # Arguments
+///
+/// * `os_file` - The file to write to
+/// * `data` - The data to write
+/// * `offset` - The offset in the file to start writing at
+/// * `len` - The number of bytes to write
+///
+/// # Returns
+///
+/// * `Ok(WriteResult)` - If the write operation was successful
+/// * `Err(String)` - If an error occurred during the write operation, with an error message
+pub fn os_file_write(
+    os_file: &mut OsFile,
+    data: &[u8],
+    offset: usize,
+    len: usize,
+) -> Result<WriteResult, String> {
+    GLOBAL_RUNTIME.block_on(os_file_write_async(
+        os_file,
+        data,
+        offset,
+        len,
+    ))
 }
 
 /// Reads data from a file at the specified offset.
@@ -252,7 +280,7 @@ pub fn os_file_write(
 ///
 /// * `Ok(ReadResult)` - If the read operation was successful, containing the read data
 /// * `Err(String)` - If an error occurred during the read operation, with an error message
-pub fn os_file_read(
+pub async fn os_file_read_async(
     os_file: &mut OsFile,
     offset: usize,
     len: usize,
@@ -261,19 +289,46 @@ pub fn os_file_read(
     ut_ad!(offset % IB_FILE_BLOCK_SIZE == 0);
     ut_ad!(len % IB_FILE_BLOCK_SIZE == 0);
 
-    let rt = Runtime::new().unwrap();
-    let seek_fut = os_file.seek(SeekFrom::Start(offset as u64));
-    match rt.block_on(seek_fut) {
-        Ok(_) => {
-            let read_fut = os_file.read(buffer);
-            match rt.block_on(read_fut) {
-                Ok(_) => Ok(ReadResult {}),
-                Err(err) => Err(format!("Failed to read from file: {}", err)),
-            }
-        }
-        Err(err) => Err(format!("Failed to seek in file: {}", err)),
+    if let Err(err) = os_file.seek(SeekFrom::Start(offset as u64)).await {
+        return Err(format!("Failed to seek in file: {}", err));
+    };
+
+    if let Err(err) = os_file.read(buffer).await {
+        return Err(format!("Failed to read from file: {}", err));
     }
+
+    Ok(ReadResult())
 }
+
+/// Reads data from a file at the specified offset.
+///
+/// This is a synchronous wrapper around the asynchronous `os_file_read_async` function.
+///
+/// # Arguments
+///
+/// * `os_file` - The file to read from
+/// * `offset` - The offset in the file to start reading from
+/// * `len` - The number of bytes to read
+/// * `buffer` - The buffer to read the data into
+///
+/// # Returns
+///
+/// * `Ok(ReadResult)` - If the read operation was successful
+/// * `Err(String)` - If an error occurred during the read operation, with an error message
+pub fn os_file_read(
+    os_file: &mut OsFile,
+    offset: usize,
+    len: usize,
+    buffer: &mut [u8],
+) -> Result<ReadResult, String> {
+    GLOBAL_RUNTIME.block_on(os_file_read_async(
+        os_file,
+        offset,
+        len,
+        buffer,
+    ))
+}
+
 
 /// Asynchronously sets the size of a file.
 ///
@@ -349,8 +404,7 @@ pub fn os_file_set_size(
     os_file: &mut OsFile,
     size: u64,
 ) -> Result<(), String> {
-    let rt = Runtime::new().unwrap();
-    rt.block_on(os_file_set_size_async(os_file, size))
+    GLOBAL_RUNTIME.block_on(os_file_set_size_async(os_file, size))
 }
 
 /// Asynchronously removes a file from the file system.

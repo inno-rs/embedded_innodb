@@ -43,6 +43,7 @@ use std::collections::HashMap;
 use std::ops::{DerefMut, Range};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
+use tokio::runtime::Runtime;
 use tracing::{error, warn};
 
 // Adapter for the unflushed spaces list. This allows FilSpaceContainer to be stored in a linked list
@@ -80,6 +81,8 @@ pub struct Fil {
     os_io: Arc<Mutex<OsIo>>,
     /// Server configuration, used for various settings related to the file system.
     srv_config: Arc<Config>,
+    /// Tokio runtime for asynchronous operations.
+    runtime: Arc<Runtime>,
 }
 
 impl Fil {
@@ -88,12 +91,14 @@ impl Fil {
     /// # Arguments
     ///
     /// * `max_n_open` - The maximum number of files that can be open simultaneously.
+    /// * `os_io` - The OS I/O manager used for performing I/O operations.
+    /// * `runtime` - The Tokio runtime for asynchronous operations.
     ///
     /// # Returns
     ///
     /// * A new Fil instance.
     ///
-    pub fn new(max_n_open: usize, os_io: Arc<Mutex<OsIo>>) -> Self {
+    pub fn new(max_n_open: usize, os_io: Arc<Mutex<OsIo>>, runtime: Arc<Runtime>) -> Self {
         Fil {
             space_by_id: HashMap::new(),
             space_by_name: HashMap::new(),
@@ -106,6 +111,7 @@ impl Fil {
             space_list: Default::default(),
             os_io,
             srv_config: Arc::new(Config::default()),
+            runtime,
         }
     }
 
