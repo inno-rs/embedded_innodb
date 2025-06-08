@@ -10,7 +10,6 @@ pub(super) mod tests {
     use crate::mtr::mtr0mtr::MtrState::MTR_ACTIVE;
     use crate::os::os0io::OsIo;
     use crate::sync::sync0rw::ReadWriteLatch;
-    use crate::ut::ut0dbg::init_tracing;
     use rstest::{fixture, rstest};
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -23,8 +22,6 @@ pub(super) mod tests {
 
     impl BufPoolFixture {
         pub fn new() -> Self {
-            init_tracing();
-
             let os_io = Arc::new(Mutex::new(OsIo::new()));
             let fil = Arc::new(RwLock::new(Fil::new(1, os_io)));
 

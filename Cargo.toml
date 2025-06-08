@@ -7,6 +7,7 @@ edition = "2024"
 rstest = { version = "0.25.0" }
 
 [dependencies]
+ctor = { version = "0.1.23" }
 uuid = { version = "1", features = ["v4"] }
 libc = { version = "0.2.172" }
 parking_lot = { version = "0.12.1" }

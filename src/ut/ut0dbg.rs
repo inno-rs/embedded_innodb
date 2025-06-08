@@ -11,6 +11,7 @@ pub(crate) use assert as ut_a;
 /// in release builds. These assertions are only checked in debug builds and are no-ops in release builds.
 pub(crate) use debug_assert as ut_ad;
 
+use ctor::ctor;
 use std::sync::Once;
 
 /// Macro for triggering a panic with a custom error message.
@@ -83,7 +84,8 @@ static INIT: Once = Once::new();
 /// // Now you can use tracing macros
 /// tracing::info!("Application started");
 /// ```
-pub fn init_tracing() {
+#[ctor]
+fn init_tracing() {
     INIT.call_once(|| {
         tracing_subscriber::fmt()
             .with_test_writer()
