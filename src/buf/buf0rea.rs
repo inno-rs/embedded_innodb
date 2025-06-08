@@ -5,7 +5,7 @@ use crate::os::os0file::IORequest;
 use crate::trx::trx0sys::TRX_SYS_SPACE;
 use crate::ut::ut0dbg::ut_a;
 use std::sync::{Arc, RwLock};
-use tracing::warn;
+use tracing::{error, warn};
 
 /// Manages read operations for the buffer pool.
 ///
@@ -87,8 +87,11 @@ impl BufRea {
         );
 
         if space_id == TRX_SYS_SPACE as u32 {
-            warn!("trying to read the double write buffer page: {}", page_no);
-            return DbErr::DbFail;
+            error!("trying to read the double write buffer page: {}", page_no);
+            return DbErr::DbFail(format!(
+                "trying to read the double write buffer page: {}",
+                page_no
+            ));
         }
 
         let pool = self.buf_pool.write().unwrap();

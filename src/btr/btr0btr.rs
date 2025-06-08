@@ -1,12 +1,12 @@
 use crate::btr::btr0cur::{
-    BTR_KEEP_SYS_FLAG, BTR_NO_LOCKING_FLAG, BTR_NO_UNDO_LOG, BTreeCursor, Path,
+    BTreeCursor, Path, BTR_KEEP_SYS_FLAG, BTR_NO_LOCKING_FLAG, BTR_NO_UNDO_LOG,
 };
 use crate::btr::btr0types::BtrLatchMode::BtrContModifyTree;
 use crate::buf::buf0buf::BufPool;
 use crate::buf::buf0types::{BufBlock, Request};
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
-use crate::fil::fil0types::{FILL_NULL, FilSpace};
+use crate::fil::fil0types::{FilSpace, FILL_NULL};
 use crate::fsp::fsp0fsp::Fsp;
 use crate::innodb::innodb0types::PageId;
 use crate::lock::lock0lock::LockSys;

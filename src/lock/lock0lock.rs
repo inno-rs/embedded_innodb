@@ -3,12 +3,12 @@ use crate::dict::dict0types::Index;
 use crate::innodb::innodb0types::DbErr::DbFail;
 use crate::innodb::innodb0types::{DbErr, TxnId};
 use crate::lock::lock0types::{
-    LOCK_COMPATIBILITY_MATRIX, LOCK_MODE_MASK, LockMode, LockType,
+    LockMode, LockType, LOCK_COMPATIBILITY_MATRIX, LOCK_MODE_MASK,
 };
 use crate::mtr::mtr0mtr::Mtr;
 use crate::rem::rem0rec::Record;
 use crate::trx::trx0trx::Trx;
-use intrusive_collections::{LinkedListLink, intrusive_adapter};
+use intrusive_collections::{intrusive_adapter, LinkedListLink};
 
 pub struct Lock {
     /// Transaction owning the lock.
@@ -95,6 +95,6 @@ impl LockSys {
         index: &Index,
         mtr: &mut Mtr,
     ) -> DbErr {
-        DbFail
+        DbFail("".to_string())
     }
 }

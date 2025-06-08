@@ -42,7 +42,7 @@
 use crate::fil::fil0types::{
     FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
 };
-use crate::fut::fut0lst::{FilAddr, flst_init};
+use crate::fut::fut0lst::{flst_init, FilAddr};
 use crate::innodb::innodb0types::{SpaceId, UNIV_PAGE_SIZE};
 use std::ops::Range;
 
@@ -131,9 +131,10 @@ pub const XDES_SIZE: usize =
     XDES_BITMAP + ut_bits_in_bytes(FSP_EXTENT_SIZE * XDES_BITS_PER_PAGE);
 pub const XDES_ARR_OFFSET: usize = FSP_HEADER_OFFSET + FSP_HEADER_SIZE;
 
-const FSP_SPACE_ID_RANGE: Range<usize> = FSP_HEADER_OFFSET + FSP_SPACE_ID..4;
-const FSP_SPACE_FLAGS_RANGE: Range<usize> =
-    FSP_HEADER_OFFSET + FSP_SPACE_FLAGS..4;
+const FSP_SPACE_ID_RANGE: Range<usize> =
+    FSP_HEADER_OFFSET + FSP_SPACE_ID..FSP_HEADER_OFFSET + FSP_SPACE_ID + 4;
+const FSP_SPACE_FLAGS_RANGE: Range<usize> = FSP_HEADER_OFFSET + FSP_SPACE_FLAGS
+    ..FSP_HEADER_OFFSET + FSP_SPACE_FLAGS + 4;
 
 /// Represents a file space manager for InnoDB tablespaces.
 ///
@@ -164,7 +165,8 @@ impl Fsp {
     pub fn init_fields(buf: &mut [u8], space_id: SpaceId, flags: usize) {
         // Initialize the fields of the FSP header to zero
         buf[FSP_SPACE_ID_RANGE].copy_from_slice(&space_id.to_le_bytes());
-        buf[FSP_SPACE_FLAGS_RANGE].copy_from_slice(&flags.to_le_bytes());
+        buf[FSP_SPACE_FLAGS_RANGE]
+            .copy_from_slice(&(flags as u32).to_le_bytes());
     }
 }
 

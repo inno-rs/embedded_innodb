@@ -8,7 +8,7 @@ mod tests {
     use crate::page::page0page::*;
     use crate::rem::rem0rec::{Record, RecordData};
     use rstest::{fixture, rstest};
-    use std::alloc::{Layout, alloc_zeroed};
+    use std::alloc::{alloc_zeroed, Layout};
     use std::cell::RefCell;
     use std::rc::Rc;
     use tracing::info;

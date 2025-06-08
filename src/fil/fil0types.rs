@@ -1,7 +1,10 @@
 use crate::innodb::innodb0types::{SpaceId, UNIV_PAGE_SIZE};
 use crate::os::os0file::OsFile;
-use intrusive_collections::{LinkedList, LinkedListLink, intrusive_adapter};
+use intrusive_collections::{
+    intrusive_adapter, LinkedList, LinkedListLink, UnsafeRef,
+};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -45,6 +48,8 @@ pub const FIL_SPACE_MAGIC_N: usize = 89472;
 
 pub const FIL_NODE_MAGIC_N: usize = 89389;
 
+pub const FIL_PAGE_SPACE_ID_RANGE: Range<usize> =
+    (FIL_PAGE_SPACE_ID..FIL_PAGE_SPACE_ID + 4);
 pub const FIL_PAGE_LSN_RANGE: Range<usize> = (FIL_PAGE_LSN..FIL_PAGE_LSN + 8);
 pub const FIL_PAGE_END_LSN_CHKSUM_RANGE: Range<usize> =
     (UNIV_PAGE_SIZE - FIL_PAGE_END_LSN_CHKSUM..UNIV_PAGE_SIZE);
@@ -244,6 +249,7 @@ impl FilType {
 /// This container allows FilNode to be stored in linked lists while maintaining
 /// reference counting for safe memory management.
 pub struct FilNodeContainer {
+    pub id: usize,
     /// Node for a linked list of files.
     pub chain: LinkedListLink,
     /// LinkedList for LRU.
@@ -252,7 +258,7 @@ pub struct FilNodeContainer {
     pub fil_node: Rc<RefCell<FilNode>>,
 }
 
-intrusive_adapter!(pub FilNodeAdapter = Box<FilNodeContainer>: FilNodeContainer { chain: LinkedListLink });
+intrusive_adapter!(pub FilNodeAdapter = UnsafeRef<FilNodeContainer>: FilNodeContainer { chain: LinkedListLink });
 
 /// Represents a tablespace in the InnoDB file system.
 ///
@@ -286,6 +292,9 @@ pub struct FilSpace {
     /// Magic number used to verify the integrity of the structure.
     /// Should always be set to FIL_SPACE_MAGIC_N.
     pub magic_n: usize,
+
+    /// Map of file nodes by their names, allowing quick access to specific files.
+    pub nodes: HashMap<usize, Rc<RefCell<FilNodeContainer>>>,
 }
 
 /// Container for a FilSpace that includes intrusive collection links.

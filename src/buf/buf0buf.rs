@@ -1,9 +1,9 @@
 use crate::buf::buf0lru::BufLRU;
 use crate::buf::buf0types::BufIoFix::BufIoRead;
 use crate::buf::buf0types::{
-    BUF_GET_ALWAYS, BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH, BufBlock, BufChunk,
-    BufPage, BufPageState, BufPoolStats, FlushListAdapter, FreeListAdapter,
-    LruAdapter, Request,
+    BufBlock, BufChunk, BufPage, BufPageState, BufPoolStats,
+    FlushListAdapter, FreeListAdapter, LruAdapter, Request, BUF_GET_ALWAYS,
+    BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH,
 };
 use crate::fil::fil0fil::Fil;
 use crate::innodb::innodb0types::{
@@ -18,7 +18,7 @@ use crate::{
 };
 use intrusive_collections::{LinkedList, UnsafeRef};
 use parking_lot::lock_api::RawRwLock;
-use std::alloc::{Layout, alloc_zeroed};
+use std::alloc::{alloc_zeroed, Layout};
 use std::cell;
 use std::cell::{Cell, RefCell};
 use std::cmp::min;
@@ -374,8 +374,7 @@ impl BufPool {
         space_id: SpaceId,
         page_no: PageNo,
         buf_block: &mut BufBlock,
-    ) {
-    }
+    ) {}
 
     /// Frees a buffer block and returns it to the free list.
     ///
@@ -539,8 +538,7 @@ impl BufPool {
         &self,
         buf_page: &mut BufBlock,
         access_time: u64,
-    ) {
-    }
+    ) {}
 
     /// Gets the last access time of a buffer page.
     ///

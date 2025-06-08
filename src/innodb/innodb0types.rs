@@ -1,4 +1,4 @@
-use std::alloc::{Layout, alloc, dealloc};
+use std::alloc::{alloc, dealloc, Layout};
 
 /** The 2-logarithm of UNIV_PAGE_SIZE: */
 pub const UNIV_PAGE_SIZE_SHIFT: usize = 14;
@@ -139,7 +139,7 @@ pub enum DbErr {
     /// or it will become bigger than 1/2 free space in a compressed page frame.
     DbTooBigRecord,
     /// Partial Failure code.
-    DbFail,
+    DbFail(String),
     /// The operating system returned a out of file space error.
     DbOutOfFileSpace,
 }
