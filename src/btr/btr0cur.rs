@@ -147,7 +147,10 @@ impl<'a> BTreeCursor<'a> {
             && page.page_n_get_recs() >= 2
             && Self::page_is_leaf(page)
         {
-            return Err(DbFail);
+            return Err(DbFail(
+                "Optimistic insert failed: too many records on the page"
+                    .to_string(),
+            ));
         }
 
         let mut insert_rec = Option::<Record>::None;
@@ -202,7 +205,7 @@ impl<'a> BTreeCursor<'a> {
         match result {
             Ok(_) => {}
             Err(e) => {
-                if e != DbFail {
+                if matches!(e, DbFail(_)) {
                     return Err(e);
                 }
             }
@@ -310,6 +313,5 @@ impl<'a> BTreeCursor<'a> {
         mode: usize,
         latch_mode: usize,
         mtr: &mut Mtr,
-    ) {
-    }
+    ) {}
 }

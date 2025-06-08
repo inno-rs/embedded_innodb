@@ -7,7 +7,7 @@ use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
-use intrusive_collections::{LinkedListLink, UnsafeRef, intrusive_adapter};
+use intrusive_collections::{intrusive_adapter, LinkedListLink, UnsafeRef};
 use parking_lot::RwLock;
 use std::cell::RefCell;
 use std::cmp::PartialEq;
@@ -136,11 +136,11 @@ pub struct BufPage {
     buf_block: Weak<RefCell<BufBlock>>,
 }
 
-/// Adapter for intrusive collections to manage flush lists of buffer pages.
+// Adapter for intrusive collections to manage flush lists of buffer pages.
 intrusive_adapter!(pub FlushListAdapter = UnsafeRef<BufPage>: BufPage { flush_list: LinkedListLink });
-/// Adapter for intrusive collections to manage free lists of buffer pages.
+// Adapter for intrusive collections to manage free lists of buffer pages.
 intrusive_adapter!(pub FreeListAdapter = UnsafeRef<BufPage>: BufPage { free_list: LinkedListLink });
-/// Adapter for intrusive collections to manage LRU lists of buffer pages.
+// Adapter for intrusive collections to manage LRU lists of buffer pages.
 intrusive_adapter!(pub LruAdapter = UnsafeRef<BufPage>: BufPage { lru_list: LinkedListLink });
 
 impl BufPage {

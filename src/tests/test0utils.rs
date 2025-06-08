@@ -1,7 +1,7 @@
 use crate::buf::buf0types::{BufBlock, BufPage};
 use crate::data::data0types::{
-    DATA_NOT_NULL, DField, DFieldBuilder, DTYPE_DECIMAL, DTYPE_DOUBLE,
-    DTYPE_FLOAT, DTYPE_INT, DTYPE_INT_UNSIGNED, DTYPE_VARCHAR, DTuple,
+    DField, DFieldBuilder, DTuple, DATA_NOT_NULL, DTYPE_DECIMAL,
+    DTYPE_DOUBLE, DTYPE_FLOAT, DTYPE_INT, DTYPE_INT_UNSIGNED, DTYPE_VARCHAR,
 };
 use crate::dict::dict0types::Index;
 use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE, UNIV_SQL_NULL};
@@ -9,7 +9,7 @@ use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0cur::PageCur;
 use crate::page::page0page::Page;
 use crate::rem::rem0rec::OrphanRecord;
-use std::alloc::{Layout, alloc_zeroed};
+use std::alloc::{alloc_zeroed, Layout};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;

@@ -1,6 +1,6 @@
 use crate::dict::dict0types::{Index, Table};
 use crate::innodb::innodb0types::PageId;
-use intrusive_collections::{LinkedListLink, intrusive_adapter};
+use intrusive_collections::{intrusive_adapter, LinkedListLink};
 use std::sync::{Arc, Mutex, RwLock};
 
 /// Lock types

@@ -230,8 +230,7 @@ impl BufLRU {
                 ut_ad!(self.lru_old_head.is_some());
 
                 self.buf_page_set(buf_page, old);
-            } else if length == OLD_MIN_LENGTH {
-            } else {
+            } else if length == OLD_MIN_LENGTH {} else {
                 self.buf_page_set(buf_page, self.lru_old_head.is_some());
             }
         }
@@ -410,9 +409,9 @@ impl BufLRU {
         match block.buf_block_get_state() {
             n if n == BufPageState::BufBlockMemory
                 || n == BufBlockReadyForUse =>
-            {
-                info!("bufblock state: {:?}", n);
-            }
+                {
+                    info!("bufblock state: {:?}", n);
+                }
             n => {
                 ut_panic!(
                     "Block is not in a valid state to be freed: {:?}",

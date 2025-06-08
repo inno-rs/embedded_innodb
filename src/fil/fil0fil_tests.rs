@@ -1,14 +1,15 @@
 #[cfg(test)]
 mod tests {
     use crate::fil::fil0fil::Fil;
-    use crate::fil::fil0types::FilType;
+    use crate::fil::fil0types::{FilType, FIL_IBD_FILE_INITIAL_SIZE};
     use crate::innodb::innodb0types::DbErr::DbTablespaceDeleted;
     use crate::innodb::innodb0types::{
-        IB_FILE_BLOCK_SIZE, PageFrame, UNIV_PAGE_SIZE,
+        PageFrame, IB_FILE_BLOCK_SIZE, UNIV_PAGE_SIZE,
     };
     use crate::os::os0file::IORequest;
     use crate::os::os0io::OsIo;
     use std::sync::{Arc, Mutex};
+    use uuid::Uuid;
 
     #[test]
     fn test_create_fil_space() {
@@ -281,25 +282,22 @@ mod tests {
         assert_eq!(result.err().unwrap(), DbTablespaceDeleted);
     }
 
-    #[ignore]
     #[test]
     fn test_io_read_with_filespace() {
         let os_io = Arc::new(Mutex::new(OsIo::new()));
         let mut fil = Fil::new(10, os_io);
 
-        let file_name = "test";
+        let file_name = format!("{}_{}", "test", Uuid::new_v4());
         let space_id = 20;
-        let fil_space_result = fil.space_create(
-            &file_name.to_string(),
+        fil.create_new_single_table_space(
             space_id,
-            20,
-            FilType::FilTablespace,
-        );
-        assert!(fil_space_result);
+            &file_name,
+            0,
+            FIL_IBD_FILE_INITIAL_SIZE,
+        )
+            .expect("Failed to create new single table space");
 
-        // Create a fil_node
-        let result = fil.node_create(file_name, 100, 20, false);
-        assert!(result);
+        assert!(fil.space_get_file_node_count(space_id) > 0);
 
         let mut data = b"Hello, world!".to_vec();
         data.resize(UNIV_PAGE_SIZE, 0);
@@ -311,7 +309,7 @@ mod tests {
             false,
             space_id,
             0,
-            100,
+            0,
             page_frame,
             IB_FILE_BLOCK_SIZE,
         );

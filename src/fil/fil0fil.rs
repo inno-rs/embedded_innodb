@@ -15,28 +15,28 @@
  * 0x1C   | 8    | FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID | Varies by version *
  ************************************************************************/
 use crate::buf::buf0flu::BufFlush;
-use crate::fil::fil0types::{FIL_IBD_FILE_INITIAL_SIZE, FIL_PAGE_SPACE_ID};
 use crate::fil::fil0types::{
-    FIL_SPACE_MAGIC_N, FilNode, FilNodeContainer, FilSpace, FilSpaceContainer,
-    FilType,
+    FilNode, FilNodeContainer, FilSpace, FilSpaceContainer,
+    FilType, FIL_PAGE_SPACE_ID_RANGE, FIL_SPACE_MAGIC_N,
 };
+use crate::fil::fil0types::{FIL_IBD_FILE_INITIAL_SIZE, FIL_PAGE_SPACE_ID};
 use crate::fsp::fsp0fsp::Fsp;
 use crate::fsp::fsp0types::SYS_TABLESPACE;
 use crate::innodb::innodb0types::{
-    DbErr, IB_FILE_BLOCK_SIZE, PageFrame, PageNo, RawPage, SpaceId,
+    DbErr, PageFrame, PageNo, RawPage, SpaceId, IB_FILE_BLOCK_SIZE,
     UNIV_PAGE_SIZE,
 };
 use crate::os::os0file::CreateMode::{OsFileCreate, OsFileOpen};
 use crate::os::os0file::{
-    IORequest, IOResult, WriteResult, os_file_create, os_file_set_size,
-    os_file_write,
+    os_file_create, os_file_set_size, os_file_write, IORequest, IOResult,
+    WriteResult,
 };
 use crate::os::os0io::{IoContext, OsIo};
 use crate::some_or_panic;
 use crate::srv::srv0srv::Config;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use intrusive_collections::{
-    LinkedList, LinkedListLink, UnsafeRef, intrusive_adapter,
+    intrusive_adapter, LinkedList, LinkedListLink, UnsafeRef,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -138,17 +138,25 @@ impl Fil {
             None => false,
             Some(sp) => {
                 let fil_space_container = sp.write().unwrap();
-                let file_node = Box::new(FilNodeContainer {
+                let file_node = Rc::new(RefCell::new(FilNodeContainer {
+                    id: 42,
                     chain: Default::default(),
                     lru: Default::default(),
                     fil_node: Rc::new(RefCell::new(
                         (FilNode::new(name, size)),
                     )),
-                });
+                }));
 
                 let mut fil_space = fil_space_container.fil_space.borrow_mut();
+                fil_space
+                    .nodes
+                    .insert(file_node.borrow().id, file_node.clone());
 
-                fil_space.chain.push_back(file_node);
+                unsafe {
+                    fil_space
+                        .chain
+                        .push_back(UnsafeRef::from_raw(file_node.as_ptr()));
+                }
 
                 ut_ad!(fil_space.chain.iter().count() == 1);
 
@@ -210,6 +218,7 @@ impl Fil {
                 size_in_pages: 0,
                 chain: Default::default(),
                 magic_n: FIL_SPACE_MAGIC_N,
+                nodes: Default::default(),
             })),
         }));
 
@@ -246,6 +255,26 @@ impl Fil {
         space_id: SpaceId,
     ) -> Option<Arc<RwLock<FilSpaceContainer>>> {
         self.space_by_id.get(&space_id).cloned()
+    }
+
+    /// Retrieves the number of file nodes in a space.
+    ///
+    /// Arguments:
+    /// * `space_id` - The ID of the space to retrieve the file node count for.
+    ///
+    /// # Returns:
+    /// * The number of file nodes in the specified space.
+    pub fn space_get_file_node_count(&self, space_id: SpaceId) -> usize {
+        if let Some(space) = self.space_get_by_id(space_id) {
+            let space = space.read().unwrap();
+            let len = space.fil_space.borrow().nodes.len();
+
+            ut_ad!(len == space.fil_space.borrow().chain.iter().count());
+
+            len
+        } else {
+            0
+        }
     }
 
     /// Retrieves a space by its name.
@@ -392,18 +421,19 @@ impl Fil {
         let mut space = space_ref.fil_space.borrow_mut();
         let mut new_page_no = page_no as usize;
         let node = {
-            let fil_node = Option::<Rc<RefCell<FilNode>>>::None;
-            let mut cursor = space.chain.cursor_mut();
+            let mut fil_node = Option::<Rc<RefCell<FilNode>>>::None;
+            let mut cursor = space.chain.front_mut();
             let mut has_next = cursor.get().is_some();
             while has_next {
                 {
                     let file_node_container = cursor.get().unwrap();
-                    let fil_node = file_node_container.fil_node.borrow();
-                    if fil_node.get_size_in_pages() > page_no as usize {
+                    let curr_fil_node = file_node_container.fil_node.borrow();
+                    if curr_fil_node.get_size_in_pages() > page_no as usize {
+                        fil_node.replace(file_node_container.fil_node.clone());
                         break;
                     }
 
-                    new_page_no -= fil_node.get_size_in_pages();
+                    new_page_no -= curr_fil_node.get_size_in_pages();
                 }
 
                 cursor.move_next();
@@ -595,7 +625,7 @@ impl Fil {
     pub fn create_new_single_table_space(
         &mut self,
         space_id: SpaceId,
-        table_name: String,
+        table_name: &String,
         flags: usize,
         size: usize,
     ) -> Result<(), DbErr> {
@@ -608,7 +638,10 @@ impl Fil {
         // TODO(Rahul): Handle the other errors.
         if os_file.is_none() {
             error!("Failed to create file for single-table space: {}", path);
-            return Err(DbErr::DbFail);
+            return Err(DbErr::DbFail(format!(
+                "Failed to create file for single-table space: {}",
+                path
+            )));
         }
 
         let mut os_file = some_or_panic!(
@@ -640,7 +673,7 @@ impl Fil {
         let mut raw_page = RawPage::new();
         let mut page_frame = raw_page.as_page_frame();
         Fsp::init_fields(page_frame.0, file_space_id, flags);
-        page_frame.0[Range::from(0..FIL_PAGE_SPACE_ID)]
+        page_frame.0[FIL_PAGE_SPACE_ID_RANGE]
             .copy_from_slice(file_space_id.to_le_bytes().as_slice());
 
         BufFlush::init_for_writing(&mut page_frame, 0);
@@ -648,11 +681,12 @@ impl Fil {
         if let Err(e) =
             os_file_write(&mut os_file, page_frame.0, 0, UNIV_PAGE_SIZE)
         {
-            error!(
+            let error_message = format!(
                 "Failed to write initial page for single-table space: {}. Error: {}",
                 path, e
             );
-            return Err(DbErr::DbFail);
+            error!(error_message);
+            return Err(DbErr::DbFail(error_message));
         }
 
         // Create a new single-table space with the specified name, ID, and flags.
