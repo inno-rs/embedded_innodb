@@ -4,7 +4,7 @@ mod tests {
     use crate::fil::fil0types::FilType;
     use crate::innodb::innodb0types::DbErr::DbTablespaceDeleted;
     use crate::innodb::innodb0types::{
-        PageFrame, IB_FILE_BLOCK_SIZE, UNIV_PAGE_SIZE,
+        IB_FILE_BLOCK_SIZE, PageFrame, UNIV_PAGE_SIZE,
     };
     use crate::os::os0file::IORequest;
     use crate::os::os0io::OsIo;

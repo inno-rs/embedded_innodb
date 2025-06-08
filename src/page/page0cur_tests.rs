@@ -7,9 +7,9 @@ mod tests {
     use crate::page::page0cur::PageCur;
     use crate::page::page0page::Page;
     use crate::rem::rem0rec::{OrphanRecord, Record};
-    use crate::tests::test0utils::{create_dtuples, FieldType};
+    use crate::tests::test0utils::{FieldType, create_dtuples};
     use rstest::{fixture, rstest};
-    use std::alloc::{alloc_zeroed, Layout};
+    use std::alloc::{Layout, alloc_zeroed};
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::sync::Arc;

@@ -1,6 +1,6 @@
 use crate::innodb::innodb0types::{SpaceId, UNIV_PAGE_SIZE};
 use crate::os::os0file::OsFile;
-use intrusive_collections::{intrusive_adapter, LinkedList, LinkedListLink};
+use intrusive_collections::{LinkedList, LinkedListLink, intrusive_adapter};
 use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;

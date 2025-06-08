@@ -1,7 +1,7 @@
 use crate::buf::buf0dblwr::DoubleWriteBuffer;
 use crate::buf::buf0flu::BufFlushType::{BufFlushList, BufFlushLru};
 use crate::buf::buf0types::{
-    BufBlock, BufIoFix, BufPageState, FlushListAdapter, BUF_NO_CHECKSUM_MAGIC,
+    BUF_NO_CHECKSUM_MAGIC, BufBlock, BufIoFix, BufPageState, FlushListAdapter,
 };
 use crate::fil::fil0fil::Fil;
 use crate::fil::fil0types::{
@@ -18,8 +18,8 @@ use crate::page::page0page::Page;
 use crate::trx::trx0sys::TRX_SYS_SPACE;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use crate::{some_or_panic, ut_panic};
-use intrusive_collections::linked_list::CursorMut;
 use intrusive_collections::LinkedList;
+use intrusive_collections::linked_list::CursorMut;
 use std::cell::RefCell;
 use std::cmp::PartialEq;
 use std::ops::DerefMut;

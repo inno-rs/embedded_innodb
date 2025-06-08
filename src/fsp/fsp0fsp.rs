@@ -42,7 +42,7 @@
 use crate::fil::fil0types::{
     FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
 };
-use crate::fut::fut0lst::{flst_init, FilAddr};
+use crate::fut::fut0lst::{FilAddr, flst_init};
 use crate::innodb::innodb0types::{SpaceId, UNIV_PAGE_SIZE};
 use std::ops::Range;
 

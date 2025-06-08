@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::tests::test0utils::{create_dtuples, FieldType};
+    use crate::tests::test0utils::{FieldType, create_dtuples};
 
     #[test]
     fn test_create_data_tuple() {

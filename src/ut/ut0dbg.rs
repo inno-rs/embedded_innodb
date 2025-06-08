@@ -79,7 +79,7 @@ static INIT: Once = Once::new();
 /// ```
 /// // Initialize tracing at the start of your program or tests
 /// init_tracing();
-/// 
+///
 /// // Now you can use tracing macros
 /// tracing::info!("Application started");
 /// ```
