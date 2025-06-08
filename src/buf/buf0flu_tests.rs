@@ -9,7 +9,6 @@ mod tests {
     use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
     use crate::log::log0log::Log;
     use crate::os::os0io::OsIo;
-    use crate::ut::ut0dbg::init_tracing;
     use rstest::{fixture, rstest};
     use std::sync::{Arc, Mutex, RwLock};
 
@@ -19,8 +18,6 @@ mod tests {
 
     impl BufFluFixture {
         pub fn new() -> Self {
-            init_tracing();
-
             tracing::info!(
                 "Setting up BufFlush fixture, total double write buffer size: {}",
                 DOUBLE_WRITE_BUFFER_SIZE
