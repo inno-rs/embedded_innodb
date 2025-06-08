@@ -6,7 +6,6 @@ use crate::innodb::innodb0types::{
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
-use crate::tests::test0utils::OwningPage;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use intrusive_collections::{intrusive_adapter, LinkedListLink, UnsafeRef};
 use parking_lot::RwLock;
@@ -15,7 +14,9 @@ use std::cmp::PartialEq;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use strum_macros::Display;
-use tracing::subscriber::NoSubscriber;
+
+/// Magic number used to identify buffer pool pages that do not have a checksum.
+pub const BUF_NO_CHECKSUM_MAGIC: usize = 0xDEADBEEF;
 
 /// The frame is a pointer to a memory location where the block's data is stored.
 /// It points to the actual page content in memory.

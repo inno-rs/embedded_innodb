@@ -1,11 +1,17 @@
-use crate::innodb::innodb0types::SpaceId;
+use crate::innodb::innodb0types::{SpaceId, UNIV_PAGE_SIZE};
 use crate::os::os0file::OsFile;
 use intrusive_collections::{intrusive_adapter, LinkedList, LinkedListLink};
 use std::cell::RefCell;
+use std::ops::Range;
 use std::rc::Rc;
 
+/// Initial size of the file in pages.
+pub const FIL_IBD_FILE_INITIAL_SIZE: usize = 4;
 /// Null or undefined page offset in the context of file spaces.
 pub const FILL_NULL: u32 = u32::MAX;
+
+/// Checksum of the page.
+pub const FIL_PAGE_SPACE_OR_CHKSUM: usize = 0;
 
 /** Start of the data on the page */
 pub const FSEG_PAGE_DATA: usize = 38;
@@ -38,6 +44,12 @@ pub const FIL_PAGE_END_LSN_CHKSUM: usize = 8;
 pub const FIL_SPACE_MAGIC_N: usize = 89472;
 
 pub const FIL_NODE_MAGIC_N: usize = 89389;
+
+pub const FIL_PAGE_LSN_RANGE: Range<usize> = (FIL_PAGE_LSN..FIL_PAGE_LSN + 8);
+pub const FIL_PAGE_END_LSN_CHKSUM_RANGE: Range<usize> =
+    (UNIV_PAGE_SIZE - FIL_PAGE_END_LSN_CHKSUM..UNIV_PAGE_SIZE);
+pub const FIL_PAGE_SPACE_OR_CHKSUM_RANGE: Range<usize> =
+    (FIL_PAGE_SPACE_OR_CHKSUM..FIL_PAGE_SPACE_OR_CHKSUM + 4);
 
 pub struct FilNode {
     /// Path fo the file.

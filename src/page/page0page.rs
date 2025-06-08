@@ -7,7 +7,9 @@ use crate::fil::fil0types::{
     FIL_PAGE_DATA_END, FIL_PAGE_NEXT, FIL_PAGE_OFFSET, FIL_PAGE_PREV,
     FIL_PAGE_SPACE_ID, FSEG_PAGE_DATA,
 };
-use crate::innodb::innodb0types::{PageNo, SpaceId, UNIV_PAGE_SIZE};
+use crate::innodb::innodb0types::{
+    PageFrame, PageNo, SpaceId, UNIV_PAGE_SIZE,
+};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::rem::rem0rec::{
     Record, REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM,
@@ -131,8 +133,6 @@ pub const PAGE_NO_DIRECTION: usize = 4;
 /// The number may drop below the minimum in the first and last slot in the directory.
 pub const PAGE_DIR_SLOT_MAX_N_OWNED: usize = 8;
 pub const PAGE_DIR_SLOT_MIN_N_OWNED: usize = 4;
-
-pub const PAGE_SIZE: usize = 16 * 1024;
 
 /*	PAGE DIRECTORY */
 
@@ -1069,5 +1069,23 @@ impl Page {
         ut_ad!(rec_size > REC_N_EXTRA_BYTES);
 
         rec_size > Self::page_get_free_space_of_empty() / 2
+    }
+
+    /// Calculates a checksum for the page data.
+    ///
+    /// This method computes a checksum value for the page data, which can be used
+    /// to verify the integrity of the page. The checksum is calculated based on the
+    /// contents of the page and can be used to detect corruption or tampering.
+    ///
+    /// # Parameters
+    /// * `page_frame` - A reference to the page frame containing the data to checksum
+    ///
+    /// # Returns
+    /// * A 32-bit checksum value for the page data
+    ///
+    /// # Note
+    /// This method is currently a placeholder and needs to be implemented.
+    pub fn page_data_calc_checksum(page_frame: &PageFrame) -> u32 {
+        todo!("Implement page_data_calc_checksum");
     }
 }

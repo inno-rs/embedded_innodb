@@ -1,15 +1,20 @@
 use crate::buf::buf0dblwr::DoubleWriteBuffer;
 use crate::buf::buf0flu::BufFlushType::{BufFlushList, BufFlushLru};
 use crate::buf::buf0types::{
-    BufBlock, BufIoFix, BufPageState, FlushListAdapter,
+    BufBlock, BufIoFix, BufPageState, FlushListAdapter, BUF_NO_CHECKSUM_MAGIC,
 };
 use crate::fil::fil0fil::Fil;
+use crate::fil::fil0types::{
+    FIL_PAGE_END_LSN_CHKSUM_RANGE, FIL_PAGE_LSN_RANGE,
+    FIL_PAGE_SPACE_OR_CHKSUM_RANGE,
+};
 use crate::fsp::fsp0types::SYS_TABLESPACE;
 use crate::innodb::innodb0types::{
-    Lsn, PageFrame, PageId, SpaceId, UNIV_PAGE_SIZE,
+    Lsn, PageFrame, PageId, RawPage, SpaceId, UNIV_PAGE_SIZE,
 };
 use crate::log::log0log::{Log, LogWaitMode};
 use crate::os::os0file::IORequest;
+use crate::page::page0page::Page;
 use crate::trx::trx0sys::TRX_SYS_SPACE;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use crate::{some_or_panic, ut_panic};
@@ -247,8 +252,9 @@ impl BufFlush {
 
         match buf_page_ref.get_state() {
             BufPageState::BufBlockFilePage => {
-                self.init_for_writing(
-                    buf_block,
+                let mut page_frame = RawPage::new();
+                BufFlush::init_for_writing(
+                    &mut page_frame.as_page_frame(),
                     buf_page_ref.get_newest_modification(),
                 );
             }
@@ -272,7 +278,24 @@ impl BufFlush {
     /// # Parameters
     /// * `buf_block` - The buffer block to initialize
     /// * `new_lsn` - The newest log sequence number (LSN) for this block
-    fn init_for_writing(&self, buf_block: &mut BufBlock, new_lsn: Lsn) {}
+    pub fn init_for_writing(page_frame: &mut PageFrame, new_lsn: Lsn) {
+        // Write the newest modification LSN to the page header and trailer.
+        page_frame.0[FIL_PAGE_LSN_RANGE]
+            .copy_from_slice(&new_lsn.to_le_bytes());
+        page_frame.0[FIL_PAGE_END_LSN_CHKSUM_RANGE]
+            .copy_from_slice(&new_lsn.to_le_bytes());
+
+        // Store the new formula checksum.
+        let checksum = Page::page_data_calc_checksum(page_frame);
+        page_frame.0[FIL_PAGE_SPACE_OR_CHKSUM_RANGE]
+            .copy_from_slice(&checksum.to_le_bytes());
+
+        // We overwrite the first 4 bytes of the end lsn field to store the old formula checksum.
+        // Since it depends also on the field FIL_PAGE_SPACE_OR_CHKSUM,
+        // we need to write it after the checksum.
+        page_frame.0[FIL_PAGE_END_LSN_CHKSUM_RANGE]
+            .copy_from_slice(&BUF_NO_CHECKSUM_MAGIC.to_le_bytes());
+    }
 
     /// Posts a buffer block to the double write buffer.
     ///

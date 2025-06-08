@@ -1,3 +1,5 @@
+use std::alloc::{alloc, dealloc, Layout};
+
 /** The 2-logarithm of UNIV_PAGE_SIZE: */
 pub const UNIV_PAGE_SIZE_SHIFT: usize = 14;
 
@@ -32,6 +34,65 @@ pub type TxnId = u64;
 /// This struct provides a type-safe way to pass page data around the system.
 /// The page size is fixed at UNIV_PAGE_SIZE bytes.
 pub struct PageFrame<'a>(pub &'a mut [u8; UNIV_PAGE_SIZE]);
+
+/// A raw page buffer that owns its memory allocation.
+///
+/// This struct represents a database page that allocates and manages its own memory.
+/// Unlike PageFrame which borrows a byte slice, RawPage owns the memory it uses,
+/// handling allocation on creation and deallocation when dropped.
+/// It provides methods to create a new page and to access it as a PageFrame.
+pub struct RawPage {
+    /// Pointer to the allocated memory for the page
+    ptr: *mut u8,
+}
+
+impl RawPage {
+    /// Creates a new RawPage with memory allocated for a full database page.
+    ///
+    /// This method allocates memory for a page of size UNIV_PAGE_SIZE (16KB)
+    /// with proper alignment. The memory is uninitialized and should be
+    /// properly initialized before use.
+    ///
+    /// # Returns
+    ///
+    /// A new RawPage instance with allocated memory.
+    pub fn new() -> RawPage {
+        let layout =
+            Layout::from_size_align(UNIV_PAGE_SIZE, UNIV_PAGE_SIZE).unwrap();
+        RawPage { ptr: unsafe { alloc(layout) } }
+    }
+
+    /// Converts this RawPage into a PageFrame for easier manipulation.
+    ///
+    /// This method creates a PageFrame that provides a safe interface to
+    /// access the raw page memory. The PageFrame borrows the memory from
+    /// this RawPage, so the RawPage must outlive the PageFrame.
+    ///
+    /// # Returns
+    ///
+    /// A PageFrame that borrows the memory from this RawPage.
+    pub fn as_page_frame(&mut self) -> PageFrame<'_> {
+        let ptr = self.ptr as *mut [u8; UNIV_PAGE_SIZE];
+        let slice = unsafe { &mut *ptr };
+        PageFrame(slice)
+    }
+}
+
+/// Implements the Drop trait to ensure proper deallocation of memory when a RawPage is dropped.
+///
+/// This implementation ensures that the memory allocated for the page is properly
+/// deallocated when the RawPage goes out of scope, preventing memory leaks.
+impl Drop for RawPage {
+    /// Deallocates the memory used by this RawPage.
+    ///
+    /// This method is automatically called when the RawPage goes out of scope.
+    /// It ensures that the memory allocated in the `new()` method is properly freed.
+    fn drop(&mut self) {
+        let layout =
+            Layout::from_size_align(UNIV_PAGE_SIZE, UNIV_PAGE_SIZE).unwrap();
+        unsafe { dealloc(self.ptr, layout) };
+    }
+}
 
 #[derive(Hash, Clone, Copy, Eq, PartialEq)]
 pub struct PageId {
@@ -79,6 +140,8 @@ pub enum DbErr {
     DbTooBigRecord,
     /// Partial Failure code.
     DbFail,
+    /// The operating system returned a out of file space error.
+    DbOutOfFileSpace,
 }
 
 /// Defines the search modes used when positioning a cursor in the B-tree.

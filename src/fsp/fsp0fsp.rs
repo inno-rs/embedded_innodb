@@ -43,7 +43,8 @@ use crate::fil::fil0types::{
     FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
 };
 use crate::fut::fut0lst::{flst_init, FilAddr};
-use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
+use crate::innodb::innodb0types::{SpaceId, UNIV_PAGE_SIZE};
+use std::ops::Range;
 
 /// Offset of the page data area inside a raw page
 pub const FIL_PAGE_DATA: usize = 38;
@@ -130,6 +131,10 @@ pub const XDES_SIZE: usize =
     XDES_BITMAP + ut_bits_in_bytes(FSP_EXTENT_SIZE * XDES_BITS_PER_PAGE);
 pub const XDES_ARR_OFFSET: usize = FSP_HEADER_OFFSET + FSP_HEADER_SIZE;
 
+const FSP_SPACE_ID_RANGE: Range<usize> = FSP_HEADER_OFFSET + FSP_SPACE_ID..4;
+const FSP_SPACE_FLAGS_RANGE: Range<usize> =
+    FSP_HEADER_OFFSET + FSP_SPACE_FLAGS..4;
+
 /// Represents a file space manager for InnoDB tablespaces.
 ///
 /// The `Fsp` struct provides an interface for managing tablespace files,
@@ -140,8 +145,26 @@ impl Fsp {
     /// Creates a new file space manager instance.
     ///
     /// Returns an empty `Fsp` struct that can be used to manage tablespace operations.
-    pub(crate) fn new() -> Fsp {
+    pub fn new() -> Fsp {
         Fsp {}
+    }
+
+    /// Initializes the basic fields in a file space header.
+    ///
+    /// This method sets up the essential fields in the FSP header of a tablespace:
+    /// - The space ID that uniquely identifies this tablespace
+    /// - The flags that define tablespace properties and format
+    ///
+    /// # Arguments
+    ///
+    /// * `buf` - A mutable byte slice containing the page buffer
+    /// * `space_id` - The unique identifier for this tablespace
+    /// * `flags` - The flags defining tablespace properties
+    ///
+    pub fn init_fields(buf: &mut [u8], space_id: SpaceId, flags: usize) {
+        // Initialize the fields of the FSP header to zero
+        buf[FSP_SPACE_ID_RANGE].copy_from_slice(&space_id.to_le_bytes());
+        buf[FSP_SPACE_FLAGS_RANGE].copy_from_slice(&flags.to_le_bytes());
     }
 }
 

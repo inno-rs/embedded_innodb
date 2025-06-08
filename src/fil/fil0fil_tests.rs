@@ -16,7 +16,7 @@ mod tests {
         let mut fil = Fil::new(10, os_io);
 
         let result = fil.space_create(
-            "test".to_string(),
+            &"test".to_string(),
             10,
             0,
             FilType::FilTablespace,
@@ -28,7 +28,7 @@ mod tests {
         // Adding the same name again should fail.
         {
             let result = fil.space_create(
-                "test".to_string(),
+                &"test".to_string(),
                 10,
                 0,
                 FilType::FilTablespace,
@@ -40,7 +40,7 @@ mod tests {
         // Adding a different name but the same space_id should fail as well
         {
             let result = fil.space_create(
-                "test_2".to_string(),
+                &"test_2".to_string(),
                 10,
                 0,
                 FilType::FilTablespace,
@@ -53,7 +53,7 @@ mod tests {
 
         {
             let result = fil.space_create(
-                "test_2".to_string(),
+                &"test_2".to_string(),
                 11,
                 0,
                 FilType::FilTablespace,
@@ -75,7 +75,7 @@ mod tests {
 
         // Create a space
         let fil_space_result = fil.space_create(
-            file_name.to_string(),
+            &file_name.to_string(),
             20,
             20,
             FilType::FilTablespace,
@@ -100,7 +100,7 @@ mod tests {
         // Create a space
         let file_name = "test";
         let fil_space_result = fil.space_create(
-            file_name.to_string(),
+            &file_name.to_string(),
             space_id,
             20,
             FilType::FilTablespace,
@@ -123,7 +123,7 @@ mod tests {
         assert!(!result);
 
         let fil_space_result = fil.space_create(
-            file_name.to_string(),
+            &file_name.to_string(),
             20,
             20,
             FilType::FilTablespace,
@@ -148,7 +148,7 @@ mod tests {
 
         // Create a space
         let fil_space_result = fil.space_create(
-            file_name.to_string(),
+            &file_name.to_string(),
             space_id,
             20,
             FilType::FilTablespace,
@@ -172,7 +172,7 @@ mod tests {
         let mut version_id = 1;
         for space_id in 0..10 {
             let fil_space_result = fil.space_create(
-                format!("test_{}", space_id).to_string(),
+                &format!("test_{}", space_id).to_string(),
                 space_id,
                 20,
                 FilType::FilTablespace,
@@ -200,7 +200,7 @@ mod tests {
         {
             // Create a space
             let fil_space_result = fil.space_create(
-                file_name.to_string(),
+                &file_name.to_string(),
                 space_id,
                 20,
                 FilType::FilTablespace,
@@ -217,7 +217,7 @@ mod tests {
             let space_id = 21;
             // Create a space
             let fil_space_result = fil.space_create(
-                "log_space".to_string(),
+                &"log_space".to_string(),
                 space_id,
                 20,
                 FilType::FilLog,
@@ -240,7 +240,7 @@ mod tests {
         let file_name = "test";
 
         let fil_space_result = fil.space_create(
-            file_name.to_string(),
+            &file_name.to_string(),
             20,
             20,
             FilType::FilTablespace,
@@ -290,7 +290,7 @@ mod tests {
         let file_name = "test";
         let space_id = 20;
         let fil_space_result = fil.space_create(
-            file_name.to_string(),
+            &file_name.to_string(),
             space_id,
             20,
             FilType::FilTablespace,
@@ -317,5 +317,16 @@ mod tests {
         );
 
         assert!(read_result.is_ok());
+    }
+
+    #[test]
+    fn test_make_fil_name() {
+        let os_io = Arc::new(Mutex::new(OsIo::new()));
+        let fil = Fil::new(10, os_io);
+
+        // Test with a valid file name
+        let file_name = "test_file";
+        let result = fil.make_ibd_filename(file_name);
+        assert_eq!(result, "/tmp/test_file.ibd");
     }
 }
