@@ -1,9 +1,10 @@
-use crate::buf::buf0buf::BufPool;
+use crate::buf::buf0types::BufBlock;
 use crate::fil::fil0fil::Fil;
-use crate::innodb::innodb0types::{DbErr, PageNo, SpaceId};
-use crate::os::os0file::IORequest;
+use crate::innodb::innodb0types::{DbErr, PageNo, SpaceId, UNIV_PAGE_SIZE};
+use crate::os::os0file::{IORequest, IOResult};
 use crate::trx::trx0sys::TRX_SYS_SPACE;
 use crate::ut::ut0dbg::ut_a;
+use crate::ut_panic;
 use std::sync::{Arc, RwLock};
 use tracing::{error, warn};
 
@@ -13,8 +14,6 @@ use tracing::{error, warn};
 /// including synchronous and asynchronous reads, as well as read-ahead strategies
 /// to optimize I/O performance.
 pub struct BufRea {
-    /// Reference to the buffer pool for page management
-    buf_pool: Arc<RwLock<BufPool>>,
     /// Reference to the file system interface for I/O operations
     fil: Arc<RwLock<Fil>>,
 }
@@ -28,8 +27,8 @@ impl BufRea {
     ///
     /// # Returns
     /// A new BufRea instance
-    pub fn new(buf_pool: Arc<RwLock<BufPool>>, fil: Arc<RwLock<Fil>>) -> Self {
-        BufRea { buf_pool, fil }
+    pub fn new(fil: Arc<RwLock<Fil>>) -> Self {
+        BufRea { fil }
     }
 
     /// Reads a page from disk into the buffer pool.
@@ -44,15 +43,22 @@ impl BufRea {
     /// # Returns
     /// * `true` - If the read operation was initiated successfully
     /// * `false` - If the read operation failed
-    pub fn buf_read_page(&self, space_id: SpaceId, page_no: PageNo) -> bool {
+    pub fn buf_read_page(
+        &self,
+        io_request: IORequest,
+        space_id: SpaceId,
+        page_no: PageNo,
+        buf_block: Arc<RwLock<BufBlock>>,
+    ) -> bool {
+        // TODO(rahul) Check if the page is from double write buffer.
+
         let fil = self.fil.read().unwrap();
         let table_space_version = fil.space_get_version(space_id);
 
         self.buf_read_page_low(
-            IORequest::SyncRead,
+            io_request,
             false,
-            space_id,
-            page_no,
+            buf_block,
             table_space_version.unwrap_or(-1),
         );
         true
@@ -77,14 +83,21 @@ impl BufRea {
         &self,
         io_request: IORequest,
         batch: bool,
-        space_id: SpaceId,
-        page_no: PageNo,
+        buf_block: Arc<RwLock<BufBlock>>,
         table_space_version: i64,
     ) -> DbErr {
         ut_a!(
             io_request == IORequest::SyncRead
                 || io_request == IORequest::AsyncRead
         );
+
+        let (space_id, page_no) = {
+            let buf_block = buf_block.read().unwrap();
+            let page_id =
+                buf_block.buf_block_get_page().borrow().get_page_id();
+
+            (page_id.space_id, page_id.page_no)
+        };
 
         if space_id == TRX_SYS_SPACE as u32 {
             error!("trying to read the double write buffer page: {}", page_no);
@@ -94,7 +107,33 @@ impl BufRea {
             ));
         }
 
-        let pool = self.buf_pool.write().unwrap();
+        let page = {
+            let buf_block = buf_block.read().unwrap();
+            buf_block.get_page()
+        };
+
+        let io_result = {
+            let mut fil_guard = self.fil.write().unwrap();
+            fil_guard.io(
+                io_request.clone(),
+                batch,
+                space_id,
+                page_no,
+                0,
+                page.to_page_frame(),
+                UNIV_PAGE_SIZE,
+            )
+        };
+
+        match io_result {
+            Ok(result) => match result {
+                IOResult::Read(read_result) => {}
+                IOResult::Write(_) => {
+                    ut_panic!("only write result expected here");
+                }
+            },
+            Err(err) => return err,
+        }
 
         DbErr::DbSuccess
     }

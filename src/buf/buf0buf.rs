@@ -1,16 +1,18 @@
 use crate::buf::buf0lru::BufLRU;
+use crate::buf::buf0rea::BufRea;
 use crate::buf::buf0types::BufIoFix::BufIoRead;
 use crate::buf::buf0types::{
     BufBlock, BufChunk, BufPage, BufPageState, BufPoolStats,
-    FlushListAdapter, FreeListAdapter, LruAdapter, Request, BUF_GET_ALWAYS,
-    BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH,
+    FlushListAdapter, Request, BUF_GET_ALWAYS, BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH,
 };
 use crate::fil::fil0fil::Fil;
+use crate::fsp::fsp0fsp::ut_bits_in_bytes;
 use crate::innodb::innodb0types::{
     DbErr, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
 };
 use crate::mtr::mtr0mtr::Mtr;
 use crate::mtr::mtr0types::MtrState;
+use crate::os::os0file::IORequest;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::ut_ad;
 use crate::{
@@ -19,12 +21,11 @@ use crate::{
 use intrusive_collections::{LinkedList, UnsafeRef};
 use parking_lot::lock_api::RawRwLock;
 use std::alloc::{alloc_zeroed, Layout};
-use std::cell;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::cmp::min;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 use tracing::info;
 
@@ -51,6 +52,8 @@ pub struct BufPool {
     chunks: Vec<Arc<RwLock<BufChunk>>>,
     /// Statistics about the buffer pool
     stat: RefCell<BufPoolStats>,
+    /// Reference to the buffer read manager for handling page reads.
+    buf_rea: Arc<RefCell<BufRea>>,
 }
 impl BufPool {
     /// Creates a new Buffer Pool instance.
@@ -60,7 +63,11 @@ impl BufPool {
     ///
     /// # Returns
     /// A new BufPool instance with initialized data structures
-    pub fn new(fil: Arc<RwLock<Fil>>, buf_lru: Arc<RefCell<BufLRU>>) -> Self {
+    pub fn new(
+        fil: Arc<RwLock<Fil>>,
+        buf_lru: Arc<RefCell<BufLRU>>,
+        buf_rea: Arc<RefCell<BufRea>>,
+    ) -> Self {
         BufPool {
             freed_page_clock: 0,
             curr_size: 0,
@@ -70,6 +77,7 @@ impl BufPool {
             buf_lru,
             chunks: vec![],
             stat: RefCell::new(BufPoolStats::new()),
+            buf_rea,
         }
     }
 
@@ -91,10 +99,10 @@ impl BufPool {
     /// # Returns
     /// * `Some(BufBlock)` - A free buffer block if available
     /// * `None` - If no free blocks are available
-    pub fn get_free_block(&mut self) -> Option<Weak<RefCell<BufBlock>>> {
+    pub fn get_free_block(&mut self) -> Option<Arc<RwLock<BufBlock>>> {
         if let Some(r) = self.buf_lru.borrow_mut().get_free_block() {
             info!("free block found");
-            Some(Rc::downgrade(&r))
+            Some(r)
         } else {
             info!("free block not found");
             None
@@ -113,7 +121,7 @@ impl BufPool {
     /// # Returns
     /// * `Some(&BufBlock)` - A reference to the buffer block containing the requested page
     /// * `None` - If the page is not in the pool and cannot be loaded based on request mode
-    pub fn get(&self, request: Request) -> Option<Arc<RwLock<BufBlock>>> {
+    pub fn get(&mut self, request: Request) -> Option<Arc<RwLock<BufBlock>>> {
         ut_ad!(request.mtr.get_mtr_state() == MtrState::MTR_ACTIVE);
         ut_ad!(
             request.rw_latch == ReadWriteLatch::NoLatch
@@ -131,13 +139,14 @@ impl BufPool {
         );
 
         self.stat.borrow_mut().n_pages_get += 1;
+        let mut n_retries = 0u32;
 
         // TODO(Rahul): Understand the logic of `guess`.
 
         // TODO: Implement retry logic for getting a page for n number of times.
 
         // 1. First, check if the page is already in the buffer pool.
-        let block_opt = self.page_hash.get(&request.page_id);
+        let block_opt = self.page_hash.get(&request.page_id).cloned();
 
         match block_opt {
             // 2. The page is not in the buffer pool, and the request mode is BUF_GET_NO_LATCH.
@@ -145,6 +154,56 @@ impl BufPool {
             None => {
                 if request.mode == BUF_GET_IF_IN_POOL {
                     return None;
+                }
+
+                // 3. The page is not in the buffer pool, and try reading it.
+                let result = self.init_for_read(
+                    request.page_id.space_id,
+                    request.page_id.page_no,
+                    -1,
+                );
+
+                let b = match result {
+                    Ok(Some(block)) => {
+                        // Successfully initialized the page for read.
+                        Some(block)
+                    }
+                    Ok(None) => {
+                        ut_panic!(
+                            "Failed to initialize page for read: Page not found in tablespace"
+                        );
+                        None
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            "Failed to initialize page for read: {}",
+                            err
+                        );
+                        ut_panic!(
+                            "Failed to initialize page for read: {}",
+                            err
+                        );
+                        None
+                    }
+                };
+
+                let buf_block =
+                    some_or_panic!(b, "failed to initialize page for read");
+
+                let buf_rea = self.buf_rea.borrow_mut();
+                if buf_rea.buf_read_page(
+                    IORequest::SyncRead,
+                    request.page_id.space_id,
+                    request.page_id.page_no,
+                    buf_block.clone(),
+                ) {
+                    // Successfully read the page.
+                    let buf_block = buf_block.read().unwrap();
+                    let buf_page = buf_block.buf_block_get_page();
+                    let mut buf_page_ref = buf_page.borrow_mut();
+                    self.io_complete(buf_page_ref.deref_mut());
+
+                    n_retries += 1;
                 }
             }
             Some(_) => {}
@@ -293,7 +352,7 @@ impl BufPool {
     ///
     /// # Parameters
     /// * `buf_page` - The buffer page for which I/O has completed
-    pub fn io_complete(&self, buf_page: BufPage) {}
+    pub fn io_complete(&self, buf_page: &mut BufPage) {}
 
     /// Initializes a page for reading into the buffer pool.
     ///
@@ -312,33 +371,42 @@ impl BufPool {
         table_space_version: i64,
     ) -> Result<Option<Arc<RwLock<BufBlock>>>, DbErr> {
         /* 1. Check if the block is present in the buffer pool.*/
-        let block = self.page_hash.get(&PageId { space_id, page_no });
+        {
+            let block_get = self.page_hash.get(&PageId { space_id, page_no });
 
-        if let Some(buf_block) = block {
-            return Ok(None);
+            if let Some(buf_block) = block_get {
+                return Ok(Some(buf_block.clone()));
+            }
         }
 
+        let block = self.get_free_block();
+
         /* 2. Check if the tablespace is being deleted or already deleted. */
-        let fil = self.fil.read().unwrap();
-        if fil
-            .tablespace_deleted_or_being_deleted(space_id, table_space_version)
         {
-            tracing::warn!(
-                "Trying to read a page from a deleted tablespace or is being deleted: {}",
-                space_id
-            );
-            return Ok(None);
+            let fil = self.fil.read().unwrap();
+            if fil.tablespace_deleted_or_being_deleted(
+                space_id,
+                table_space_version,
+            ) {
+                tracing::warn!(
+                    "Trying to read a page from a deleted tablespace or is being deleted: {}",
+                    space_id
+                );
+                return Ok(None);
+            }
         }
 
         /* 3. Allocate a new buffer block for the page. */
-        let block = block.unwrap();
-        let mut block_ref = block.write().unwrap();
+        let block = some_or_panic!(block, "buf_block should be present");
+        {
+            let block_ref = block.write().unwrap();
 
-        let buf_page = block_ref.buf_block_get_page();
-        let mut buf_page_ref = buf_page.borrow_mut();
-        self.buf_lru.borrow_mut().add_block(&mut buf_page_ref, false);
+            let buf_page = block_ref.buf_block_get_page();
+            let mut buf_page_ref = buf_page.borrow_mut();
+            self.buf_lru.borrow_mut().add_block(&mut buf_page_ref, false);
+        }
 
-        self.page_init(space_id, page_no, block_ref.deref_mut());
+        self.page_init(space_id, page_no, block.clone());
 
         let ret = Some(block.clone());
         Ok(ret)
@@ -370,11 +438,42 @@ impl BufPool {
     /// * `page_no` - The page number within the tablespace
     /// * `buf_block` - The buffer block to initialize
     pub fn page_init(
-        &self,
+        &mut self,
         space_id: SpaceId,
         page_no: PageNo,
-        buf_block: &mut BufBlock,
-    ) {}
+        buf_block: Arc<RwLock<BufBlock>>,
+    ) {
+        info!(
+            "Initializing page in buffer pool: space_id={}, page_no={}",
+            space_id, page_no
+        );
+
+        ut_ad!(
+            buf_block.read().unwrap().buf_block_get_state()
+                != BufPageState::BufBlockFilePage
+        );
+
+        // Set the state of the block to BufBlockFilePage.
+        self.buf_block_set_file_page(buf_block.write().unwrap().deref_mut());
+
+        let result = self
+            .page_hash
+            .insert(PageId { space_id, page_no }, buf_block.clone());
+        ut_ad!(result.is_none(), "failed to insert page into hash map");
+    }
+
+    /// Sets the state of a buffer block to indicate it is a file page.
+    ///
+    /// #Arguments
+    /// * `buf_block` - The buffer block to set the state for
+    ///
+    fn buf_block_set_file_page(&mut self, buf_block: &mut BufBlock) {
+        buf_block.buf_block_set_state(BufPageState::BufBlockFilePage);
+
+        ut_ad!(
+            buf_block.buf_block_get_state() == BufPageState::BufBlockFilePage
+        );
+    }
 
     /// Frees a buffer block and returns it to the free list.
     ///
@@ -403,32 +502,32 @@ impl BufPool {
     /// * `Some(Rc<RefCell<BufBlock>>)` - A reference to the newly created buffer block
     /// * `None` - If no free blocks are available
     ///
-    /// # Panics
+    /// # Panic
     /// Panics in debug mode if the mini-transaction is not active
     pub fn create(
         &mut self,
         space_id: SpaceId,
         page_no: PageNo,
         mtr: &mut Mtr,
-    ) -> Option<Rc<RefCell<BufBlock>>> {
+    ) -> Option<Arc<RwLock<BufBlock>>> {
         ut_ad!(mtr.get_mtr_state() == MtrState::MTR_ACTIVE);
 
         let free_block = self.get_free_block();
         if let Some(block) = free_block {
-            if let Some(buf_block) = block.upgrade() {
-                let mut block_ref = buf_block.borrow_mut();
-                let block = block_ref.deref_mut();
+            {
+                let mut buf_block = block.write().unwrap();
+                let buf_block_ref = buf_block.deref_mut();
 
-                if block.buf_block_get_page().borrow().in_file() {
-                    self.block_free(block);
+                if buf_block_ref.buf_block_get_page().borrow().in_file() {
+                    self.block_free(buf_block_ref);
 
                     // return using the Get methods.
                 }
-
-                self.page_init(space_id, page_no, block);
-
-                return Some(buf_block.clone());
             }
+
+            self.page_init(space_id, page_no, block.clone());
+
+            return Some(block.clone());
         }
 
         None
@@ -457,7 +556,7 @@ impl BufPool {
     /// # Returns
     /// * `Arc<RwLock<BufChunk>>` - A reference to the newly created buffer chunk
     ///
-    /// # Panics
+    /// # Panic
     /// Panics in debug mode if the memory size is not a multiple of the page size
     pub fn chunk_init(&mut self, mem_size: usize) -> Arc<RwLock<BufChunk>> {
         ut_ad!(mem_size % UNIV_PAGE_SIZE == 0);
@@ -469,16 +568,19 @@ impl BufPool {
         let no_of_pages = mem_size / UNIV_PAGE_SIZE;
 
         let mut buf_pages =
-            Vec::<RefCell<Rc<RefCell<BufBlock>>>>::with_capacity(no_of_pages);
+            Vec::<Arc<RwLock<BufBlock>>>::with_capacity(no_of_pages);
 
         ut_ad!(buf_pages.len() == 0);
 
         let mut buf_frame_ptr = mem_ptr;
-        for _index in 0..no_of_pages {
-            let buf_page =
-                RefCell::new(Rc::new(RefCell::new(BufPage::new(0, 0))));
-            let buf_block = RefCell::new(Rc::new(RefCell::new(
-                BufBlock::new(buf_page.clone(), buf_frame_ptr),
+        for index in 0..no_of_pages {
+            let buf_page = RefCell::new(Rc::new(RefCell::new(BufPage::new(
+                index as SpaceId,
+                index as PageNo,
+            ))));
+            let buf_block = Arc::new(RwLock::new(BufBlock::new(
+                buf_page.clone(),
+                buf_frame_ptr,
             )));
 
             let buf_page_ref = buf_page.borrow();
@@ -487,9 +589,12 @@ impl BufPool {
                 .borrow_mut()
                 .add_to_free_list(buf_page_ref.borrow_mut().deref_mut());
 
-            let buf_block_weak = Rc::downgrade(&buf_block.borrow());
+            let buf_block_weak = Arc::downgrade(&buf_block);
 
-            buf_page.borrow().borrow_mut().set_buf_block_ref(buf_block_weak);
+            buf_page
+                .borrow()
+                .borrow_mut()
+                .set_buf_block_ref(buf_block_weak.clone());
 
             buf_pages.push(buf_block);
 
@@ -527,9 +632,8 @@ impl BufPool {
 
     /// Sets the first access time of the page and potentially makes it young in the LRU list.
     ///
-    /// This method updates the access time of a buffer page and, if the page is considered
-    /// old enough based on the access time, moves it to the start of the buffer pool's LRU list
-    /// to prevent it from being evicted soon.
+    /// Updates the access time of a buffer page and, if it's old enough,
+    /// promotes it to the front of the LRU list to reduce the chance of eviction.
     ///
     /// # Parameters
     /// * `buf_page` - The buffer block to update

@@ -7,9 +7,11 @@ use crate::fil::fil0types::{
     FIL_PAGE_DATA_END, FIL_PAGE_NEXT, FIL_PAGE_OFFSET, FIL_PAGE_PREV,
     FIL_PAGE_SPACE_ID, FSEG_PAGE_DATA,
 };
+
 use crate::innodb::innodb0types::{
     PageFrame, PageNo, SpaceId, UNIV_PAGE_SIZE,
 };
+
 use crate::mtr::mtr0mtr::Mtr;
 use crate::rem::rem0rec::{
     Record, REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM,
@@ -229,6 +231,13 @@ impl Page {
     /// * A mutable reference to the page data as a `Vec<u8>`.
     pub fn page_get_as_mut_slice(&self) -> *mut [u8] {
         slice_from_raw_parts_mut(self.ptr, UNIV_PAGE_SIZE)
+    }
+
+    pub fn to_page_frame(&self) -> PageFrame {
+        unsafe {
+            let array_ptr = self.ptr as *mut [u8; UNIV_PAGE_SIZE];
+            PageFrame(&mut *array_ptr)
+        }
     }
 
     /// Set the max transaction id on the page.

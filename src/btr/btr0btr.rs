@@ -84,7 +84,7 @@ impl BTree {
         let mut mtr = mtr.unwrap();
         if prev_page_no != FILL_NULL {
             // Fetch the page from buffer_pool
-            let pool = self.buf_pool.write().unwrap();
+            let mut pool = self.buf_pool.write().unwrap();
             let buf_block = pool.get(Request {
                 rw_latch: ReadWriteLatch::SLatch,
                 page_id: PageId {
@@ -195,7 +195,7 @@ impl BTree {
         let mut mtr = mtr.unwrap();
         if next_page_no != FILL_NULL {
             // Fetch the page from buffer_pool
-            let pool = self.buf_pool.write().unwrap();
+            let mut pool = self.buf_pool.write().unwrap();
             let buf_block = pool.get(Request {
                 rw_latch: ReadWriteLatch::SLatch,
                 page_id: PageId {

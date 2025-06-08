@@ -29,12 +29,12 @@ use crate::innodb::innodb0types::{
 use crate::os::os0file::CreateMode::{OsFileCreate, OsFileOpen};
 use crate::os::os0file::{
     os_file_create, os_file_set_size, os_file_write, IORequest, IOResult,
-    WriteResult,
+    ReadResult, WriteResult,
 };
 use crate::os::os0io::{IoContext, OsIo};
-use crate::some_or_panic;
 use crate::srv::srv0srv::Config;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
+use crate::{some_or_panic, ut_panic};
 use intrusive_collections::{
     intrusive_adapter, LinkedList, LinkedListLink, UnsafeRef,
 };
@@ -474,11 +474,16 @@ impl Fil {
         };
 
         match result {
-            Ok(_) => {
+            Ok(io_result) => {
                 if io_request.is_sync() {
                     // Do something with the modification counter
                 }
-                Ok(IOResult::Write(WriteResult {}))
+
+                let is_read = io_request.is_read();
+                match is_read {
+                    true => Ok(IOResult::Read(ReadResult {})),
+                    false => Ok(IOResult::Write(WriteResult {})),
+                }
             }
             Err(err) => {
                 error!(
