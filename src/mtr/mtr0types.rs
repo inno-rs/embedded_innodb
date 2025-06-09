@@ -37,8 +37,10 @@
 ╚═══════════════════════════════╩═══════╩══════════════════════════════════════════════╝
 */
 use strum_macros::Display;
+use innodb::innodb0types::PageId;
+use crate::innodb;
 
-#[derive(Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MtrLogMode {
     /// Default log mode. Log all operations modifying the disk based data.
     MTR_LOG_MODE_ALL = 0,
@@ -93,6 +95,7 @@ pub enum MlogType {
 }
 
 #[derive(Display, Clone, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum MtrState {
     /// Undefined state.
     MTR_UNDEFINED = 0,
@@ -103,3 +106,63 @@ pub enum MtrState {
     /// The mini-transaction has committed.
     MTR_COMMITTED = 76,
 }
+
+
+/**
+Sync: Indicates that log records are written synchronously.
+Async: Indicates that log records are written asynchronously.
+*/
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogMode {
+    Sync,
+    Async,
+}
+/// Whether you fixed a page in shared or exclusive mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixMode {
+    Shared,
+    Exclusive,
+}
+
+/// A handle to an InnoDB latch.  
+/// Wraps the raw pointer for safety/documentation.
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub struct LatchHandle(*mut std::ffi::c_void);
+
+/// Whether the latch was taken shared or exclusive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockMode {
+    Shared,
+    Exclusive,
+}
+
+/// Any other kind of resource you might want to memoize.
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub struct OtherResource {
+    /// Some identifier unique to that resource
+    pub id: u64,
+    /// Flags or metadata
+    pub flags: u32,
+}
+
+/// Now our MemoSlot is a true Rust enum: each variant has its own fields,
+/// so you can’t mix page‐IDs with latch‐IDs by accident.
+
+#[derive(PartialEq, Copy, Clone)]
+pub enum MemoSlot {
+    /// A page “fix” (latch) in shared or exclusive mode.
+    PageFix { page: PageId, mode: FixMode },
+
+    /// You marked this page dirty.
+    PageDirty(PageId),
+
+    /// You acquired a shared or exclusive latch.
+    Latch { handle: LatchHandle, mode: LockMode },
+
+    /// Some other resource, with its own metadata.
+    Other(OtherResource),
+}
+
+
+/// A savepoint is just the current memo‐stack length at that moment.
+pub type Savepoint = usize;
