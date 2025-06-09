@@ -1,3 +1,6 @@
+use std::ptr::null_mut;
+use std::sync::{Arc, Mutex};
+
 use crate::buf::buf0types::BufBlock;
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
@@ -6,12 +9,10 @@ use crate::innodb::innodb0types::IbSearchMode::{
 };
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::{
-    Page, PAGE_DIR_SLOT_MAX_N_OWNED, PAGE_DIR_SLOT_MIN_N_OWNED, PAGE_N_RECS,
+    PAGE_DIR_SLOT_MAX_N_OWNED, PAGE_DIR_SLOT_MIN_N_OWNED, PAGE_N_RECS, Page,
 };
 use crate::rem::rem0rec::Record;
 use crate::ut::ut0dbg::ut_ad;
-use std::ptr::null_mut;
-use std::sync::{Arc, Mutex};
 
 /// Search modes for positioning a page cursor.
 ///

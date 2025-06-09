@@ -1,9 +1,21 @@
+use std::alloc::{Layout, alloc_zeroed};
+use std::cell::RefCell;
+use std::cmp::min;
+use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
+use std::rc::Rc;
+use std::sync::{Arc, Mutex, RwLock};
+
+use intrusive_collections::{LinkedList, UnsafeRef};
+use parking_lot::lock_api::RawRwLock;
+use tracing::info;
+
 use crate::buf::buf0lru::BufLRU;
 use crate::buf::buf0rea::BufRea;
 use crate::buf::buf0types::BufIoFix::BufIoRead;
 use crate::buf::buf0types::{
-    BufBlock, BufChunk, BufPage, BufPageState, BufPoolStats,
-    FlushListAdapter, Request, BUF_GET_ALWAYS, BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH,
+    BUF_GET_ALWAYS, BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH, BufBlock, BufChunk,
+    BufPage, BufPageState, BufPoolStats, FlushListAdapter, Request,
 };
 use crate::fil::fil0fil::Fil;
 use crate::fsp::fsp0fsp::ut_bits_in_bytes;
@@ -18,16 +30,6 @@ use crate::ut::ut0dbg::ut_ad;
 use crate::{
     lock_exclusive, lock_shared, some_or_panic, ut_2_power_up, ut_panic,
 };
-use intrusive_collections::{LinkedList, UnsafeRef};
-use parking_lot::lock_api::RawRwLock;
-use std::alloc::{alloc_zeroed, Layout};
-use std::cell::RefCell;
-use std::cmp::min;
-use std::collections::HashMap;
-use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
-use std::sync::{Arc, Mutex, RwLock};
-use tracing::info;
 
 /// Buffer Pool manages the caching of database pages in memory.
 ///
@@ -642,7 +644,8 @@ impl BufPool {
         &self,
         buf_page: &mut BufBlock,
         access_time: u64,
-    ) {}
+    ) {
+    }
 
     /// Gets the last access time of a buffer page.
     ///

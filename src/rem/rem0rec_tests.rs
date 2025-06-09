@@ -1,10 +1,12 @@
 #[cfg(test)]
 mod tests {
+    use std::alloc::{Layout, alloc, dealloc};
+
+    use tracing::info;
+
     use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
     use crate::rem::rem0rec::*;
-    use crate::tests::test0utils::{create_records, FieldType};
-    use std::alloc::{alloc, dealloc, Layout};
-    use tracing::info;
+    use crate::tests::test0utils::{FieldType, create_records};
 
     fn get_new_rec() -> (Record, Layout, *mut u8) {
         let layout =

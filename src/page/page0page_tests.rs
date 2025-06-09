@@ -1,5 +1,12 @@
 #[cfg(test)]
 mod tests {
+    use std::alloc::{Layout, alloc_zeroed};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use rstest::{fixture, rstest};
+    use tracing::info;
+
     use super::super::page0page::Page;
     use crate::buf::buf0types::{BufBlock, BufPage, Frame};
     use crate::dict::dict0types::Index;
@@ -7,11 +14,6 @@ mod tests {
     use crate::mtr::mtr0mtr::Mtr;
     use crate::page::page0page::*;
     use crate::rem::rem0rec::{Record, RecordData};
-    use rstest::{fixture, rstest};
-    use std::alloc::{alloc_zeroed, Layout};
-    use std::cell::RefCell;
-    use std::rc::Rc;
-    use tracing::info;
 
     struct PageFixture {
         index: Index,

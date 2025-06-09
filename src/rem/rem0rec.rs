@@ -1,3 +1,8 @@
+use std::ptr::{null, null_mut};
+use std::{ptr, slice};
+
+use tracing::{error, info};
+
 use crate::data::data0types::{DField, DTuple};
 use crate::dict::dict0types::Index;
 use crate::fil::fil0types::{FIL_PAGE_NEXT, FIL_PAGE_PREV};
@@ -5,9 +10,6 @@ use crate::innodb::innodb0types::{PageNo, UNIV_PAGE_SIZE, UNIV_SQL_NULL};
 use crate::page::page0page::Page;
 use crate::rem::rem0types::REC_MAX_N_FIELDS;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
-use std::ptr::{null, null_mut};
-use std::{ptr, slice};
-use tracing::{error, info};
 
 /// Info bit denoting the predefined minimum record:
 /// this bit is set if and only if the record

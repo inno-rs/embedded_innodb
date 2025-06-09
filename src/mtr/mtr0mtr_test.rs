@@ -1,8 +1,9 @@
 #[cfg(test)]
 mod tests {
     use crate::mtr::mtr0mtr::Mtr;
-    use crate::mtr::mtr0types::{MemoSlot, MtrLogMode, MtrState, OtherResource};
-    use super::*;
+    use crate::mtr::mtr0types::{
+        MemoSlot, MtrLogMode, MtrState, OtherResource,
+    };
 
     #[test]
     fn test_start_and_state() {
@@ -39,7 +40,7 @@ mod tests {
         let mtr = Mtr::new();
         let buf = [0x01, 0x02, 0x03];
         assert_eq!(mtr.read_ulint(&buf, 3), 0x030201);
-        let buf64 = [1u8,2,3,4,5,6,7,8];
+        let buf64 = [1u8, 2, 3, 4, 5, 6, 7, 8];
         assert_eq!(mtr.read_uint64(&buf64), 0x0807060504030201);
     }
 

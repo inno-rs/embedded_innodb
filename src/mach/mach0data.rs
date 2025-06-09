@@ -42,7 +42,6 @@ pub fn mach_write_to_8(buf: &mut [u8], val: usize) {
     buf.copy_from_slice(&(val as u64).to_le_bytes());
 }
 
-
 /// Read 4 bytes from the buffer.
 ///
 /// # Arguments

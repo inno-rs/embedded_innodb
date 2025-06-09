@@ -1,10 +1,11 @@
+use tracing::{error, info};
+
 use crate::data::data0types::{
-    BigRec, DField, DTuple, DType, DATA_CHAR, DATA_CLIENT, DATA_INT,
-    DATA_VARCHAR,
+    BigRec, DATA_CHAR, DATA_CLIENT, DATA_INT, DATA_VARCHAR, DField, DTuple,
+    DType,
 };
 use crate::innodb::innodb0types::UNIV_SQL_NULL;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
-use tracing::{error, info};
 
 impl DTuple {
     /// Creates a new tuple with the specified number of fields.
@@ -315,7 +316,7 @@ impl DField {
         let len = field1.dfield_get_len();
         len == field2.dfield_get_len()
             && (field1.dfield_get_len() == UNIV_SQL_NULL
-            || field1.dfield_get_data().eq(field2.dfield_get_data()))
+                || field1.dfield_get_data().eq(field2.dfield_get_data()))
     }
 }
 

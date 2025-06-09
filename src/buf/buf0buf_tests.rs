@@ -1,9 +1,15 @@
 #[cfg(test)]
 pub(super) mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
+
+    use rstest::{fixture, rstest};
+
     use crate::buf::buf0buf::BufPool;
     use crate::buf::buf0lru::BufLRU;
     use crate::buf::buf0rea::BufRea;
-    use crate::buf::buf0types::{Request, BUF_GET_IF_IN_POOL};
+    use crate::buf::buf0types::{BUF_GET_IF_IN_POOL, Request};
     use crate::fil::fil0fil::Fil;
     use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
     use crate::mtr::mtr0mtr::Mtr;
@@ -11,10 +17,6 @@ pub(super) mod tests {
     use crate::os::os0io::OsIo;
     use crate::os::os0runtime::create_runtime;
     use crate::sync::sync0rw::ReadWriteLatch;
-    use rstest::{fixture, rstest};
-    use std::cell::RefCell;
-    use std::rc::Rc;
-    use std::sync::{Arc, Mutex};
 
     pub struct BufPoolFixture {
         buf_lru: Arc<RefCell<BufLRU>>,
@@ -146,7 +148,12 @@ pub(super) mod tests {
                 mode: BUF_GET_IF_IN_POOL,
                 mtr: &mut mtr,
             });
-            assert!(page.is_some(), "Failed to get page for space_id: {}, page_no: {}", i, i);
+            assert!(
+                page.is_some(),
+                "Failed to get page for space_id: {}, page_no: {}",
+                i,
+                i
+            );
         }
     }
 }

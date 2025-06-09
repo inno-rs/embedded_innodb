@@ -5,8 +5,9 @@
 /// moving pages within the list, and ensuring proper page aging and eviction.
 #[cfg(test)]
 mod tests {
-    use crate::buf::buf0buf_tests::tests::BufPoolFixture;
     use rstest::{fixture, rstest};
+
+    use crate::buf::buf0buf_tests::tests::BufPoolFixture;
 
     /// Creates a new buffer pool fixture for testing.
     ///

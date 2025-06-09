@@ -39,12 +39,15 @@
 //!
 //!
 
+use std::ops::Range;
+use std::sync::{Arc, RwLock};
+
 use crate::buf::buf0buf::BufPool;
-use crate::buf::buf0types::{BufBlock, Request, BUF_GET_ALWAYS};
+use crate::buf::buf0types::{BUF_GET_ALWAYS, BufBlock, Request};
 use crate::fil::fil0types::{
     FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
 };
-use crate::fut::fut0lst::{flst_init, FilAddr};
+use crate::fut::fut0lst::{FilAddr, flst_init};
 use crate::innodb::innodb0types::PageFrame as InnoPageFrame;
 use crate::innodb::innodb0types::{PageId, SpaceId, UNIV_PAGE_SIZE};
 use crate::mtr::mtr0mtr::Mtr;
@@ -52,8 +55,6 @@ use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::ut_ad;
 use crate::{mach_read_from_4, some_or_panic};
-use std::ops::Range;
-use std::sync::{Arc, RwLock};
 
 /// Offset of the page data area inside a raw page
 pub const FIL_PAGE_DATA: usize = 38;
@@ -159,9 +160,7 @@ impl Fsp {
     ///
     /// Returns an empty `Fsp` struct that can be used to manage tablespace operations.
     pub fn new(buf_pool: Arc<RwLock<BufPool>>) -> Fsp {
-        Fsp {
-            buf_pool,
-        }
+        Fsp { buf_pool }
     }
 
     /// Initializes the basic fields in a file space header.
@@ -193,17 +192,17 @@ impl Fsp {
     /// # Returns
     ///
     /// An `Arc<RwLock<BufBlock>>` containing the space header block.
-    pub fn get_space_header_block(&self, space_id: SpaceId, mtr: &mut Mtr) -> Arc<RwLock<BufBlock>> {
-        let buf_block = self.buf_pool.write().unwrap().get(
-            Request {
-                rw_latch: ReadWriteLatch::XLatch,
-                page_id: PageId {
-                    space_id,
-                    page_no: 0,
-                },
-                mode: BUF_GET_ALWAYS,
-                mtr,
-            });
+    pub fn get_space_header_block(
+        &self,
+        space_id: SpaceId,
+        mtr: &mut Mtr,
+    ) -> Arc<RwLock<BufBlock>> {
+        let buf_block = self.buf_pool.write().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::XLatch,
+            page_id: PageId { space_id, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr,
+        });
 
         let block = some_or_panic!(buf_block);
 
@@ -211,7 +210,10 @@ impl Fsp {
         let frame = block_read.get_page_frame();
 
         ut_ad!(block_read.is_frame_x_latched());
-        ut_ad!(some_or_panic!(Self::get_space_header_from_page(frame)) == space_id);
+        ut_ad!(
+            some_or_panic!(Self::get_space_header_from_page(frame))
+                == space_id
+        );
 
         block.clone()
     }
@@ -225,7 +227,9 @@ impl Fsp {
     /// # Returns
     ///
     /// An `Option<SpaceId>` containing the space ID if it can be read, or `None` if the page frame is invalid.
-    pub fn get_space_header_from_page(page_frame: InnoPageFrame) -> Option<SpaceId> {
+    pub fn get_space_header_from_page(
+        page_frame: InnoPageFrame,
+    ) -> Option<SpaceId> {
         Some(mach_read_from_4!(page_frame.0, FSP_SPACE_ID_RANGE))
     }
 
@@ -247,6 +251,18 @@ impl Fsp {
 
         read_guard.get_page()
     }
+
+    pub fn header_init(
+        &self,
+        space_id: SpaceId,
+        space_size: u32,
+        mtr: &mut Mtr,
+    ) {
+        let header_page = self.get_header_page(space_id, mtr);
+        let mut fsp_header_page =
+            FspHeaderPage::new(header_page.to_page_frame().0);
+        fsp_header_page.header_init(space_id, space_size);
+    }
 }
 
 /// Represents a full 16 KiB InnoDB page buffer in memory.
@@ -266,7 +282,7 @@ pub struct FspHeaderPage<'a> {
 #[cfg(test)]
 impl<'a> FspHeaderPage<'a> {
     pub fn get_buf_mut(&mut self) -> &mut [u8; UNIV_PAGE_SIZE] {
-        ut_ad!(self.buf.as_ptr() as usize % UNIV_PAGE_SIZE ==0);
+        ut_ad!(self.buf.as_ptr() as usize % UNIV_PAGE_SIZE == 0);
 
         &mut self.buf
     }
@@ -643,7 +659,7 @@ impl<'a> ExtentDescriptor<'a> {
     /// # Arguments
     /// * `buf` - A mutable byte slice of at least XDES_SIZE bytes in length
     ///
-    /// # Panics
+    /// # Panic
     /// Panics if the provided buffer is smaller than XDES_SIZE
     pub fn new(buf: &'a mut [u8]) -> Self {
         assert!(
