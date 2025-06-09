@@ -122,7 +122,7 @@ impl BufRea {
                 space_id,
                 page_no,
                 0,
-                page.to_page_frame(),
+                page.to_page_frame().0,
                 UNIV_PAGE_SIZE,
             )
         };

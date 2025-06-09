@@ -27,9 +27,7 @@ use crate::mtr::mtr0types::MtrState;
 use crate::os::os0file::IORequest;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::ut_ad;
-use crate::{
-    lock_exclusive, lock_shared, some_or_panic, ut_2_power_up, ut_panic,
-};
+use crate::{some_or_panic, ut_2_power_up, ut_panic};
 
 /// Buffer Pool manages the caching of database pages in memory.
 ///
@@ -251,10 +249,10 @@ impl BufPool {
 
         match request.rw_latch {
             ReadWriteLatch::SLatch => {
-                lock_exclusive!(block_ref);
+                block_ref.frame_s_latch();
             }
             ReadWriteLatch::XLatch => {
-                lock_shared!(block_ref);
+                block_ref.frame_x_latch();
             }
             ReadWriteLatch::NoLatch => {
                 // The caller does not need any latch.

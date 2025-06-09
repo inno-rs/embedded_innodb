@@ -406,7 +406,7 @@ impl Fil {
         space_id: SpaceId,
         page_no: PageNo,
         byte_offset: usize,
-        page_frame: PageFrame,
+        buf: &mut [u8],
         len: usize,
     ) -> Result<IOResult, DbErr> {
         ut_ad!(len > 0);
@@ -478,7 +478,7 @@ impl Fil {
                     batch: false,
                     request: io_request.clone(),
                     fil_node: node.deref_mut(),
-                    buf: page_frame.0,
+                    buf,
                 },
                 len,
                 offset,

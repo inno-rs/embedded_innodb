@@ -1,11 +1,8 @@
 use std::cell::RefCell;
 use std::cmp::PartialEq;
-use std::ops::DerefMut;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use intrusive_collections::LinkedList;
-use intrusive_collections::linked_list::CursorMut;
 
 use crate::buf::buf0dblwr::DoubleWriteBuffer;
 use crate::buf::buf0flu::BufFlushType::{BufFlushList, BufFlushLru};
@@ -112,11 +109,8 @@ impl BufFlush {
         }
 
         match flush_type {
-            BufFlushList => {
-                // Lock pages. Need to figure out how to do this properly.
-            }
-            BufFlushLru => {
-                // Lock pages. Need to figure out how to do this properly.
+            BufFlushList | BufFlushLru => {
+                buf_block.frame_s_latch();
             }
             _rest_of_the_types => {
                 ut_panic!(
@@ -378,7 +372,8 @@ impl BufFlush {
                         .as_mut()
                         .try_into()
                         .expect("should be able to convert to PageFrame"),
-                ),
+                )
+                .0,
                 UNIV_PAGE_SIZE,
             )
             .expect("should not fail to write to file");
