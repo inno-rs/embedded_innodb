@@ -1,11 +1,16 @@
 use std::ops::DerefMut;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::buf::buf0types::BufBlock;
+use crate::fil::fil0fil::Fil;
 use crate::fsp::fsp0fsp::Fsp;
-use crate::innodb::innodb0types::{PageNo, SpaceId, UNIV_PAGE_SIZE};
-use crate::some_or_panic;
+use crate::innodb::innodb0types::{DbErr, PageNo, SpaceId, UNIV_PAGE_SIZE};
+use crate::mtr::mtr0mtr::Mtr;
+use crate::os::os0file::{IORequest, IOResult};
+use crate::os::os0io::{IoContext, OsIo};
+use crate::trx::trx0sys::TRX_SYS_SPACE;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
+use crate::{some_or_panic, ut_panic};
 
 /// Size of the double write buffer.
 /// The formula is 1 + 2 * 128 * UNIV_PAGE_SIZE, which allocates enough space
@@ -15,7 +20,7 @@ pub const DOUBLE_WRITE_BUFFER_SIZE: usize = 1 + 2 * UNIV_PAGE_SIZE;
 /// A wrapper around a raw byte array that holds the double write buffer data.
 /// This is used to ensure proper memory alignment for database pages.
 #[repr(C, align(16384/* UNIV_PAGE_SIZE*/))]
-pub struct Block(pub [u8; DOUBLE_WRITE_BUFFER_SIZE]);
+pub struct WriteBuffer(pub [u8; DOUBLE_WRITE_BUFFER_SIZE]);
 
 /// The main double write buffer implementation.
 ///
@@ -27,11 +32,15 @@ pub struct DoubleWriteBuffer {
     /// Reference to the file space system
     fsp: Arc<RwLock<Fsp>>,
     /// The actual buffer storage
-    block: Box<Block>,
+    write_buffer: Box<WriteBuffer>,
     /// Index of the first free slot in the buffer
     first_free: usize,
     /// Collection of pages currently in the buffer
     pages: Vec<DoubleWriteBufferPage>,
+    /// Page no corresponding to the location in the SysTableSpace file.
+    page_no: usize,
+    /// Fil
+    fil: Arc<Mutex<Fil>>,
 }
 
 /// Represents a page in the double write buffer.
@@ -92,10 +101,15 @@ impl DoubleWriteBuffer {
     /// # Returns
     /// A new DoubleWriteBuffer instance
     ///
-    /// # Panics
+    /// # Panic
     /// Panics if the provided block is not properly aligned to page boundaries
-    pub fn new(fsp: Arc<RwLock<Fsp>>, block: Box<Block>, size: usize) -> Self {
-        let ptr = block.as_ref() as *const Block as *const u8;
+    pub fn new(
+        fsp: Arc<RwLock<Fsp>>,
+        writer_buffer: Box<WriteBuffer>,
+        fil: Arc<Mutex<Fil>>,
+        size: usize,
+    ) -> Self {
+        let ptr = writer_buffer.as_ref() as *const WriteBuffer as *const u8;
         // Ensure the block is properly aligned
         ut_a!(
             ptr as usize % UNIV_PAGE_SIZE == 0,
@@ -104,9 +118,11 @@ impl DoubleWriteBuffer {
 
         Self {
             fsp,
-            block,
+            write_buffer: writer_buffer,
             first_free: 0,
             pages: vec![DoubleWriteBufferPage::dummy(); size],
+            fil,
+            page_no: 0, /*todo: figure out how to get this block*/
         }
     }
 
@@ -127,7 +143,7 @@ impl DoubleWriteBuffer {
         }
 
         Some(
-            &mut self.block.0[dblwr_buffer_page.slot_id * UNIV_PAGE_SIZE
+            &mut self.write_buffer.0[dblwr_buffer_page.slot_id * UNIV_PAGE_SIZE
                 ..(dblwr_buffer_page.slot_id + 1) * UNIV_PAGE_SIZE],
         )
     }
@@ -194,7 +210,7 @@ impl DoubleWriteBuffer {
     /// - The page cannot be retrieved from the buffer
     pub fn append(&mut self, buf_block: &mut BufBlock) -> Result<(), String> {
         let chunk = self
-            .block
+            .write_buffer
             .deref_mut()
             .0
             .chunks_mut(UNIV_PAGE_SIZE)
@@ -219,6 +235,40 @@ impl DoubleWriteBuffer {
         dblwr_buffer.space_id = buf_page_ref.get_space_id();
 
         self.first_free += 1;
+
+        Ok(())
+    }
+
+    /// Write the contents of the write buffer up to first_free in a single shot.
+    /// Upon receipt of success from i/o, free up the double write buffer (we are using sync_write).
+    pub fn flush(&mut self) -> Result<(), String> {
+        // Go through all the pages, and write them to disk to free up the double write buffer.
+        ut_ad!(self.first_free != 0);
+
+        let mut mtr = Mtr::new();
+        let mut fil = self.fil.lock().unwrap();
+
+        let length = UNIV_PAGE_SIZE * self.first_free;
+        let buf = &mut (self.write_buffer.0.as_mut_slice()[..length]);
+        let result = fil.io(
+            IORequest::SyncWrite,
+            false,
+            TRX_SYS_SPACE as SpaceId,
+            self.page_no as PageNo,
+            0,
+            buf,
+            length,
+        );
+
+        match result {
+            Ok(_) => {
+                self.first_free = 0;
+                // Reset the write buffer.
+            }
+            Err(_) => {
+                ut_panic!("io error");
+            }
+        }
 
         Ok(())
     }

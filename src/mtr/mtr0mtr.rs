@@ -3,6 +3,7 @@ pub(crate) use crate::mtr::mtr0types::{
     LatchHandle, LockMode, MemoSlot, MtrLogMode, MtrState, Savepoint,
 };
 use crate::ut::ut0dbg::ut_ad;
+use crate::ut_panic;
 
 pub const MTR_MAGIC_N: u32 = 54551;
 pub struct Mtr {
@@ -70,7 +71,7 @@ impl Mtr {
     }
 
     pub fn memo_release(&mut self, to_release: &MemoSlot) {
-        debug_assert!(
+        ut_ad!(
             self.mtr_state == MtrState::MTR_ACTIVE,
             "memo release only allowed when ACTIVE"
         );
@@ -88,7 +89,7 @@ impl Mtr {
                 MemoSlot::Other(res) => { /* custom cleanup */ }
             }
         } else {
-            panic!("memo_release: slot not found");
+            ut_panic!("memo_release: slot not found");
         }
     }
 
@@ -112,7 +113,7 @@ impl Mtr {
     }
 
     pub fn commit(&mut self) {
-        debug_assert!(self.mtr_state == MtrState::MTR_ACTIVE);
+        ut_ad!(self.mtr_state == MtrState::MTR_ACTIVE);
         self.mtr_state = MtrState::MTR_COMMITTING;
         // 1) flush self.log_buffer.buf into the shared redo‐log
         //    (call into your Log Manager API here)
@@ -142,11 +143,11 @@ impl Mtr {
     ///
     pub fn rollback_to_savepoint(&mut self, savepoint: usize) {
         #[cfg(debug_assertions)]
-        debug_assert!(
+        ut_ad!(
             self.magic_n == MTR_MAGIC_N,
             "MTR magic mismatch in rollback_to_savepoint"
         );
-        debug_assert!(
+        ut_ad!(
             self.mtr_state == MtrState::MTR_ACTIVE,
             "must be ACTIVE to rollback to savepoint"
         );
@@ -177,14 +178,14 @@ impl Mtr {
                 "rollback_to_savepoint: popped savepoint {popped_sp}, but expected {savepoint}"
             );
         } else {
-            panic!("rollback_to_savepoint: no savepoint to pop");
+            ut_panic!("rollback_to_savepoint: no savepoint to pop");
         }
     }
 
     /// Read a variable‐length “ulint” (1–8 bytes, little‐endian) from `buf[0..type]`. .
     pub fn read_ulint(&self, buf: &[u8], ty: usize) -> u64 {
-        debug_assert!(ty <= 8, "type must be 1..=8");
-        debug_assert!(buf.len() >= ty, "buffer too small");
+        ut_ad!(ty <= 8, "type must be 1..=8");
+        ut_ad!(buf.len() >= ty, "buffer too small");
 
         // Copy the first `ty` bytes into a zeroed 8-byte array,
         // then convert that full array from Little Endian → u64.

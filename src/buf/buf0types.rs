@@ -6,6 +6,7 @@ use std::sync::{Arc, Weak};
 
 use intrusive_collections::{LinkedListLink, UnsafeRef, intrusive_adapter};
 use parking_lot::RwLock as ParkingLotRwLock;
+use parking_lot::lock_api::RawRwLock;
 use strum_macros::Display;
 
 use crate::buf::buf0flu::BufFlushType;
@@ -483,7 +484,7 @@ pub struct BufBlock {
     /// Pointer to the actual page data in memory
     frame: Frame,
     /// Lock for concurrency control when accessing this buffer block
-    pub(crate) rw_lock: Arc<ParkingLotRwLock<()>>,
+    rw_lock: Arc<ParkingLotRwLock<()>>,
 }
 
 impl BufBlock {
@@ -522,6 +523,18 @@ impl BufBlock {
     ///
     pub fn is_frame_s_latched(&self) -> bool {
         self.rw_lock.is_locked()
+    }
+
+    /// X latch the page frame.
+    pub fn frame_x_latch(&self) {
+        ut_ad!(self.is_frame_x_latched() == false);
+        unsafe { self.rw_lock.raw().lock_exclusive() };
+    }
+
+    /// S latch the page frame.
+    pub fn frame_s_latch(&self) {
+        ut_ad!(self.is_frame_s_latched() == false);
+        unsafe { self.rw_lock.raw().lock_shared() };
     }
 
     /// Gets the frame pointer for this buffer block.

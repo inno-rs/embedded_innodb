@@ -7,7 +7,7 @@ mod tests {
 
     use crate::buf::buf0buf::BufPool;
     use crate::buf::buf0dblwr::{
-        Block, DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer,
+        DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer, WriteBuffer,
     };
     use crate::buf::buf0flu::BufFlush;
     use crate::buf::buf0lru::BufLRU;
@@ -32,16 +32,18 @@ mod tests {
 
             let runtime = create_runtime(1);
             let os_io = Arc::new(Mutex::new(OsIo::new(runtime.clone())));
-            let fil = Arc::new(Mutex::new(Fil::new(100, os_io, runtime)));
+            let fil =
+                Arc::new(Mutex::new(Fil::new(100, os_io.clone(), runtime)));
             let rea = Arc::new(RefCell::new(BufRea::new(fil.clone())));
             let buf_lru = Arc::new(RefCell::new(BufLRU::new()));
             let buf_pool =
                 Arc::new(RwLock::new(BufPool::new(fil.clone(), buf_lru, rea)));
             let fsp = Arc::new(RwLock::new(Fsp::new(buf_pool.clone())));
-            let block = Box::new(Block([0u8; DOUBLE_WRITE_BUFFER_SIZE]));
+            let block = Box::new(WriteBuffer([0u8; DOUBLE_WRITE_BUFFER_SIZE]));
             let dblwr_buf = Arc::new(Mutex::new(DoubleWriteBuffer::new(
                 fsp,
                 block,
+                fil.clone(),
                 UNIV_PAGE_SIZE,
             )));
 

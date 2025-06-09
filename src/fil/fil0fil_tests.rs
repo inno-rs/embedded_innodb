@@ -252,7 +252,7 @@ mod tests {
             0,
             0,
             100,
-            page_frame,
+            page_frame.0,
             IB_FILE_BLOCK_SIZE,
         );
 
@@ -285,7 +285,7 @@ mod tests {
             space_id,
             0,
             0,
-            page_frame,
+            page_frame.0,
             IB_FILE_BLOCK_SIZE,
         );
 
