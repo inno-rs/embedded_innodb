@@ -1,18 +1,22 @@
-use crate::buf::buf0flu::BufFlushType;
-use crate::buf::buf0types::BufIoFix::BufIoNone;
-use crate::innodb::innodb0types::{Lsn, PageFrame, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE};
-use crate::mtr::mtr0mtr::Mtr;
-use crate::page::page0page::Page;
-use crate::sync::sync0rw::ReadWriteLatch;
-use crate::ut::ut0dbg::{ut_a, ut_ad};
-use intrusive_collections::{intrusive_adapter, LinkedListLink, UnsafeRef};
-use parking_lot::RwLock as ParkingLotRwLock;
 use std::cell::RefCell;
 use std::cmp::PartialEq;
 use std::rc::Rc;
 use std::sync::RwLock;
 use std::sync::{Arc, Weak};
+
+use intrusive_collections::{LinkedListLink, UnsafeRef, intrusive_adapter};
+use parking_lot::RwLock as ParkingLotRwLock;
 use strum_macros::Display;
+
+use crate::buf::buf0flu::BufFlushType;
+use crate::buf::buf0types::BufIoFix::BufIoNone;
+use crate::innodb::innodb0types::{
+    Lsn, PageFrame, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
+};
+use crate::mtr::mtr0mtr::Mtr;
+use crate::page::page0page::Page;
+use crate::sync::sync0rw::ReadWriteLatch;
+use crate::ut::ut0dbg::{ut_a, ut_ad};
 /// Magic number used to identify buffer pool pages that do not have a checksum.
 pub const BUF_NO_CHECKSUM_MAGIC: usize = 0xDEADBEEF;
 
@@ -589,7 +593,9 @@ impl BufBlock {
     }
 
     pub fn get_page_frame(&self) -> PageFrame {
-        let page_frame = unsafe { PageFrame(&mut *(self.frame as *mut [u8; UNIV_PAGE_SIZE])) };
+        let page_frame = unsafe {
+            PageFrame(&mut *(self.frame as *mut [u8; UNIV_PAGE_SIZE]))
+        };
         page_frame
     }
 }

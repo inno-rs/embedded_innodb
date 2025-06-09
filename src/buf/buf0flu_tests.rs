@@ -1,8 +1,13 @@
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::sync::{Arc, Mutex, RwLock};
+
+    use rstest::{fixture, rstest};
+
     use crate::buf::buf0buf::BufPool;
     use crate::buf::buf0dblwr::{
-        Block, DoubleWriteBuffer, DOUBLE_WRITE_BUFFER_SIZE,
+        Block, DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer,
     };
     use crate::buf::buf0flu::BufFlush;
     use crate::buf::buf0lru::BufLRU;
@@ -13,9 +18,6 @@ mod tests {
     use crate::log::log0log::Log;
     use crate::os::os0io::OsIo;
     use crate::os::os0runtime::create_runtime;
-    use rstest::{fixture, rstest};
-    use std::cell::RefCell;
-    use std::sync::{Arc, Mutex, RwLock};
 
     struct BufFluFixture {
         buf_flu: BufFlush,
@@ -33,7 +35,8 @@ mod tests {
             let fil = Arc::new(Mutex::new(Fil::new(100, os_io, runtime)));
             let rea = Arc::new(RefCell::new(BufRea::new(fil.clone())));
             let buf_lru = Arc::new(RefCell::new(BufLRU::new()));
-            let buf_pool = Arc::new(RwLock::new(BufPool::new(fil.clone(), buf_lru, rea)));
+            let buf_pool =
+                Arc::new(RwLock::new(BufPool::new(fil.clone(), buf_lru, rea)));
             let fsp = Arc::new(RwLock::new(Fsp::new(buf_pool.clone())));
             let block = Box::new(Block([0u8; DOUBLE_WRITE_BUFFER_SIZE]));
             let dblwr_buf = Arc::new(Mutex::new(DoubleWriteBuffer::new(

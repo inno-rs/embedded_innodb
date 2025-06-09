@@ -1,17 +1,19 @@
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use rstest::{fixture, rstest};
+    use uuid::Uuid;
+
     use crate::fil::fil0fil::Fil;
-    use crate::fil::fil0types::{FilType, FIL_IBD_FILE_INITIAL_SIZE};
+    use crate::fil::fil0types::{FIL_IBD_FILE_INITIAL_SIZE, FilType};
     use crate::innodb::innodb0types::DbErr::DbTablespaceDeleted;
     use crate::innodb::innodb0types::{
-        PageFrame, IB_FILE_BLOCK_SIZE, UNIV_PAGE_SIZE,
+        IB_FILE_BLOCK_SIZE, PageFrame, UNIV_PAGE_SIZE,
     };
     use crate::os::os0file::IORequest;
     use crate::os::os0io::OsIo;
     use crate::os::os0runtime::create_runtime;
-    use rstest::{fixture, rstest};
-    use std::sync::{Arc, Mutex};
-    use uuid::Uuid;
 
     #[fixture]
     fn runtime() -> Arc<tokio::runtime::Runtime> {
@@ -24,7 +26,10 @@ mod tests {
     }
 
     #[fixture]
-    fn fil(runtime: Arc<tokio::runtime::Runtime>, os_io: Arc<Mutex<OsIo>>) -> Fil {
+    fn fil(
+        runtime: Arc<tokio::runtime::Runtime>,
+        os_io: Arc<Mutex<OsIo>>,
+    ) -> Fil {
         Fil::new(10, os_io, runtime)
     }
 
@@ -190,18 +195,19 @@ mod tests {
     #[rstest]
     #[case(FilType::FilTablespace, "test", 20)]
     #[case(FilType::FilLog, "log_space", 21)]
-    fn test_space_get_type(mut fil: Fil, #[case] fil_type: FilType, #[case] file_name: &str, #[case] space_id: u32) {
+    fn test_space_get_type(
+        mut fil: Fil,
+        #[case] fil_type: FilType,
+        #[case] file_name: &str,
+        #[case] space_id: u32,
+    ) {
         // No space is present, the result should be None.
         let result = fil.space_get_type(space_id);
         assert!(result.is_none());
 
         // Create a space
-        let fil_space_result = fil.space_create(
-            &file_name.to_string(),
-            space_id,
-            20,
-            fil_type,
-        );
+        let fil_space_result =
+            fil.space_create(&file_name.to_string(), space_id, 20, fil_type);
         assert!(fil_space_result);
 
         // Now we should be able to retrieve the type
@@ -264,7 +270,7 @@ mod tests {
             0,
             FIL_IBD_FILE_INITIAL_SIZE,
         )
-            .expect("Failed to create new single table space");
+        .expect("Failed to create new single table space");
 
         assert!(fil.space_get_file_node_count(space_id) > 0);
 
@@ -290,7 +296,11 @@ mod tests {
     #[case("test_file", "/tmp/test_file.ibd")]
     #[case("another_test", "/tmp/another_test.ibd")]
     #[case("data_file", "/tmp/data_file.ibd")]
-    fn test_make_fil_name(fil: Fil, #[case] file_name: &str, #[case] expected: &str) {
+    fn test_make_fil_name(
+        fil: Fil,
+        #[case] file_name: &str,
+        #[case] expected: &str,
+    ) {
         // Test with a valid file name
         let result = fil.make_ibd_filename(file_name);
         assert_eq!(result, expected);

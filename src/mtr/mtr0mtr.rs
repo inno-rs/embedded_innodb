@@ -78,10 +78,12 @@ impl Mtr {
             let slot = self.memo.remove(pos);
             // release slot exactly as in rollback_to_savepoint:
             match slot {
-                MemoSlot::PageFix { page, mode } => { /* buf_pool.unfix(page, mode) */
+                MemoSlot::PageFix { page, mode } => {
+                    /* buf_pool.unfix(page, mode) */
                 }
                 MemoSlot::PageDirty(page) => { /* clear dirty flag? */ }
-                MemoSlot::Latch { handle, mode } => { /* handle.release(mode) */
+                MemoSlot::Latch { handle, mode } => {
+                    /* handle.release(mode) */
                 }
                 MemoSlot::Other(res) => { /* custom cleanup */ }
             }

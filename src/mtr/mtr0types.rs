@@ -36,8 +36,9 @@
 ║ MLOG_SINGLE_REC_FLAG (flag)    ║ 128   ║ OR-flag: single-record MTR optimization       ║
 ╚═══════════════════════════════╩═══════╩══════════════════════════════════════════════╝
 */
-use strum_macros::Display;
 use innodb::innodb0types::PageId;
+use strum_macros::Display;
+
 use crate::innodb;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,8 +95,7 @@ pub enum MlogType {
     MLOG_UNDO_HDR_DISCARD = 23,
 }
 
-#[derive(Display, Clone, Eq, PartialEq)]
-#[derive(Debug)]
+#[derive(Display, Clone, Eq, PartialEq, Debug)]
 pub enum MtrState {
     /// Undefined state.
     MTR_UNDEFINED = 0,
@@ -106,7 +106,6 @@ pub enum MtrState {
     /// The mini-transaction has committed.
     MTR_COMMITTED = 76,
 }
-
 
 /**
 Sync: Indicates that log records are written synchronously.
@@ -162,7 +161,6 @@ pub enum MemoSlot {
     /// Some other resource, with its own metadata.
     Other(OtherResource),
 }
-
 
 /// A savepoint is just the current memo‐stack length at that moment.
 pub type Savepoint = usize;

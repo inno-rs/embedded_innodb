@@ -1,15 +1,17 @@
+use std::cmp::min;
+use std::io::SeekFrom;
+
+use strum_macros::Display;
+use tokio::fs::{File, OpenOptions};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::runtime::Runtime;
+
 use crate::block_on;
 /// This module provides file I/O operations for the embedded InnoDB storage engine.
 /// It includes functionality for file creation, opening, reading, writing, and size retrieval.
 use crate::innodb::innodb0types::IB_FILE_BLOCK_SIZE;
 use crate::ut::ut0dbg::ut_ad;
 use crate::ut::ut0ut::GLOBAL_RUNTIME;
-use std::cmp::min;
-use std::io::SeekFrom;
-use strum_macros::Display;
-use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-use tokio::runtime::Runtime;
 
 /// Represents a file handle in the operating system.
 ///
@@ -225,13 +227,11 @@ pub async fn os_file_write_async(
     ut_ad!(offset % IB_FILE_BLOCK_SIZE == 0);
     ut_ad!(len % IB_FILE_BLOCK_SIZE == 0);
 
-    if let Err(err) = os_file.seek(SeekFrom::Start(offset as u64)).await
-    {
+    if let Err(err) = os_file.seek(SeekFrom::Start(offset as u64)).await {
         return Err(format!("Failed to seek in file: {}", err));
     }
 
-    if let Err(err) = os_file.write(data).await
-    {
+    if let Err(err) = os_file.write(data).await {
         return Err(format!("Failed to write to file: {}", err));
     }
 
@@ -259,12 +259,7 @@ pub fn os_file_write(
     offset: usize,
     len: usize,
 ) -> Result<WriteResult, String> {
-    GLOBAL_RUNTIME.block_on(os_file_write_async(
-        os_file,
-        data,
-        offset,
-        len,
-    ))
+    GLOBAL_RUNTIME.block_on(os_file_write_async(os_file, data, offset, len))
 }
 
 /// Reads data from a file at the specified offset.
@@ -321,14 +316,8 @@ pub fn os_file_read(
     len: usize,
     buffer: &mut [u8],
 ) -> Result<ReadResult, String> {
-    GLOBAL_RUNTIME.block_on(os_file_read_async(
-        os_file,
-        offset,
-        len,
-        buffer,
-    ))
+    GLOBAL_RUNTIME.block_on(os_file_read_async(os_file, offset, len, buffer))
 }
-
 
 /// Asynchronously sets the size of a file.
 ///

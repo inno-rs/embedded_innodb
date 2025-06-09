@@ -1,6 +1,7 @@
+use std::sync::{Arc, Mutex};
+
 use crate::data::data0types::DType;
 use crate::innodb::innodb0types::{PageId, PageNo};
-use std::sync::{Arc, Mutex};
 
 pub struct Field {
     /// Pointer to the column.

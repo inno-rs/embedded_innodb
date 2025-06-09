@@ -1,14 +1,15 @@
+use intrusive_collections::{LinkedListLink, intrusive_adapter};
+
 use crate::buf::buf0types::BufBlock;
 use crate::dict::dict0types::Index;
 use crate::innodb::innodb0types::DbErr::DbFail;
 use crate::innodb::innodb0types::{DbErr, TxnId};
 use crate::lock::lock0types::{
-    LockMode, LockType, LOCK_COMPATIBILITY_MATRIX, LOCK_MODE_MASK,
+    LOCK_COMPATIBILITY_MATRIX, LOCK_MODE_MASK, LockMode, LockType,
 };
 use crate::mtr::mtr0mtr::Mtr;
 use crate::rem::rem0rec::Record;
 use crate::trx::trx0trx::Trx;
-use intrusive_collections::{intrusive_adapter, LinkedListLink};
 
 pub struct Lock {
     /// Transaction owning the lock.

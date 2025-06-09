@@ -1,7 +1,7 @@
 extern crate core;
 
 use tracing::info;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 mod btr;
 mod buf;

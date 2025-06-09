@@ -579,13 +579,15 @@ mod tests {
         assert_eq!(new_extent, Some(1)); // This should be extent #1
 
         // Verify that the space size was updated
-        let new_size = fsp_header_page.read_u32_le(FSP_HEADER_OFFSET + FSP_SIZE);
+        let new_size =
+            fsp_header_page.read_u32_le(FSP_HEADER_OFFSET + FSP_SIZE);
         assert_eq!(new_size, 128); // 64 (old) + 64 (new extent)
 
         // Get extent descriptor at new extent offset
         let extent_off = XDES_ARR_OFFSET + 1 * XDES_SIZE;
         let rel_off = extent_off - XDES_ARR_OFFSET;
-        let (_, xdes_area) = fsp_header_page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
+        let (_, xdes_area) =
+            fsp_header_page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
         let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
         let xdes = ExtentDescriptor::new(xdes_buf);
 

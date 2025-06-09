@@ -1,12 +1,14 @@
+use std::sync::{Arc, Mutex, RwLock};
+
 use crate::btr::btr0cur::{
-    BTreeCursor, Path, BTR_KEEP_SYS_FLAG, BTR_NO_LOCKING_FLAG, BTR_NO_UNDO_LOG,
+    BTR_KEEP_SYS_FLAG, BTR_NO_LOCKING_FLAG, BTR_NO_UNDO_LOG, BTreeCursor, Path,
 };
 use crate::btr::btr0types::BtrLatchMode::BtrContModifyTree;
 use crate::buf::buf0buf::BufPool;
 use crate::buf::buf0types::{BufBlock, Request};
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
-use crate::fil::fil0types::{FilSpace, FILL_NULL};
+use crate::fil::fil0types::{FILL_NULL, FilSpace};
 use crate::fsp::fsp0fsp::Fsp;
 use crate::innodb::innodb0types::PageId;
 use crate::lock::lock0lock::LockSys;
@@ -16,7 +18,6 @@ use crate::page::page0cur::PAGE_CUR_LE;
 use crate::rem::rem0rec::Record;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::ut_ad;
-use std::sync::{Arc, Mutex, RwLock};
 
 /// BTree represents a B-tree data structure used for efficient data storage and retrieval.
 ///

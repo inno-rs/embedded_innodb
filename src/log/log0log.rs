@@ -1,11 +1,12 @@
-use crate::innodb::innodb0types::{Lsn, IB_FILE_BLOCK_SIZE};
+use std::sync::{Arc, Condvar, Mutex};
+
+use crate::innodb::innodb0types::{IB_FILE_BLOCK_SIZE, Lsn};
 use crate::log::log0types::{
     LOG_BLOCK_CHECKPOINT_NO, LOG_BLOCK_FIRST_REC_GROUP,
     LOG_BLOCK_FLUSH_BIT_MASK, LOG_BLOCK_HDR_DATA_LENGTH, LOG_BLOCK_HDR_NO,
     LOG_BLOCK_HDR_SIZE, LOG_BLOCK_TRL_SIZE,
 };
 use crate::ut::ut0dbg::ut_ad;
-use std::sync::{Arc, Condvar, Mutex};
 
 /// We write to alternative checkpoint blocks when we make new checkpoints.
 /// This is to avoid overwriting the previous checkpoint blocks resulting in corruption.

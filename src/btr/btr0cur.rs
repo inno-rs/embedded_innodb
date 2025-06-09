@@ -1,3 +1,8 @@
+use std::cell::RefCell;
+use std::ptr::null_mut;
+use std::rc::Rc;
+use std::sync::{Arc, RwLock};
+
 use crate::btr::btr0btr::BTree;
 use crate::buf::buf0types::{BufBlock, BufPage};
 use crate::data::data0types::DTuple;
@@ -11,10 +16,6 @@ use crate::page::page0cur::PageCur;
 use crate::page::page0page::Page;
 use crate::rem::rem0rec::Record;
 use crate::ut::ut0dbg::ut_ad;
-use std::cell::RefCell;
-use std::ptr::null_mut;
-use std::rc::Rc;
-use std::sync::{Arc, RwLock};
 
 /// Flag indicating that undo logging should be skipped for this operation.
 pub const BTR_NO_UNDO_LOG: usize = 1;
@@ -313,5 +314,6 @@ impl<'a> BTreeCursor<'a> {
         mode: usize,
         latch_mode: usize,
         mtr: &mut Mtr,
-    ) {}
+    ) {
+    }
 }

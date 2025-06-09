@@ -1,3 +1,13 @@
+use std::cell::RefCell;
+use std::cmp::min;
+use std::ops::{Deref, DerefMut};
+use std::rc::{Rc, Weak};
+use std::sync::{Arc, RwLock};
+
+use intrusive_collections::{LinkedList, UnsafeRef};
+use parking_lot::RwLock as ParkingLotRwLock;
+use tracing::info;
+
 use crate::buf::buf0buf::BufPool;
 use crate::buf::buf0types::BufPageState::{
     BufBlockNotUsed, BufBlockReadyForUse,
@@ -11,14 +21,6 @@ use crate::mtr::mtr0mtr::Mtr;
 use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use crate::{some_or_panic, ut_panic};
-use intrusive_collections::{LinkedList, UnsafeRef};
-use parking_lot::RwLock as ParkingLotRwLock;
-use std::cell::RefCell;
-use std::cmp::min;
-use std::ops::{Deref, DerefMut};
-use std::rc::{Rc, Weak};
-use std::sync::{Arc, RwLock};
-use tracing::info;
 
 /// The denominator of lru_old_ratio.
 pub const OLD_RATIO_DIV: usize = 1024;
@@ -231,7 +233,8 @@ impl BufLRU {
                 ut_ad!(self.lru_old_head.is_some());
 
                 self.buf_page_set(buf_page, old);
-            } else if length == OLD_MIN_LENGTH {} else {
+            } else if length == OLD_MIN_LENGTH {
+            } else {
                 self.buf_page_set(buf_page, self.lru_old_head.is_some());
             }
         }
@@ -431,9 +434,9 @@ impl BufLRU {
         match block.buf_block_get_state() {
             n if n == BufPageState::BufBlockMemory
                 || n == BufBlockReadyForUse =>
-                {
-                    info!("bufblock state: {:?}", n);
-                }
+            {
+                info!("bufblock state: {:?}", n);
+            }
             n => {
                 ut_panic!(
                     "Block is not in a valid state to be freed: {:?}",
