@@ -3,11 +3,11 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use crate::buf::buf0types::BufBlock;
 use crate::fil::fil0fil::Fil;
-use crate::fsp::fsp0fsp::Fsp;
-use crate::innodb::innodb0types::{DbErr, PageNo, SpaceId, UNIV_PAGE_SIZE};
+use crate::innodb::innodb0types::{
+    DbErr, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
+};
 use crate::mtr::mtr0mtr::Mtr;
-use crate::os::os0file::{IORequest, IOResult};
-use crate::os::os0io::{IoContext, OsIo};
+use crate::os::os0file::IORequest;
 use crate::trx::trx0sys::TRX_SYS_SPACE;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
 use crate::{some_or_panic, ut_panic};
@@ -15,7 +15,7 @@ use crate::{some_or_panic, ut_panic};
 /// Size of the double write buffer.
 /// The formula is 1 + 2 * 128 * UNIV_PAGE_SIZE, which allocates enough space
 /// for the buffer header and two segments of 128 pages each.
-pub const DOUBLE_WRITE_BUFFER_SIZE: usize = 1 + 2 * UNIV_PAGE_SIZE;
+pub const DOUBLE_WRITE_BUFFER_SIZE: usize = 10 * UNIV_PAGE_SIZE;
 
 /// A wrapper around a raw byte array that holds the double write buffer data.
 /// This is used to ensure proper memory alignment for database pages.
@@ -24,13 +24,11 @@ pub struct WriteBuffer(pub [u8; DOUBLE_WRITE_BUFFER_SIZE]);
 
 /// The main double write buffer implementation.
 ///
-/// The double write buffer is a critical component in InnoDB for crash recovery.
+/// The double write buffer is a critical part in InnoDB for crash recovery.
 /// It writes pages twice: first to the double write buffer and then to the actual
 /// data files. This ensures that even if a page write is interrupted (e.g., due to
 /// a power failure), the database can recover using the copy in the double write buffer.
 pub struct DoubleWriteBuffer {
-    /// Reference to the file space system
-    fsp: Arc<RwLock<Fsp>>,
     /// The actual buffer storage
     write_buffer: Box<WriteBuffer>,
     /// Index of the first free slot in the buffer
@@ -94,7 +92,6 @@ impl DoubleWriteBuffer {
     /// which is critical for database page operations.
     ///
     /// # Parameters
-    /// * `fsp` - Reference to the file space system
     /// * `block` - The pre-allocated memory block for the double write buffer
     /// * `size` - The number of pages the buffer can hold
     ///
@@ -104,7 +101,6 @@ impl DoubleWriteBuffer {
     /// # Panic
     /// Panics if the provided block is not properly aligned to page boundaries
     pub fn new(
-        fsp: Arc<RwLock<Fsp>>,
         writer_buffer: Box<WriteBuffer>,
         fil: Arc<Mutex<Fil>>,
         size: usize,
@@ -117,7 +113,6 @@ impl DoubleWriteBuffer {
         );
 
         Self {
-            fsp,
             write_buffer: writer_buffer,
             first_free: 0,
             pages: vec![DoubleWriteBufferPage::dummy(); size],
@@ -209,30 +204,49 @@ impl DoubleWriteBuffer {
     /// - There is no space left in the double write buffer
     /// - The page cannot be retrieved from the buffer
     pub fn append(&mut self, buf_block: &mut BufBlock) -> Result<(), String> {
+        let page_frame = buf_block.get_page_frame();
+        let page_id = buf_block.buf_block_get_page().borrow().get_page_id();
+        self.append_low(page_id, page_frame.0)
+    }
+
+    /// (Low Level) Appends a buffer block to the double write buffer.
+    ///
+    /// This method copies the content of the provided buffer block to the next
+    /// available slot in the double write buffer and updates the metadata
+    /// (space_id and page_no) accordingly.
+    ///
+    /// # Parameters
+    /// `page_id`: Page id for the block.
+    /// `buf`: buffer of memory for the I/O.
+    ///
+    /// # Panic
+    /// Panics if:
+    /// - There is no space left in the double write buffer
+    /// - The page cannot be retrieved from the buffer
+    pub fn append_low(
+        &mut self,
+        page_id: PageId,
+        buf: &mut [u8],
+    ) -> Result<(), String> {
         let chunk = self
             .write_buffer
             .deref_mut()
             .0
             .chunks_mut(UNIV_PAGE_SIZE)
-            .skip(self.first_free - 1)
+            .skip(self.first_free)
             .next();
 
         ut_ad!(chunk.is_some(), "No space left in DoubleWriteBuffer");
         let chunk = chunk.unwrap();
 
-        let page = buf_block.get_page().page_get_as_mut_slice();
-
-        chunk.copy_from_slice(unsafe { &*page });
+        chunk.copy_from_slice(buf);
         let dblwr_buffer = some_or_panic!(
             self.pages.get_mut(self.first_free),
             "failed to get page from DoubleWriteBuffer"
         );
 
-        let buf_page = buf_block.buf_block_get_page();
-        let buf_page_ref = buf_page.borrow();
-
-        dblwr_buffer.page_no = buf_page_ref.get_page_no();
-        dblwr_buffer.space_id = buf_page_ref.get_space_id();
+        dblwr_buffer.page_no = page_id.page_no;
+        dblwr_buffer.space_id = page_id.space_id;
 
         self.first_free += 1;
 
@@ -246,27 +260,29 @@ impl DoubleWriteBuffer {
         ut_ad!(self.first_free != 0);
 
         let mut mtr = Mtr::new();
-        let mut fil = self.fil.lock().unwrap();
+        let result = {
+            let mut fil = self.fil.lock().unwrap();
 
-        let length = UNIV_PAGE_SIZE * self.first_free;
-        let buf = &mut (self.write_buffer.0.as_mut_slice()[..length]);
-        let result = fil.io(
-            IORequest::SyncWrite,
-            false,
-            TRX_SYS_SPACE as SpaceId,
-            self.page_no as PageNo,
-            0,
-            buf,
-            length,
-        );
+            let length = UNIV_PAGE_SIZE * self.first_free;
+            let buf = &mut (self.write_buffer.0.as_mut_slice()[..length]);
+
+            fil.io(
+                IORequest::SyncWrite,
+                false,
+                TRX_SYS_SPACE as SpaceId,
+                self.page_no as PageNo,
+                0,
+                buf,
+                length,
+            )
+        };
 
         match result {
             Ok(_) => {
-                self.first_free = 0;
-                // Reset the write buffer.
+                self.set_empty();
             }
-            Err(_) => {
-                ut_panic!("io error");
+            Err(err) => {
+                ut_panic!("{}", err);
             }
         }
 
