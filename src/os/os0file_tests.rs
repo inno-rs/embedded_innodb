@@ -109,7 +109,7 @@ mod tests {
         let offset = 0;
         let len = data.len();
         os_file_write(&mut os_file, data.as_slice(), offset, len);
-        os_file_fsync(os_file);
-        Ok(()); // Indicate a successful test run
+        let result = os_file_fsync(os_file);
+        assert!(result.is_ok());
     }
 }
