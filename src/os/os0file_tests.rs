@@ -3,7 +3,7 @@ mod tests {
     use crate::innodb::innodb0types::{IB_FILE_BLOCK_SIZE, UNIV_PAGE_SIZE};
     use crate::os::os0file::{
         CreateMode, WriteResult, os_file_create, os_file_delete,
-        os_file_get_size, os_file_read, os_file_set_size, os_file_write,
+        os_file_get_size, os_file_read, os_file_set_size, os_file_write, os_file_fsync
     };
 
     #[test]
@@ -94,5 +94,22 @@ mod tests {
         );
 
         os_file_delete(&file_name).expect("should remove file");
+    }
+    
+    #[test]
+    fn test_os_file_fsync() {
+        let file_creation_result =
+            os_file_create("test_file_fsync.txt", CreateMode::OsFileOpen);
+
+        let mut os_file = file_creation_result.unwrap();
+
+        // Write data to the file
+        let mut data = b"Data to be synced.".to_vec();
+        data.resize(IB_FILE_BLOCK_SIZE, 0);
+        let offset = 0;
+        let len = data.len();
+        os_file_write(&mut os_file, data.as_slice(), offset, len);
+        os_file_fsync(os_file);
+        Ok(()); // Indicate a successful test run
     }
 }
