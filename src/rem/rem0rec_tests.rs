@@ -5,7 +5,9 @@ mod tests {
     use tracing::info;
 
     use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
+    use crate::page::page0page::Page;
     use crate::rem::rem0rec::*;
+    use crate::some_or_panic;
     use crate::tests::test0utils::{FieldType, create_records};
 
     fn get_new_rec() -> (Record, Layout, *mut u8) {
@@ -196,5 +198,61 @@ mod tests {
         // Clean up
         free_rec(source_layout, source_ptr);
         free_rec(dest_layout, dest_ptr);
+    }
+
+    #[test]
+    fn test_rec_field_external_short_format() {
+        let owning_page = create_records(10, vec![FieldType::String]);
+        let page = owning_page.page;
+
+        for rec in get_user_records(page) {
+            if page.page_rec_is_user_rec(rec) {
+                assert!(rec.rec_get_1byte_offs_flag());
+            }
+        }
+    }
+
+    #[ignore]
+    #[test]
+    fn test_rec_field_external_2byte_format() {}
+
+    #[test]
+    fn test_rec_field_external_no_field_external() {
+        let owning_page = create_records(10, vec![FieldType::String]);
+        let page = owning_page.page;
+
+        for rec in get_user_records(page) {
+            if page.page_rec_is_user_rec(rec) {
+                let n_fields = rec.rec_get_n_fields();
+                for i in 0..n_fields {
+                    assert!(!rec.rec_nth_external(i));
+                }
+            }
+        }
+    }
+
+    #[ignore]
+    #[test]
+    fn test_rec_field_external_many_fields_external() {}
+
+    #[test]
+    fn test_rec_needs_external() {
+        assert_eq!(Page::page_rec_needs_ext(100), false);
+        assert_eq!(Page::page_rec_needs_ext(100000), true);
+    }
+
+    fn get_user_records(page: Page) -> Vec<Record> {
+        let mut result = Vec::<Record>::new();
+        let mut cur_rec = Some(page.page_get_infimum_rec());
+        while cur_rec.is_some() {
+            let rec = some_or_panic!(cur_rec);
+            if page.page_rec_is_user_rec(rec) {
+                result.push(rec);
+            }
+
+            cur_rec = cur_rec.unwrap().rec_get_next();
+        }
+
+        result
     }
 }

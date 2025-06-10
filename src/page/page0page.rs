@@ -1072,7 +1072,7 @@ impl Page {
     /// # Returns
     /// * `true` if the record needs to be stored externally, `false` otherwise
     ///
-    /// # Panics
+    /// # Panic
     /// Panics in debug mode if the record size is not greater than the extra bytes needed for a record
     pub fn page_rec_needs_ext(rec_size: usize) -> bool {
         ut_ad!(rec_size > REC_N_EXTRA_BYTES);

@@ -87,7 +87,10 @@ pub const REC_INFO_BITS_SHIFT: usize = 4;
 pub const REC_1BYTE_SQL_NULL_MASK: usize = 0x80;
 
 /// Bit to specify that the column is stored externally.
-pub const REC_OFFS_EXTERNAL: usize = 1 << 30;
+/// 1 byte format (aka REC_SHORT) does not support external fields.
+/// We have to use 2 byte format if we want to store fields externally.
+pub const REC_OFFS_EXTERNAL: u16 = 0x4000;
+pub const REC_OFFS_EXTERNAL_MASK: u16 = 0x3FFF;
 
 /// Record data enum.
 pub enum RecordData {
@@ -786,6 +789,39 @@ impl Record {
         // Before the record starts
         // we have metadata about the record.
         REC_N_EXTRA_BYTES + n_field + end_offset_n_field
+    }
+
+    /// Check whether the field offsets are stored in 1 byte or 2 byte format.
+    ///
+    /// # Returns
+    ///
+    /// True, if the format is 1 byte.
+    /// False, otherwise (2 byte).
+    pub fn rec_get_1byte_offs_flag(&self) -> bool {
+        unsafe {
+            let byte = self.ptr.sub(REC_SHORT).read_unaligned();
+            (byte & REC_SHORT_MASK as u8) >> REC_SHORT_SHIFT == 0
+        }
+    }
+
+    /// Returns true if the extern bit is set on the nth field.
+    ///
+    /// # Arguments
+    ///
+    /// `n_field`: The nth field.
+    ///
+    /// # Returns
+    ///
+    /// True if the nth field is external.
+    /// False, otherwise.
+    pub fn rec_nth_external(&self, n_field: usize) -> bool {
+        let (offset, _size) = self.rec_get_nth_field_offs(n_field);
+
+        if self.rec_get_1byte_offs_flag() {
+            false
+        } else {
+            offset as u16 & REC_OFFS_EXTERNAL_MASK == REC_OFFS_EXTERNAL
+        }
     }
 
     pub fn rec_copy_prefix_to_dtuple(
