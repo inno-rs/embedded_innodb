@@ -38,10 +38,8 @@ mod tests {
             let buf_lru = Arc::new(RefCell::new(BufLRU::new()));
             let buf_pool =
                 Arc::new(RwLock::new(BufPool::new(fil.clone(), buf_lru, rea)));
-            let fsp = Arc::new(RwLock::new(Fsp::new(buf_pool.clone())));
             let block = Box::new(WriteBuffer([0u8; DOUBLE_WRITE_BUFFER_SIZE]));
             let dblwr_buf = Arc::new(Mutex::new(DoubleWriteBuffer::new(
-                fsp,
                 block,
                 fil.clone(),
                 UNIV_PAGE_SIZE,
