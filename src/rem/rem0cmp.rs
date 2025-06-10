@@ -60,8 +60,6 @@ fn cmp_whole_field(
 /// # Arguments
 /// * `rec_1` - The first record.
 /// * `rec_2` - The second record.
-/// * `offset_1` - The offset of the first record.
-/// * `offset_2` - The offset of the second record.
 /// * `index` - The index to which the records belong.
 ///
 /// # Returns
@@ -69,13 +67,7 @@ fn cmp_whole_field(
 /// * `Ordering::Less` if the first record is less than the second record.
 /// * `Ordering::Greater` if the first record is greater than the second record.
 /// * `Ordering::Equal` if the records are equal.
-fn cmp_rec_rec(
-    rec_1: Record,
-    rec_2: Record,
-    offset_1: usize,
-    offset_2: usize,
-    index: &Index,
-) -> Ordering {
+fn cmp_rec_rec(rec_1: Record, rec_2: Record, index: &Index) -> Ordering {
     let rec1_n_fields = rec_1.rec_get_n_fields();
     let rec2_n_fields = rec_2.rec_get_n_fields();
 

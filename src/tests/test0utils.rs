@@ -77,6 +77,16 @@ pub enum FieldType {
     Double,
 }
 
+/// Create records.
+///
+/// # Arguments
+///
+/// `n`: Number of records.
+/// `fields`: Type of field in each record.
+///
+/// # Returns
+///
+/// `OwningPage`: A page that contains the newly created records.
 pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
     let dtuples = create_dtuples(n, fields);
 
