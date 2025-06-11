@@ -1,6 +1,8 @@
+use std::ops::Add;
 use std::ptr::{null, null_mut};
 use std::{ptr, slice};
 
+use strum_macros::Display;
 use tracing::{error, info};
 
 use crate::data::data0types::{DField, DTuple};
@@ -93,6 +95,7 @@ pub const REC_OFFS_EXTERNAL: u16 = 0x4000;
 pub const REC_OFFS_EXTERNAL_MASK: u16 = 0x3FFF;
 
 /// Record data enum.
+#[derive(Debug)]
 pub enum RecordData {
     Data(String),
     SqlNullData(),
@@ -142,6 +145,8 @@ impl OrphanRecord {
 
 #[derive(PartialEq, Debug, Copy, Clone)]
 pub struct Record {
+    // todo: Move to slice.
+    /// Pointer to the beginning of the record.
     ptr: *mut u8,
 }
 
@@ -299,6 +304,8 @@ impl Record {
     ) -> Record {
         info!("rec_convert_dtuple_to_rec");
 
+        let ret = Record { ptr: self.ptr };
+
         let n_fields = dtuple.dtuple_get_n_fields();
         let data_size = dtuple.dtuple_get_data_size();
 
@@ -341,7 +348,7 @@ impl Record {
                         unsafe {
                             let ptr = self.ptr.add(end_offset);
                             let src = field.dfield_get_data().as_ptr();
-                            ptr::copy_nonoverlapping(src, ptr, length);
+                            ptr.copy_from_nonoverlapping(src, length);
                         }
 
                         end_offset += length;
@@ -350,10 +357,11 @@ impl Record {
                 }
 
                 self.rec_1_set_field_end_info(i, ored_offset);
+                ut_ad!(ret.rec_1_get_field_end_info(i) == ored_offset)
             }
         }
 
-        Record { ptr: self.ptr }
+        ret
     }
 
     /// Gets the number of fields in the current record.
@@ -364,7 +372,6 @@ impl Record {
     ///
     pub fn rec_get_n_fields(&self) -> usize {
         unsafe {
-            info!("rec_get_n_fields: at={}", self.ptr as usize);
             let p = self.ptr.sub(REC_N_FIELDS) as *const u16;
             let val = p.read_unaligned();
             (val as usize & REC_N_FIELDS_MASK) >> REC_N_FIELDS_SHIFT
@@ -688,8 +695,13 @@ impl Record {
     /// * The data of the nth field as a String.
     /// * `None` if the field number is out of range.
     pub fn rec_get_data(&self, n_field: usize) -> Option<RecordData> {
+        ut_ad!(self.rec_get_n_fields() > n_field);
+
         let (offset, length) = self.rec_get_nth_field_offs(n_field);
-        info!("rec_get_data: offset={}, length={}", offset, length);
+        info!(
+            "rec_get_data: ptr={} offset={}, length={}",
+            self.ptr as usize, offset, length
+        );
 
         if length == UNIV_SQL_NULL {
             return Some(RecordData::SqlNullData());
@@ -723,6 +735,8 @@ impl Record {
             n_fields, n_fields, info_bits
         ));
 
+        output_builder.push_str(" fields ");
+
         for n_field in 0..n_fields {
             output_builder.push_str(&format!(" {}: ", n_field));
 
@@ -745,6 +759,17 @@ impl Record {
         output_builder
     }
 
+    /// Get the extra size of the record.
+    ///
+    /// # Returns
+    ///
+    /// Total extra size occupied by the record.
+    pub fn rec_get_extra_size(&self) -> usize {
+        let data_size = self.rec_get_data_size();
+        let n_fields = self.rec_get_n_fields();
+        Self::rec_get_converted_extra_size(data_size, n_fields, 0)
+    }
+
     /// Returns the extra size of a physical record if we know its data size and number of fields.
     ///
     ///  # Arguments
@@ -765,7 +790,7 @@ impl Record {
             return REC_N_EXTRA_BYTES + n_fields;
         }
 
-        todo!("implement for 2 byte offset")
+        REC_N_EXTRA_BYTES + n_fields * 2
     }
 
     /// Returns the total size of the physical record in bytes.
@@ -776,8 +801,10 @@ impl Record {
     ///
     /// * The total size of the record in bytes.
     pub fn rec_offs_size(&self) -> usize {
-        let n_field = self.rec_get_n_fields();
-        let mut end_offset_n_field = self.rec_1_get_field_end_info(n_field);
+        // n_fields is the total number of fields.
+        let n_fields = self.rec_get_n_fields();
+        let mut end_offset_n_field =
+            self.rec_1_get_field_end_info(n_fields - 1);
 
         if end_offset_n_field & REC_1BYTE_SQL_NULL_MASK
             == REC_1BYTE_SQL_NULL_MASK
@@ -788,7 +815,7 @@ impl Record {
         // The offset of the n-field end is measured from the record start.
         // Before the record starts
         // we have metadata about the record.
-        REC_N_EXTRA_BYTES + n_field + end_offset_n_field
+        REC_N_EXTRA_BYTES + n_fields + end_offset_n_field
     }
 
     /// Check whether the field offsets are stored in 1 byte or 2 byte format.
@@ -898,5 +925,26 @@ impl Record {
         }
 
         true
+    }
+
+    /// Get the byte at the provided offset for a field.
+    ///
+    /// # Arguments
+    ///
+    /// `n_field`: The nth field.
+    /// `offset`: The offset within the field.
+    ///
+    /// # Returns
+    ///
+    /// Byte present at the offset.
+    pub fn get_nth_field_byte_at_offset(
+        &self,
+        n_field: usize,
+        offset: usize,
+    ) -> u8 {
+        ut_ad!(self.rec_get_n_fields() > n_field);
+
+        let (field_offset, _size) = self.rec_get_nth_field_offs(n_field);
+        unsafe { self.ptr.add(field_offset + offset).read_unaligned() }
     }
 }

@@ -1,14 +1,20 @@
 #[cfg(test)]
 mod tests {
     use std::alloc::{Layout, alloc, dealloc};
+    use std::cmp::Ordering;
+    use std::sync::{Arc, Mutex};
 
     use tracing::info;
 
-    use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
+    use crate::dict::dict0types::{Column, Field, Index};
+    use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
     use crate::page::page0page::Page;
+    use crate::rem::rem0cmp::cmp_rec_rec;
     use crate::rem::rem0rec::*;
     use crate::some_or_panic;
-    use crate::tests::test0utils::{FieldType, create_records};
+    use crate::tests::test0utils::{
+        FieldType, create_new_fields, create_records, get_user_records,
+    };
 
     fn get_new_rec() -> (Record, Layout, *mut u8) {
         let layout =
@@ -157,9 +163,10 @@ mod tests {
 
         let mut count = 0;
         let mut cur_rec = Some(page.page_get_infimum_rec());
-        while cur_rec.is_some() {
+        assert!(page.page_rec_is_infimum(some_or_panic!(cur_rec)));
+        while let Some(rec) = cur_rec {
             count += 1;
-            cur_rec = cur_rec.unwrap().rec_get_next();
+            cur_rec = some_or_panic!(cur_rec).rec_get_next();
         }
 
         // 10 + 2 (infimum & supremum)
@@ -241,18 +248,24 @@ mod tests {
         assert_eq!(Page::page_rec_needs_ext(100000), true);
     }
 
-    fn get_user_records(page: Page) -> Vec<Record> {
-        let mut result = Vec::<Record>::new();
-        let mut cur_rec = Some(page.page_get_infimum_rec());
-        while cur_rec.is_some() {
-            let rec = some_or_panic!(cur_rec);
-            if page.page_rec_is_user_rec(rec) {
-                result.push(rec);
-            }
+    #[test]
+    fn test_rec_rec_match() {
+        let owning_page = create_records(2, vec![FieldType::String]);
+        let user_records = get_user_records(owning_page.page);
+        let rec1 = user_records[0];
+        let rec2 = user_records[1];
 
-            cur_rec = cur_rec.unwrap().rec_get_next();
+        let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
+        let fields = create_new_fields(1);
+        for field in fields {
+            index.add_field(field);
         }
 
-        result
+        info!("rec: {:?}", rec1.rec_to_string());
+        info!("rec: {:?}", rec2.rec_to_string());
+
+        let result = cmp_rec_rec(rec1, rec2, &index);
+
+        assert_eq!(result, Ordering::Equal);
     }
 }

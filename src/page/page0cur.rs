@@ -1,18 +1,22 @@
 use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
 
+use tracing::info;
+
 use crate::buf::buf0types::BufBlock;
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
 use crate::innodb::innodb0types::IbSearchMode::{
     IbCurG, IbCurGe, IbCurL, IbCurLe, IbCurrUnSupp,
 };
+use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::{
     PAGE_DIR_SLOT_MAX_N_OWNED, PAGE_DIR_SLOT_MIN_N_OWNED, PAGE_N_RECS, Page,
 };
-use crate::rem::rem0rec::Record;
+use crate::rem::rem0rec::{OrphanRecord, Record};
 use crate::ut::ut0dbg::ut_ad;
+use crate::{some_or_panic, ut_panic};
 
 /// Search modes for positioning a page cursor.
 ///
@@ -152,17 +156,17 @@ impl PageCur {
     ///
     /// * `()`: This function does not return a value.
     ///
-    /// # Panics
+    /// # Panic
     ///
     /// * If the cursor is already after the last record.
     /// * If no next record is found.
-    fn page_cur_move_to_next(&mut self) {
+    pub fn page_cur_move_to_next(&mut self) {
         if self.page_cur_is_after_last() {
-            panic!("Cursor is after the last record");
+            ut_panic!("Cursor is after the last record");
         }
         match self.rec.rec_get_next() {
             Some(next_rec) => self.rec = next_rec,
-            None => panic!("No next record found"),
+            None => ut_panic!("No next record found"),
         }
     }
 
@@ -265,10 +269,14 @@ impl PageCur {
         n_ext: usize,
         mtr: &mut Mtr,
     ) -> Option<Record> {
-        let mut record = Record::new(null_mut());
-        record = record.rec_convert_dtuple_to_rec(index, dtuple, n_ext);
+        let mut orphan_record =
+            OrphanRecord::new(vec![0; UNIV_PAGE_SIZE], dtuple.n_fields);
+        let orphan_record = orphan_record.get_record();
 
-        self.page_cur_insert_rec_low(record, mtr)
+        let index = Index::new(PageId::dummy());
+        let rec = orphan_record.rec_convert_dtuple_to_rec(&index, &dtuple, 0);
+
+        self.page_cur_insert_rec_low(rec, mtr)
     }
 
     /// Inserts a record next to the page cursor on an uncompressed page.
@@ -282,7 +290,7 @@ impl PageCur {
     ///
     /// # Returns
     ///
-    /// * `()`: This function does not return a value.
+    /// * `Option<Record>`: The newly created record.
     ///
     /// # Note
     ///
@@ -301,6 +309,7 @@ impl PageCur {
 
         /* 1. Get the size of the physical record. */
         let rec_size = rec.rec_offs_size();
+        let extra_size = rec.rec_get_extra_size();
 
         /* 2. Find a suitable space from page memory management. */
         let mut insert_rec_opt: Option<Record> = None;
@@ -311,11 +320,18 @@ impl PageCur {
                 todo!("found some element in the free list, utilize it.")
             }
             None => {
-                insert_rec_opt = self.page.page_mem_alloc_heap(rec_size);
+                let heap_location =
+                    some_or_panic!(self.page.page_mem_alloc_heap(rec_size));
+                // Record starts after extra size for all operations.
+                let rec =
+                    unsafe { Record::new(heap_location.add(extra_size)) };
+
+                info!("creating new record at: {}", rec.get_ptr() as usize);
+                insert_rec_opt.replace(rec);
             }
         }
 
-        let mut insert_rec = insert_rec_opt.unwrap();
+        let mut insert_rec = some_or_panic!(insert_rec_opt);
 
         /* 3. Copy the record. */
         rec.rec_copy(&mut insert_rec);
