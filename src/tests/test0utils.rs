@@ -1,19 +1,20 @@
 use std::alloc::{Layout, alloc_zeroed};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::buf::buf0types::{BufBlock, BufPage};
 use crate::data::data0types::{
     DATA_NOT_NULL, DField, DFieldBuilder, DTYPE_DECIMAL, DTYPE_DOUBLE,
-    DTYPE_FLOAT, DTYPE_INT, DTYPE_INT_UNSIGNED, DTYPE_VARCHAR, DTuple,
+    DTYPE_FLOAT, DTYPE_INT, DTYPE_INT_UNSIGNED, DTYPE_VARCHAR, DTuple, DType,
 };
-use crate::dict::dict0types::Index;
+use crate::dict::dict0types::{Column, Field, Index};
 use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE, UNIV_SQL_NULL};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0cur::PageCur;
 use crate::page::page0page::Page;
-use crate::rem::rem0rec::OrphanRecord;
+use crate::rem::rem0rec::Record;
+use crate::some_or_panic;
 
 /// A structure that owns both the data vectors and the DTuple that references them.
 ///
@@ -93,7 +94,7 @@ pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
     let owning_page = create_raw_page();
     let buf_block = owning_page.buf_block.clone();
 
-    let page_cur = PageCur::new(
+    let mut page_cur = PageCur::new(
         Arc::new(Index::new(PageId::dummy())),
         owning_page.page.page_get_infimum_rec(),
         buf_block,
@@ -101,17 +102,15 @@ pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
     );
 
     let mut mtr = Mtr::new();
+    let index = Index::new(PageId::dummy());
     for owning_dtuple in dtuples {
-        let mut orphan_record = OrphanRecord::new(
-            vec![0; UNIV_PAGE_SIZE],
-            owning_dtuple.dtuple.n_fields,
+        page_cur.page_cur_tuple_insert(
+            &owning_dtuple.dtuple,
+            &index,
+            0,
+            &mut mtr,
         );
-        let rec = orphan_record.get_record();
-
-        let index = Index::new(PageId::dummy());
-        rec.rec_convert_dtuple_to_rec(&index, &owning_dtuple.dtuple, 0);
-
-        page_cur.page_cur_insert_rec_low(rec, &mut mtr);
+        page_cur.page_cur_move_to_next();
     }
 
     owning_page
@@ -198,7 +197,7 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
 
             let data = vec![0x12, 0x34, 0x56, 0x78];
             let len = data.len();
-            let mut typ = DTYPE_INT;
+            let mut typ = DTYPE_INT.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
@@ -215,7 +214,7 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             let data = vec![1, 0, 0, 0, 0, 0, 0, 0];
             let data_ptr = data.as_ptr();
             let len = data.len();
-            let mut typ = DTYPE_INT_UNSIGNED;
+            let mut typ = DTYPE_INT_UNSIGNED.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
@@ -234,7 +233,7 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             let data = vec![0x01, 0x02, 0x03, 0x04, 0x05];
             let data_ptr = data.as_ptr();
             let len = data.len();
-            let mut typ = DTYPE_VARCHAR;
+            let mut typ = DTYPE_VARCHAR.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
@@ -249,7 +248,7 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
         }
         FieldType::StringNull => {
             let len = UNIV_SQL_NULL;
-            let typ = DTYPE_VARCHAR;
+            let typ = DTYPE_VARCHAR.clone();
 
             OwningDField {
                 field_data_owner: vec![],
@@ -265,7 +264,7 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             let data = b"hello varchar".to_vec();
             let data_ptr = data.as_ptr();
             let len = data.len();
-            let mut typ = DTYPE_VARCHAR;
+            let mut typ = DTYPE_VARCHAR.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
@@ -283,7 +282,7 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
 
             let data_ptr = data.as_ptr();
             let len = data.len();
-            let mut typ = DTYPE_DECIMAL;
+            let mut typ = DTYPE_DECIMAL.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
@@ -302,7 +301,7 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
 
             let data_ptr = data.as_ptr();
             let len = data.len();
-            let mut typ = DTYPE_FLOAT;
+            let mut typ = DTYPE_FLOAT.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
@@ -321,7 +320,7 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
 
             let data_ptr = data.as_ptr();
             let len = data.len();
-            let mut typ = DTYPE_DOUBLE;
+            let mut typ = DTYPE_DOUBLE.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
             OwningDField {
@@ -335,4 +334,60 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             }
         }
     }
+}
+
+/// Create new fields for index.
+///
+/// # Arguments
+///
+/// `n`: The total number of fields.
+///
+/// # Returns
+///
+/// `Vec<Field>` containing all the newly created fields.
+pub fn create_new_fields(n: usize) -> Vec<Field> {
+    let mut fields = Vec::<Field>::new();
+    fields.push(Field {
+        col: Arc::new(Mutex::new(Column {
+            name: "".to_string(),
+            index: 0,
+            ord_part: 0,
+            d_type: DType {
+                m_type: 0,
+                len: 0,
+                pr_type: 0,
+                mb_min_len: 0,
+                mb_max_len: 0,
+            },
+        })),
+        name: "".to_string(),
+        prefix_length: 0,
+        fixed_length: 0,
+    });
+
+    fields
+}
+
+/// Get all the user records on the page.
+///
+/// # Arguments
+///
+/// `page`: Page containing the records.
+///
+/// # Returns
+///
+/// `Vec<Record>` A vector of user records (excluding infimum and supremum).
+pub fn get_user_records(page: Page) -> Vec<Record> {
+    let mut result = Vec::<Record>::new();
+    let mut cur_rec = Some(page.page_get_infimum_rec());
+    while cur_rec.is_some() {
+        let rec = some_or_panic!(cur_rec);
+        if page.page_rec_is_user_rec(rec) {
+            result.push(rec);
+        }
+
+        cur_rec = cur_rec.unwrap().rec_get_next();
+    }
+
+    result
 }

@@ -61,41 +61,59 @@ fn cmp_whole_field(
 /// * `rec_1` - The first record.
 /// * `rec_2` - The second record.
 /// * `index` - The index to which the records belong.
+/// * `matched_fields` - The number of completely matched fields.
+/// * `matched_bytes` - The number of bytes which are already matching for the current field.
 ///
 /// # Returns
 ///
 /// * `Ordering::Less` if the first record is less than the second record.
 /// * `Ordering::Greater` if the first record is greater than the second record.
 /// * `Ordering::Equal` if the records are equal.
-fn cmp_rec_rec(rec_1: Record, rec_2: Record, index: &Index) -> Ordering {
+pub fn cmp_rec_rec_with_match(
+    rec_1: Record,
+    rec_2: Record,
+    index: &Index,
+    matched_fields: usize,
+    matched_bytes: usize,
+) -> Ordering {
     let rec1_n_fields = rec_1.rec_get_n_fields();
     let rec2_n_fields = rec_2.rec_get_n_fields();
 
-    let mut cur_field = 0;
+    let mut cur_field = matched_fields;
+    let mut cur_bytes = matched_bytes;
     while (cur_field < rec1_n_fields) && (cur_field < rec2_n_fields) {
-        let col = index.get_nth_col(0);
+        let col = index.get_nth_col(cur_field);
+
         let m_type = col.lock().unwrap().d_type.m_type;
         let pr_type = col.lock().unwrap().d_type.pr_type;
 
         let (_, rec1_f_len) = rec_1.rec_get_nth_field_offs(cur_field);
         let (_, rec2_f_len) = rec_2.rec_get_nth_field_offs(cur_field);
 
-        if cur_field == 0 {
-            let rec1_info_bits = rec_1.rec_get_info_bits();
-            let rec2_info_bits = rec_2.rec_get_info_bits();
+        if cur_bytes == 0 {
+            if cur_field == 0 {
+                let rec1_info_bits = rec_1.rec_get_info_bits();
+                let rec2_info_bits = rec_2.rec_get_info_bits();
 
-            if (rec1_info_bits & REC_INFO_MIN_REC_FLAG)
-                == REC_INFO_MIN_REC_FLAG
-            {
-                if (rec2_info_bits & REC_INFO_MIN_REC_FLAG)
-                    != REC_INFO_MIN_REC_FLAG
+                if (rec1_info_bits & REC_INFO_MIN_REC_FLAG)
+                    == REC_INFO_MIN_REC_FLAG
                 {
-                    return Ordering::Less;
+                    if (rec2_info_bits & REC_INFO_MIN_REC_FLAG)
+                        != REC_INFO_MIN_REC_FLAG
+                    {
+                        return Ordering::Less;
+                    }
+                } else if (rec2_info_bits & REC_INFO_MIN_REC_FLAG)
+                    == REC_INFO_MIN_REC_FLAG
+                {
+                    return Ordering::Greater;
                 }
-            } else if (rec2_info_bits & REC_INFO_MIN_REC_FLAG)
-                == REC_INFO_MIN_REC_FLAG
+            }
+
+            if rec_1.rec_nth_external(cur_field)
+                || rec_2.rec_nth_external(cur_field)
             {
-                return Ordering::Greater;
+                return Ordering::Equal;
             }
 
             if rec1_f_len == UNIV_SQL_NULL || rec2_f_len == UNIV_SQL_NULL {
@@ -128,7 +146,51 @@ fn cmp_rec_rec(rec_1: Record, rec_2: Record, index: &Index) -> Ordering {
             cur_field += 1;
             continue;
         }
+
+        while true {
+            if rec2_f_len <= cur_bytes {
+                if rec1_f_len <= cur_bytes {
+                    // Move to the next field.
+                    cur_field += 1;
+                    cur_bytes = 0;
+                }
+            }
+
+            if cur_field >= rec1_n_fields && cur_field >= rec2_n_fields {
+                return Ordering::Equal;
+            }
+
+            let rec1_byte =
+                rec_1.get_nth_field_byte_at_offset(cur_field, cur_bytes);
+            let rec2_byte =
+                rec_2.get_nth_field_byte_at_offset(cur_field, cur_bytes);
+
+            if rec1_byte < rec2_byte {
+                return Ordering::Less;
+            } else if rec1_byte > rec2_byte {
+                return Ordering::Greater;
+            } else {
+                cur_bytes += 1;
+            }
+        }
     }
 
     Ordering::Less
+}
+
+/// Compare two physical records.
+/// Only the common first fields are compared.
+///
+/// # Arguments
+/// * `rec_1` - The first record.
+/// * `rec_2` - The second record.
+/// * `index` - The index to which the records belong.
+///
+/// # Returns
+///
+/// * `Ordering::Less` if the first record is less than the second record.
+/// * `Ordering::Greater` if the first record is greater than the second record.
+/// * `Ordering::Equal` if the records are equal.
+pub fn cmp_rec_rec(rec_1: Record, rec_2: Record, index: &Index) -> Ordering {
+    cmp_rec_rec_with_match(rec_1, rec_2, index, 0, 0)
 }

@@ -6,6 +6,7 @@ mod tests {
     use std::sync::Arc;
 
     use rstest::{fixture, rstest};
+    use tracing::info;
 
     use crate::buf::buf0types::{BufBlock, BufPage, Frame};
     use crate::dict::dict0types::Index;
@@ -14,7 +15,9 @@ mod tests {
     use crate::page::page0cur::PageCur;
     use crate::page::page0page::Page;
     use crate::rem::rem0rec::{OrphanRecord, Record};
-    use crate::tests::test0utils::{FieldType, create_dtuples};
+    use crate::tests::test0utils::{
+        FieldType, create_dtuples, create_records, get_user_records,
+    };
 
     fn get_raw_block() -> Frame {
         let layout =
@@ -78,31 +81,54 @@ mod tests {
 
     #[rstest]
     fn test_page_cur_insert_low(page_cur_fixture: PageCurFixture) {
-        {
-            let mut mtr = Mtr::new();
-            let dtuples = create_dtuples(1, vec![FieldType::String]);
-            let owning_dtuple = dtuples.first().unwrap();
-            let n_fields = owning_dtuple.dtuple.n_fields;
+        let mut mtr = Mtr::new();
+        let dtuples = create_dtuples(1, vec![FieldType::String]);
+        let owning_dtuple = dtuples.first().unwrap();
+        let n_fields = owning_dtuple.dtuple.n_fields;
 
-            let mut orphan_record =
-                OrphanRecord::new(vec![0; UNIV_PAGE_SIZE], n_fields);
+        let mut orphan_record =
+            OrphanRecord::new(vec![0; UNIV_PAGE_SIZE], n_fields);
 
-            let rec: Record = orphan_record.get_record();
+        let rec: Record = orphan_record.get_record();
 
-            let index = Index::new(PageId::dummy());
-            rec.rec_convert_dtuple_to_rec(&index, &owning_dtuple.dtuple, 0);
+        let index = Index::new(PageId::dummy());
+        rec.rec_convert_dtuple_to_rec(&index, &owning_dtuple.dtuple, 0);
 
-            assert_eq!(page_cur_fixture.page.page_n_get_recs(), 0);
+        assert_eq!(page_cur_fixture.page.page_n_get_recs(), 0);
+        let new_rec =
+            page_cur_fixture.page_cur.page_cur_insert_rec_low(rec, &mut mtr);
+
+        assert_eq!(page_cur_fixture.page.page_n_get_recs(), 1);
+        assert!(new_rec.is_some());
+
+        let rec = new_rec.unwrap();
+
+        assert_eq!(rec.rec_get_n_fields(), 1);
+    }
+
+    #[rstest]
+    fn test_page_cur_insert_multiple(mut page_cur_fixture: PageCurFixture) {
+        let mut mtr = Mtr::new();
+        let index = Index::new(PageId::dummy());
+
+        let owing_page = create_records(10, vec![FieldType::String]);
+
+        assert_eq!(page_cur_fixture.page.page_n_get_recs(), 0);
+
+        let mut n_recs = 0;
+        for rec in get_user_records(owing_page.page) {
+            n_recs += 1;
             let new_rec = page_cur_fixture
                 .page_cur
                 .page_cur_insert_rec_low(rec, &mut mtr);
-
-            assert_eq!(page_cur_fixture.page.page_n_get_recs(), 1);
             assert!(new_rec.is_some());
+            assert_eq!(page_cur_fixture.page.page_n_get_recs(), n_recs);
 
-            let rec = new_rec.unwrap();
+            page_cur_fixture.page_cur.page_cur_move_to_next();
 
-            assert_eq!(rec.rec_get_n_fields(), 1);
+            let new_rec = new_rec.unwrap();
+            assert_eq!(new_rec.rec_get_n_fields(), 1);
+            info!("rec={}", new_rec.rec_to_string());
         }
     }
 }

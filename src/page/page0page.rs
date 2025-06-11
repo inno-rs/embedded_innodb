@@ -397,7 +397,7 @@ impl Page {
     /// # Returns
     ///
     /// * This function currently has no implementation and returns nothing.
-    pub fn page_mem_alloc_heap(&self, need: usize) -> Option<Record> {
+    pub fn page_mem_alloc_heap(&self, need: usize) -> Option<*mut u8> {
         let available_space = self.page_get_max_insert_size(1);
 
         if available_space >= need {
@@ -414,11 +414,7 @@ impl Page {
                 let heap_no = self.page_dir_get_n_heap();
                 self.page_dir_set_n_heap(heap_no + 1);
 
-                /* 3. Create a record from the block, and update its heap no. */
-                let record = Record::new(block);
-                record.rec_set_heap_no(heap_no);
-
-                return Some(record);
+                return Some(block);
             }
         }
 

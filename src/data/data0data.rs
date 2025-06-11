@@ -185,7 +185,6 @@ impl DField {
     /// * `len` - length of the data.
     ///
     pub fn dfield_set_data(&mut self, data: Vec<u8>, len: usize) {
-        info!("Setting data: {:?}", data);
         ut_ad!((data.len() == 0 && len == UNIV_SQL_NULL) || data.len() == len);
 
         self.data = data;
@@ -198,7 +197,6 @@ impl DField {
     ///
     /// * Pointer to the data field.
     pub fn dfield_get_data(&self) -> &Vec<u8> {
-        info!("Getting data: {:?}", self.data);
         self.data.as_ref()
     }
 
