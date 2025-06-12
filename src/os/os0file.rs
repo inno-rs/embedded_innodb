@@ -428,3 +428,26 @@ pub async fn os_file_delete_async(name: &str) -> Result<(), String> {
 pub fn os_file_delete(name: &str) -> Result<(), String> {
     GLOBAL_RUNTIME.block_on(os_file_delete_async(name))
 }
+
+
+/// Sync file contents to the device.
+///
+/// # Arguments
+///
+/// * `os_file` - A mutable reference to the file to read from
+///
+/// # Returns
+///
+/// * `Ok()` - If the sync operation was successful
+/// * `Err(String)` - If an error occurred during the fsync operation, with an error message
+pub fn os_file_fsync(os_file: OsFile) -> Result<(), String>
+{
+    let rt = Runtime::new().unwrap();
+    let result_fut = os_file.sync_all();
+    match rt.block_on(result_fut) {
+        Ok(value) => {
+            Ok(value)
+        },
+        Err(err) => Err(format!("Failed to fsync: {}",err)),
+    }
+}
