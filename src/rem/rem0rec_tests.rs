@@ -4,6 +4,7 @@ mod tests {
     use std::cmp::Ordering;
     use std::sync::{Arc, Mutex};
 
+    use rstest::rstest;
     use tracing::info;
 
     use crate::dict::dict0types::{Column, Field, Index};
@@ -137,7 +138,13 @@ mod tests {
 
     #[test]
     fn test_linked_list_of_empty_page() {
-        let owning_page = create_records(0, vec![FieldType::String]);
+        let owning_page = create_records(
+            0,
+            vec![
+                FieldType::String(Some("Hello World 5".to_string())),
+                FieldType::StringNull,
+            ],
+        );
         let page = owning_page.page;
 
         assert_eq!(page.page_n_get_recs(), 0);
@@ -156,7 +163,10 @@ mod tests {
 
     #[test]
     fn test_linked_list_of_multiple_records() {
-        let owning_page = create_records(10, vec![FieldType::String]);
+        let owning_page = create_records(
+            10,
+            vec![FieldType::String(Some("Hello World 4".to_string()))],
+        );
         let page = owning_page.page;
 
         assert_eq!(page.page_n_get_recs(), 10);
@@ -209,7 +219,10 @@ mod tests {
 
     #[test]
     fn test_rec_field_external_short_format() {
-        let owning_page = create_records(10, vec![FieldType::String]);
+        let owning_page = create_records(
+            10,
+            vec![FieldType::String(Some("Hello World 3".to_string()))],
+        );
         let page = owning_page.page;
 
         for rec in get_user_records(page) {
@@ -225,7 +238,10 @@ mod tests {
 
     #[test]
     fn test_rec_field_external_no_field_external() {
-        let owning_page = create_records(10, vec![FieldType::String]);
+        let owning_page = create_records(
+            10,
+            vec![FieldType::String(Some("Hello World 2".to_string()))],
+        );
         let page = owning_page.page;
 
         for rec in get_user_records(page) {
@@ -248,12 +264,51 @@ mod tests {
         assert_eq!(Page::page_rec_needs_ext(100000), true);
     }
 
-    #[test]
-    fn test_rec_rec_match() {
-        let owning_page = create_records(2, vec![FieldType::String]);
-        let user_records = get_user_records(owning_page.page);
-        let rec1 = user_records[0];
-        let rec2 = user_records[1];
+    #[rstest]
+    #[case("", "", Ordering::Equal)]
+    #[case("", "a", Ordering::Less)]
+    #[case("a", "", Ordering::Greater)]
+    #[case("a", "a", Ordering::Equal)]
+    #[case("a", "b", Ordering::Less)]
+    #[case("b", "a", Ordering::Greater)]
+    #[case("abc", "abc", Ordering::Equal)]
+    #[case("abc", "abd", Ordering::Less)]
+    #[case("abd", "abc", Ordering::Greater)]
+    #[case("abc", "abcd", Ordering::Less)] // prefix
+    #[case("abcd", "abc", Ordering::Greater)]
+    #[case("abc1", "abc2", Ordering::Less)] // numeric tail
+    #[case("abc2", "abc1", Ordering::Greater)]
+    #[case("abc", "ABC", Ordering::Greater)] // ASCII case: lowercase > uppercase
+    #[case("ABC", "abc", Ordering::Less)]
+    #[case("abc", "abC", Ordering::Greater)] // mixed case
+    #[case("abC", "abc", Ordering::Less)]
+    #[case("abc", "abc ", Ordering::Less)] // trailing space
+    #[case("abc ", "abc", Ordering::Greater)]
+    #[case("abc", "abc\n", Ordering::Less)] // newline
+    #[case("abc\n", "abc", Ordering::Greater)]
+    #[case("123", "123", Ordering::Equal)] // numeric strings
+    #[case("123", "124", Ordering::Less)]
+    #[case("124", "123", Ordering::Greater)]
+    #[case("🙂", "🙂", Ordering::Equal)] // Unicode emoji
+    #[case("🙂", "🙃", Ordering::Less)]
+    #[case("🙃", "🙂", Ordering::Greater)]
+    #[case("Z", "a", Ordering::Less)] // Uppercase vs lowercase farther apart
+    #[case("a", "Z", Ordering::Greater)]
+    fn test_rec_rec_match(
+        #[case] str1: &str,
+        #[case] str2: &str,
+        #[case] out: Ordering,
+    ) {
+        info!("case: 1={}, 2={}", str1, str2);
+        let owning_page_1 =
+            create_records(1, vec![FieldType::String(Some(str1.to_string()))]);
+        let user_records_1 = get_user_records(owning_page_1.page);
+        let rec1 = user_records_1[0];
+
+        let owning_page_2 =
+            create_records(1, vec![FieldType::String(Some(str2.to_string()))]);
+        let user_records_2 = get_user_records(owning_page_2.page);
+        let rec2 = user_records_2[0];
 
         let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
         let fields = create_new_fields(1);
@@ -266,6 +321,6 @@ mod tests {
 
         let result = cmp_rec_rec(rec1, rec2, &index);
 
-        assert_eq!(result, Ordering::Equal);
+        assert_eq!(result, out);
     }
 }

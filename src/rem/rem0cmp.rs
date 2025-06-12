@@ -148,16 +148,28 @@ pub fn cmp_rec_rec_with_match(
         }
 
         while true {
-            if rec2_f_len <= cur_bytes {
-                if rec1_f_len <= cur_bytes {
-                    // Move to the next field.
-                    cur_field += 1;
-                    cur_bytes = 0;
-                }
+            if cur_bytes >= rec1_f_len && cur_bytes < rec2_f_len {
+                return Ordering::Less;
+            } else if cur_bytes >= rec2_f_len && cur_bytes < rec1_f_len {
+                return Ordering::Greater;
             }
 
-            if cur_field >= rec1_n_fields && cur_field >= rec2_n_fields {
-                return Ordering::Equal;
+            if rec2_f_len <= cur_bytes || rec1_f_len <= cur_bytes {
+                cur_field += 1;
+                cur_bytes = 0;
+
+                // We have matched everything till now, but rec1 has more fields.
+                if cur_field < rec1_n_fields && cur_field > rec2_n_fields {
+                    return Ordering::Greater;
+                } else if cur_field > rec1_n_fields
+                    && cur_field < rec2_n_fields
+                {
+                    return Ordering::Greater;
+                } else if cur_field == rec1_n_fields
+                    && cur_field == rec2_n_fields
+                {
+                    return Ordering::Equal;
+                }
             }
 
             let rec1_byte =

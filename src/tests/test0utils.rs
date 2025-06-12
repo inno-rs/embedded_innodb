@@ -62,13 +62,13 @@ impl Drop for OwningPage {
 /// test data structures.
 pub enum FieldType {
     /// Signed 32-bit integer
-    Int,
+    Int(i32),
     /// Unsigned 64-bit integer
-    UnsignedInt,
+    UnsignedInt(u64),
     /// Binary data
     Binary,
     /// Variable-length string
-    String,
+    String(Option<String>),
     StringNull,
     /// Decimal number
     Decimal,
@@ -192,7 +192,7 @@ pub fn create_dtuples(n: usize, fields: Vec<FieldType>) -> Vec<OwningDTuple> {
 /// An `OwningDField` instance containing the newly created field with test data.
 pub fn create_dfield(field_type: &FieldType) -> OwningDField {
     match field_type {
-        FieldType::Int => {
+        FieldType::Int(_) => {
             // INT (signed 32-bit), value = 0x12345678 = 305419896
 
             let data = vec![0x12, 0x34, 0x56, 0x78];
@@ -210,7 +210,7 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
                     .unwrap(),
             }
         }
-        FieldType::UnsignedInt => {
+        FieldType::UnsignedInt(_) => {
             let data = vec![1, 0, 0, 0, 0, 0, 0, 0];
             let data_ptr = data.as_ptr();
             let len = data.len();
@@ -260,8 +260,13 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
                     .unwrap(),
             }
         }
-        FieldType::String => {
-            let data = b"hello varchar".to_vec();
+        FieldType::String(s) => {
+            let data = s
+                .clone()
+                .or(Some("hello varchar".to_string()))
+                .unwrap()
+                .as_bytes()
+                .to_vec();
             let data_ptr = data.as_ptr();
             let len = data.len();
             let mut typ = DTYPE_VARCHAR.clone();

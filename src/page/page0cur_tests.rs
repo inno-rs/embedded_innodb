@@ -82,7 +82,10 @@ mod tests {
     #[rstest]
     fn test_page_cur_insert_low(page_cur_fixture: PageCurFixture) {
         let mut mtr = Mtr::new();
-        let dtuples = create_dtuples(1, vec![FieldType::String]);
+        let dtuples = create_dtuples(
+            1,
+            vec![FieldType::String(Some("Hello World 89".to_string()))],
+        );
         let owning_dtuple = dtuples.first().unwrap();
         let n_fields = owning_dtuple.dtuple.n_fields;
 
@@ -111,7 +114,10 @@ mod tests {
         let mut mtr = Mtr::new();
         let index = Index::new(PageId::dummy());
 
-        let owing_page = create_records(10, vec![FieldType::String]);
+        let owing_page = create_records(
+            10,
+            vec![FieldType::String(Some("Hello World 9".to_string()))],
+        );
 
         assert_eq!(page_cur_fixture.page.page_n_get_recs(), 0);
 
