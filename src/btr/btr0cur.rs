@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::ptr::null_mut;
 use std::rc::Rc;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::btr::btr0btr::BTree;
 use crate::buf::buf0types::{BufBlock, BufPage};
@@ -46,9 +46,9 @@ pub struct BTreeCursor<'a> {
     /// The index being accessed by this cursor.
     index: &'a Index,
     /// File segment manager for handling space allocation.
-    fsp: Arc<RwLock<Fsp>>,
+    fsp: Arc<Mutex<Fsp>>,
     /// Lock management system.
-    lock_sys: Arc<RwLock<LockSys>>,
+    lock_sys: Arc<Mutex<LockSys>>,
     /// Reference to the B-tree being traversed.
     btree: &'a BTree,
     /// Current page cursor position.
@@ -69,8 +69,8 @@ impl<'a> BTreeCursor<'a> {
     /// A new BTreeCursor instance initialized with the provided references
     pub fn new(
         index: &'a Index,
-        fsp: Arc<RwLock<Fsp>>,
-        lock_sys: Arc<RwLock<LockSys>>,
+        fsp: Arc<Mutex<Fsp>>,
+        lock_sys: Arc<Mutex<LockSys>>,
         btree: &'a BTree,
     ) -> Self {
         BTreeCursor {
@@ -251,11 +251,11 @@ impl<'a> BTreeCursor<'a> {
         flags: usize,
         dtuple: &DTuple,
         mtr: &mut Mtr,
-    ) -> DbErr {
+    ) -> Result<(), DbErr> {
         let rec = self.get_rec().unwrap();
 
         {
-            let lock_sys = self.lock_sys.read().unwrap();
+            let lock_sys = self.lock_sys.lock().unwrap();
             let err = lock_sys.rec_insert_check_and_lock(
                 flags,
                 rec,
@@ -265,11 +265,11 @@ impl<'a> BTreeCursor<'a> {
             );
 
             if err != DbSuccess {
-                return err;
+                return Err(err);
             }
         }
 
-        DbSuccess
+        Ok(())
     }
 
     /// Reorganizes a page to create more free space.

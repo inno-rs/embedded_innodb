@@ -156,6 +156,10 @@ pub struct DTuple {
     pub info_bits: usize,
     /// Number of fields in the dtuple.
     pub n_fields: usize,
+    /// Number of fields that should be used during comparison functions used in rec0cmp.
+    /// Index search is performed by comparing only these fields and the others are ignored.
+    /// The default value in DTuple creation is the same value as the number of fields.
+    pub n_fields_cmp: usize,
     /// Fields of the dtuple.
     #[builder(default, setter(each = "add_field"))]
     pub fields: Vec<DField>,
@@ -238,7 +242,7 @@ pub const DTYPE_INT: DType = DType {
 pub const DTYPE_INT_UNSIGNED: DType = DType {
     m_type: DATA_INT as u16,
     pr_type: DATA_UNSIGNED,
-    len: 0,
+    len: 8,
     mb_min_len: 0,
     mb_max_len: 0,
 };

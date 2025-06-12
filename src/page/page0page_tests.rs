@@ -4,6 +4,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    use libc::pathconf;
     use rstest::{fixture, rstest};
     use tracing::info;
 
@@ -14,6 +15,7 @@ mod tests {
     use crate::mtr::mtr0mtr::Mtr;
     use crate::page::page0page::*;
     use crate::rem::rem0rec::{Record, RecordData};
+    use crate::tests::test0utils::{FieldType, create_records};
 
     struct PageFixture {
         index: Index,
@@ -323,6 +325,23 @@ mod tests {
             let size = page.page_get_max_insert_size(1);
             assert_eq!(size, 16190);
         }
+    }
+
+    #[test]
+    fn test_page_get_middle_rec_on_empty_page() {
+        let owning_page = create_records(0, vec![]);
+        let rec = owning_page.page.page_get_middle_rec();
+        assert!(rec.is_none());
+    }
+
+    #[test]
+    fn test_page_get_middle_rec_on_page_with_2_rec() {
+        let owning_page = create_records(
+            2,
+            vec![FieldType::String(Some("foo".to_string()))],
+        );
+        let rec = owning_page.page.page_get_middle_rec();
+        assert!(rec.is_some());
     }
 
     #[rstest]

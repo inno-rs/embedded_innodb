@@ -264,6 +264,43 @@ mod tests {
         assert_eq!(Page::page_rec_needs_ext(100000), true);
     }
 
+    #[test]
+    fn test_rec_to_string() {
+        {
+            let owning_page = create_records(
+                1,
+                vec![
+                    FieldType::String(Some("Hello World".to_string())),
+                    FieldType::String(Some("Mario".to_string())),
+                    FieldType::String(Some("Mushroom".to_string())),
+                ],
+            );
+            let rec = get_user_records(owning_page.page)[0];
+
+            assert_eq!(
+                rec.rec_to_string(),
+                "PHYSICAL RECORD: n_fields 3; 1-byte offsets; info bits 0 fields  0:  Hello World; len: 11  1:  Mario; len: 5  2:  Mushroom; len: 8 "
+            );
+        }
+
+        {
+            let owning_page = create_records(
+                1,
+                vec![
+                    FieldType::String(Some("Hello World".to_string())),
+                    FieldType::UnsignedInt(Some(19989)),
+                    // FieldType::Double(Some(234.29)),
+                ],
+            );
+            let rec = get_user_records(owning_page.page)[0];
+
+            assert_eq!(
+                rec.rec_to_string(),
+                "PHYSICAL RECORD: n_fields 2; 1-byte offsets; info bits 0 fields  0:  Hello World; len: 11  1:  \u{15}N\0\0\0\0\0\0; len: 8 "
+            );
+        }
+    }
+
     #[rstest]
     #[case("", "", Ordering::Equal)]
     #[case("", "a", Ordering::Less)]
@@ -322,5 +359,19 @@ mod tests {
         let result = cmp_rec_rec(rec1, rec2, &index);
 
         assert_eq!(result, out);
+    }
+
+    #[test]
+    fn test_rec_set_1byte_offs_flag() {
+        {
+            let owning_page = create_records(
+                1,
+                vec![
+                    FieldType::String(Some("Hello World".to_string())),
+                    FieldType::String(Some("Mario".to_string())),
+                    FieldType::String(Some("Mushroom".to_string())),
+                ],
+            );
+        }
     }
 }

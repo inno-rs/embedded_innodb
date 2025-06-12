@@ -27,9 +27,9 @@ pub struct BTree {
     /// BufferPool manager for handling page caching and I/O operations.
     buf_pool: Arc<RwLock<BufPool>>,
     /// File segment manager for handling file space allocation.
-    fsp: Arc<RwLock<Fsp>>,
+    fsp: Arc<Mutex<Fsp>>,
     /// Lock Management system.
-    lock_sys: Arc<RwLock<LockSys>>,
+    lock_sys: Arc<Mutex<LockSys>>,
 }
 
 impl BTree {
@@ -43,8 +43,8 @@ impl BTree {
     /// A new BTree instance initialized with the provided buffer pool and file space manager
     pub fn new(
         buf_pool: Arc<RwLock<BufPool>>,
-        fsp: Arc<RwLock<Fsp>>,
-        lock_sys: Arc<RwLock<LockSys>>,
+        fsp: Arc<Mutex<Fsp>>,
+        lock_sys: Arc<Mutex<LockSys>>,
     ) -> Self {
         BTree { buf_pool, fsp, lock_sys }
     }
@@ -123,7 +123,7 @@ impl BTree {
     /// * `level` - The level at which to insert (must be > 0, where 0 is leaf level)
     /// * `index` - The index structure being modified
     /// * `dtuple` - The data tuple to insert
-    /// * `mtr` - Mini-transaction for logging the operation
+    /// * `mtr` - Mini transaction for logging the operation
     ///
     /// # Note
     ///

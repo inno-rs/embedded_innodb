@@ -1,0 +1,44 @@
+use std::ops::DerefMut;
+use std::sync::{Arc, Mutex};
+
+use crate::btr::btr0cur::BTreeCursor;
+use crate::data::data0types::DTuple;
+use crate::dict::dict0dict::Dict;
+use crate::dict::dict0types::Index;
+use crate::innodb::innodb0types::DbErr;
+use crate::lock::lock0lock::LockSys;
+
+pub struct RowInsert {
+    /// Reference to data dictionary.
+    dict: Arc<Mutex<Dict>>,
+    /// Reference to the lock system.
+    lock_sys: Arc<Mutex<LockSys>>,
+}
+
+impl RowInsert {
+    pub fn new(dict: Arc<Mutex<Dict>>, lock_sys: Arc<Mutex<LockSys>>) -> Self {
+        Self { dict, lock_sys }
+    }
+
+    /// Try to insert an index entry (record) in the btree index.
+    ///
+    pub fn index_entry_low(
+        &self,
+        mode: usize,
+        index: Arc<Mutex<Index>>,
+        dtuple: &DTuple,
+        n_ext: usize,
+    ) -> Result<(), DbErr> {
+        let index = index.lock().unwrap();
+        let btree = { self.dict.lock().unwrap().get_btree() };
+
+        let cursor = BTreeCursor::new(
+            &index,
+            self.dict.lock().unwrap().get_fsp(),
+            self.lock_sys.clone(),
+            btree.borrow_mut().deref_mut(),
+        );
+
+        Ok(())
+    }
+}

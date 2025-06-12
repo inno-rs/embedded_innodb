@@ -12,6 +12,7 @@ use crate::innodb::innodb0types::{PageNo, UNIV_PAGE_SIZE, UNIV_SQL_NULL};
 use crate::page::page0page::Page;
 use crate::rem::rem0types::REC_MAX_N_FIELDS;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
+use crate::ut_panic;
 
 /// Info bit denoting the predefined minimum record:
 /// this bit is set if and only if the record
@@ -21,6 +22,8 @@ pub const REC_INFO_MIN_REC_FLAG: usize = 0x10;
 /** Number of extra bytes in a record in addition to the data and offsets. */
 /** Record status values */
 pub const REC_STATUS_ORDINARY: usize = 0;
+/// Non-leaf record.
+/// The first n fields are from record, and the last one is the pointer to child node page no.
 pub const REC_STATUS_NODE_PTR: usize = 1;
 pub const REC_STATUS_INFIMUM: usize = 2;
 pub const REC_STATUS_SUPREMUM: usize = 3;
@@ -87,6 +90,7 @@ pub const REC_INFO_BITS_SHIFT: usize = 4;
 
 /// The following masks are used to filter the SQL null bit from the one byte and two byte offsets.
 pub const REC_1BYTE_SQL_NULL_MASK: usize = 0x80;
+pub const REC_2BYTE_SQL_NULL_MASK: usize = 0x8000;
 
 /// Bit to specify that the column is stored externally.
 /// 1 byte format (aka REC_SHORT) does not support external fields.
@@ -304,6 +308,9 @@ impl Record {
     ) -> Record {
         info!("rec_convert_dtuple_to_rec");
 
+        ut_ad!(dtuple.dtuple_validate());
+        ut_ad!(dtuple.dtuple_type_checked());
+
         let ret = Record { ptr: self.ptr };
 
         let n_fields = dtuple.dtuple_get_n_fields();
@@ -320,7 +327,9 @@ impl Record {
         /* Store the data and offsets */
         let mut end_offset = 0;
 
-        if n_ext == 0 {
+        if n_ext == 0 && data_size < REC_1BYTE_OFFS_LIMIT {
+            self.rec_set_1byte_offs_flag(true);
+
             for i in 0..n_fields {
                 let field = dtuple.dtuple_get_nth_field(i);
                 let ored_offset: usize;
@@ -358,6 +367,47 @@ impl Record {
 
                 self.rec_1_set_field_end_info(i, ored_offset);
                 ut_ad!(ret.rec_1_get_field_end_info(i) == ored_offset)
+            }
+        } else {
+            self.rec_set_1byte_offs_flag(true);
+
+            for i in 0..n_fields {
+                let field = dtuple.dtuple_get_nth_field(i);
+                let ored_offset: usize;
+
+                match field.dfield_is_null() {
+                    true => {
+                        let dtype = field.dfield_get_type();
+                        let length = dtype.dtype_get_sql_null_size();
+
+                        if length != 0 {
+                            // Write an SQL null field full of zeros.
+                            unsafe {
+                                let ptr = self.ptr.add(end_offset);
+                                ptr::write_bytes(ptr, 0, length);
+                            }
+                        }
+
+                        end_offset += length;
+
+                        ored_offset = end_offset | REC_2BYTE_SQL_NULL_MASK;
+                    }
+                    false => {
+                        /* If the data is not an SQL nullptr, store it. */
+                        let length = field.dfield_get_len();
+                        unsafe {
+                            let ptr = self.ptr.add(end_offset);
+                            let src = field.dfield_get_data().as_ptr();
+                            ptr.copy_from_nonoverlapping(src, length);
+                        }
+
+                        end_offset += length;
+                        ored_offset = end_offset;
+                    }
+                }
+
+                self.rec_2_set_field_end_info(i, ored_offset);
+                ut_ad!(ret.rec_2_get_field_end_info(i) == ored_offset)
             }
         }
 
@@ -549,6 +599,42 @@ impl Record {
         }
     }
 
+    /// Sets the field end for the nth field if the record is stored in the 2-byte format.
+    ///
+    /// # Arguments
+    ///
+    /// * `field_no`: The field number to set.
+    /// * `field_end`: The field end offset to set.
+    ///
+    /// # Returns
+    ///
+    /// * `None` if the operation was successful, or an error if it failed.
+    pub fn rec_2_set_field_end_info(&self, field_no: usize, field_end: usize) {
+        unsafe {
+            let p =
+                self.ptr.sub(REC_N_EXTRA_BYTES + 2 * field_no + 2) as *mut u16;
+            ptr::write_unaligned(p, field_end as u16)
+        }
+    }
+
+    /// Returns the offset of the nth field end if the record is stored in a 2-byte format.
+    /// If the field is SQL nullptr, the flag is ORed in the returned value.
+    ///
+    /// # Arguments
+    ///
+    /// * `field_no`: The field number to get the offset for.
+    ///
+    /// # Returns
+    ///
+    /// * The offset of the nth field end in the physical record.
+    pub fn rec_2_get_field_end_info(&self, field_no: usize) -> usize {
+        unsafe {
+            let p = self.ptr.sub(REC_N_EXTRA_BYTES + 2 * field_no + 2)
+                as *const u16;
+            p.read_unaligned() as usize
+        }
+    }
+
     /// Sets the field end for the nth field if the record is stored in the 1-byte format.
     ///
     /// # Arguments
@@ -709,10 +795,7 @@ impl Record {
 
         unsafe {
             let bytes = slice::from_raw_parts(self.ptr.add(offset), length);
-            let data = std::str::from_utf8(bytes)
-                .map(|s| s.to_string())
-                .ok()
-                .unwrap();
+            let data = std::str::from_utf8_unchecked(bytes).to_string();
             Some(RecordData::Data(data))
         }
     }
@@ -728,11 +811,12 @@ impl Record {
     pub fn rec_to_string(&self) -> String {
         let n_fields = self.rec_get_n_fields();
         let info_bits = self.rec_get_info_bits();
+        let byte_format = if self.rec_get_1byte_offs_flag() { 1 } else { 2 };
 
         let mut output_builder = String::new();
         output_builder.push_str(&format!(
             "PHYSICAL RECORD: n_fields {}; {}-byte offsets; info bits {}",
-            n_fields, n_fields, info_bits
+            n_fields, byte_format, info_bits
         ));
 
         output_builder.push_str(" fields ");
@@ -743,11 +827,14 @@ impl Record {
             let data = self.rec_get_data(n_field);
             match data {
                 None => {
-                    panic!("rec_to_string: data out of range");
+                    ut_panic!("rec_to_string: data out of range");
                 }
                 Some(d) => match d {
-                    RecordData::Data(data) => output_builder
-                        .push_str(&format!(" {}; len: {} ", data, data.len())),
+                    RecordData::Data(data) => {
+                        let len = data.len();
+                        output_builder
+                            .push_str(&format!(" {}; len: {} ", data, len))
+                    }
                     RecordData::SqlNullData() => {
                         output_builder
                             .push_str(&format!(" SQL NULL, len: {}", 5));
@@ -831,6 +918,21 @@ impl Record {
         }
     }
 
+    /// Set the value for 1-byte offset flag.
+    /// If it is not a 1-byte format, it is assumed to be a 2-byte format.
+    ///
+    /// # Arguments
+    ///
+    /// `flag`: A boolean specifying if it is a 1-byte format or not.
+    ///
+    pub fn rec_set_1byte_offs_flag(&self, flag: bool) {
+        unsafe {
+            let byte = self.ptr.sub(REC_SHORT).read_unaligned();
+            let val = (byte & REC_SHORT_MASK as u8) >> REC_SHORT_SHIFT;
+            self.ptr.sub(REC_SHORT).write_unaligned(val);
+        }
+    }
+
     /// Returns true if the extern bit is set on the nth field.
     ///
     /// # Arguments
@@ -851,11 +953,12 @@ impl Record {
         }
     }
 
-    pub fn rec_copy_prefix_to_dtuple(
-        &self,
-        n_fields: usize,
-        index: &Index,
-    ) -> DTuple {
+    /// Copies a prefix of the record to dtuple.
+    ///
+    /// # Arguments
+    ///
+    /// `n_fields`: The number of fields to copy.
+    pub fn rec_copy_prefix_to_dtuple(&self, n_fields: usize) -> DTuple {
         ut_ad!(self.rec_validate());
 
         let mut dtuple = DTuple::new(n_fields);

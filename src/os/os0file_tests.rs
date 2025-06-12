@@ -3,7 +3,8 @@ mod tests {
     use crate::innodb::innodb0types::{IB_FILE_BLOCK_SIZE, UNIV_PAGE_SIZE};
     use crate::os::os0file::{
         CreateMode, WriteResult, os_file_create, os_file_delete,
-        os_file_get_size, os_file_read, os_file_set_size, os_file_write, os_file_fsync
+        os_file_fsync, os_file_get_size, os_file_read, os_file_set_size,
+        os_file_write,
     };
 
     #[test]
@@ -95,7 +96,7 @@ mod tests {
 
         os_file_delete(&file_name).expect("should remove file");
     }
-    
+
     #[test]
     fn test_os_file_fsync() {
         let file_creation_result =
