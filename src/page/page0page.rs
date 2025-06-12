@@ -1091,6 +1091,6 @@ impl Page {
     /// # Note
     /// This method is currently a placeholder and needs to be implemented.
     pub fn page_data_calc_checksum(page_frame: &PageFrame) -> u32 {
-        42
+        crc32fast::hash(page_frame.0)
     }
 }
