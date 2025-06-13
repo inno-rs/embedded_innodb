@@ -1,11 +1,9 @@
 use std::ops::DerefMut;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
 use crate::buf::buf0types::BufBlock;
 use crate::fil::fil0fil::Fil;
-use crate::innodb::innodb0types::{
-    DbErr, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
-};
+use crate::innodb::innodb0types::{PageId, PageNo, SpaceId, UNIV_PAGE_SIZE};
 use crate::mtr::mtr0mtr::Mtr;
 use crate::os::os0file::IORequest;
 use crate::trx::trx0sys::TRX_SYS_SPACE;
@@ -259,7 +257,7 @@ impl DoubleWriteBuffer {
         // Go through all the pages, and write them to disk to free up the double write buffer.
         ut_ad!(self.first_free != 0);
 
-        let mut mtr = Mtr::new();
+        let mtr = Mtr::new();
         let result = {
             let mut fil = self.fil.lock().unwrap();
 

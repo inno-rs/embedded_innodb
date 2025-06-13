@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::ptr::null_mut;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
 use crate::btr::btr0btr::BTree;
 use crate::buf::buf0types::{BufBlock, BufPage};

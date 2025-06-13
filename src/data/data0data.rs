@@ -6,6 +6,7 @@ use crate::data::data0types::{
 };
 use crate::innodb::innodb0types::UNIV_SQL_NULL;
 use crate::ut::ut0dbg::{ut_a, ut_ad};
+use crate::ut_panic;
 
 impl DTuple {
     /// Creates a new tuple with the specified number of fields.
@@ -75,7 +76,7 @@ impl DTuple {
         if n < self.n_fields {
             self.fields.get_mut(n).unwrap()
         } else {
-            panic!("Field number out of range");
+            ut_panic!("Field number out of range");
         }
     }
 
@@ -96,7 +97,7 @@ impl DTuple {
         if n < self.n_fields {
             self.fields.get(n).unwrap()
         } else {
-            panic!("Field number out of range");
+            ut_panic!("Field number out of range");
         }
     }
 
@@ -108,6 +109,16 @@ impl DTuple {
     ///
     pub fn dtuple_get_n_fields(&self) -> usize {
         self.n_fields
+    }
+
+    /// Gets the number of fields in the tuple to be used for comparison.
+    ///
+    /// # Returns
+    ///     
+    /// * The number of fields in the tuple.
+    ///
+    pub fn dtuple_get_n_fields_cmp(&self) -> usize {
+        self.n_fields_cmp
     }
 
     /// Return the sum of data lengths of a tuple.

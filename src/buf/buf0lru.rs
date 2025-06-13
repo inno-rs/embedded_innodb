@@ -5,7 +5,6 @@ use std::rc::{Rc, Weak};
 use std::sync::{Arc, RwLock};
 
 use intrusive_collections::{LinkedList, UnsafeRef};
-use parking_lot::RwLock as ParkingLotRwLock;
 use tracing::info;
 
 use crate::buf::buf0buf::BufPool;
@@ -214,7 +213,7 @@ impl BufLRU {
     /// * `old` - Whether to add the page to the old section of the LRU list
     fn add_block_low(&mut self, buf_page: &mut BufPage, old: bool) {
         let length = self.lru_list.borrow().iter().count();
-        if (old == false || length < OLD_MIN_LENGTH) {
+        if old == false || length < OLD_MIN_LENGTH {
             let page = unsafe { UnsafeRef::from_raw(buf_page) };
             let mut lru_list = self.lru_list.borrow_mut();
             lru_list.push_front(page);

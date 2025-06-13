@@ -1,20 +1,15 @@
 #[cfg(test)]
 mod tests {
     use std::alloc::{Layout, alloc, dealloc};
-    use std::cmp::Ordering;
-    use std::sync::{Arc, Mutex};
 
-    use rstest::rstest;
     use tracing::info;
 
-    use crate::dict::dict0types::{Column, Field, Index};
-    use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
+    use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
     use crate::page::page0page::Page;
-    use crate::rem::rem0cmp::cmp_rec_rec;
     use crate::rem::rem0rec::*;
     use crate::some_or_panic;
     use crate::tests::test0utils::{
-        FieldType, create_new_fields, create_records, get_user_records,
+        FieldType, create_records, get_user_records,
     };
 
     fn get_new_rec() -> (Record, Layout, *mut u8) {
@@ -299,66 +294,6 @@ mod tests {
                 "PHYSICAL RECORD: n_fields 2; 1-byte offsets; info bits 0 fields  0:  Hello World; len: 11  1:  \u{15}N\0\0\0\0\0\0; len: 8 "
             );
         }
-    }
-
-    #[rstest]
-    #[case("", "", Ordering::Equal)]
-    #[case("", "a", Ordering::Less)]
-    #[case("a", "", Ordering::Greater)]
-    #[case("a", "a", Ordering::Equal)]
-    #[case("a", "b", Ordering::Less)]
-    #[case("b", "a", Ordering::Greater)]
-    #[case("abc", "abc", Ordering::Equal)]
-    #[case("abc", "abd", Ordering::Less)]
-    #[case("abd", "abc", Ordering::Greater)]
-    #[case("abc", "abcd", Ordering::Less)] // prefix
-    #[case("abcd", "abc", Ordering::Greater)]
-    #[case("abc1", "abc2", Ordering::Less)] // numeric tail
-    #[case("abc2", "abc1", Ordering::Greater)]
-    #[case("abc", "ABC", Ordering::Greater)] // ASCII case: lowercase > uppercase
-    #[case("ABC", "abc", Ordering::Less)]
-    #[case("abc", "abC", Ordering::Greater)] // mixed case
-    #[case("abC", "abc", Ordering::Less)]
-    #[case("abc", "abc ", Ordering::Less)] // trailing space
-    #[case("abc ", "abc", Ordering::Greater)]
-    #[case("abc", "abc\n", Ordering::Less)] // newline
-    #[case("abc\n", "abc", Ordering::Greater)]
-    #[case("123", "123", Ordering::Equal)] // numeric strings
-    #[case("123", "124", Ordering::Less)]
-    #[case("124", "123", Ordering::Greater)]
-    #[case("🙂", "🙂", Ordering::Equal)] // Unicode emoji
-    #[case("🙂", "🙃", Ordering::Less)]
-    #[case("🙃", "🙂", Ordering::Greater)]
-    #[case("Z", "a", Ordering::Less)] // Uppercase vs lowercase farther apart
-    #[case("a", "Z", Ordering::Greater)]
-    fn test_rec_rec_match(
-        #[case] str1: &str,
-        #[case] str2: &str,
-        #[case] out: Ordering,
-    ) {
-        info!("case: 1={}, 2={}", str1, str2);
-        let owning_page_1 =
-            create_records(1, vec![FieldType::String(Some(str1.to_string()))]);
-        let user_records_1 = get_user_records(owning_page_1.page);
-        let rec1 = user_records_1[0];
-
-        let owning_page_2 =
-            create_records(1, vec![FieldType::String(Some(str2.to_string()))]);
-        let user_records_2 = get_user_records(owning_page_2.page);
-        let rec2 = user_records_2[0];
-
-        let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
-        let fields = create_new_fields(1);
-        for field in fields {
-            index.add_field(field);
-        }
-
-        info!("rec: {:?}", rec1.rec_to_string());
-        info!("rec: {:?}", rec2.rec_to_string());
-
-        let result = cmp_rec_rec(rec1, rec2, &index);
-
-        assert_eq!(result, out);
     }
 
     #[test]

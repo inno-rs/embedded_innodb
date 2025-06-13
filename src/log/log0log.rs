@@ -120,7 +120,7 @@ impl Log {
         flush_bit: bool,
     ) {
         // Set the flush bit in the header
-        let mut block_number = self.block_get_hdr_no(block_offset);
+        let block_number = self.block_get_hdr_no(block_offset);
         let new_block_number = if flush_bit {
             block_number | LOG_BLOCK_FLUSH_BIT_MASK
         } else {

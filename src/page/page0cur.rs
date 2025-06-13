@@ -1,12 +1,11 @@
-use std::ptr::null_mut;
-use std::sync::{Arc, Mutex};
+use std::cmp::Ordering;
+use std::sync::Arc;
 
 use tracing::info;
 
 use crate::buf::buf0types::BufBlock;
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
-use crate::fsp::fsp0fsp::ut_bits_in_bytes;
 use crate::innodb::innodb0types::IbSearchMode::{
     IbCurG, IbCurGe, IbCurL, IbCurLe, IbCurrUnSupp,
 };
@@ -15,6 +14,7 @@ use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::{
     PAGE_DIR_SLOT_MAX_N_OWNED, PAGE_DIR_SLOT_MIN_N_OWNED, PAGE_N_RECS, Page,
 };
+use crate::rem::rem0cmp::cmp_dtuple_rec_with_match;
 use crate::rem::rem0rec::{OrphanRecord, Record};
 use crate::ut::ut0dbg::ut_ad;
 use crate::{some_or_panic, ut_panic};
@@ -388,11 +388,134 @@ impl PageCur {
 
     /// Search the right position for the cursor.
     pub fn page_cur_search_with_match(
-        &self,
+        &mut self,
         index: &Index,
         dtuple: &DTuple,
         mode: usize,
-        match_cache: MatchCache,
+        match_cache: &mut MatchCache,
     ) {
+        let page = self.page;
+
+        ut_ad!(dtuple.dtuple_validate());
+        ut_ad!(
+            mode == PAGE_CUR_L
+                || mode == PAGE_CUR_LE
+                || mode == PAGE_CUR_G
+                || mode == PAGE_CUR_GE
+        );
+
+        let mut update_low_match = |fields: usize, bytes: usize| {
+            match_cache.ilow_matched_fields = fields;
+            match_cache.ilow_matched_bytes = bytes;
+        };
+
+        let mut update_up_match = |fields: usize, bytes: usize| {
+            match_cache.iup_matched_fields = fields;
+            match_cache.iup_matched_bytes = bytes;
+        };
+
+        // Perform binary search. First, the search is done through the page directory and after that linear search in the list of the records
+        // owned by the upper directory slot.
+
+        let mut cur_matched_fields: usize = 0;
+        let mut cur_matched_bytes: usize = 0;
+
+        let mut low = 0;
+        let mut up = page.page_dir_get_n_slots() - 1;
+
+        // Perform binary search until the lower and upper limit directory slots come to a distance of 1 of each other.
+        while up - low > 1 {
+            let mid = (low + up) / 2;
+
+            let slot_rec = page.page_dir_slot_get_rec(mid);
+
+            let cmp = cmp_dtuple_rec_with_match(
+                dtuple,
+                slot_rec,
+                &mut cur_matched_fields,
+                &mut cur_matched_bytes,
+            );
+
+            match cmp {
+                Ordering::Greater => {
+                    low = mid;
+                    update_low_match(cur_matched_fields, cur_matched_bytes);
+                }
+                Ordering::Less => {
+                    up = mid;
+                    update_up_match(cur_matched_fields, cur_matched_bytes);
+                }
+                Ordering::Equal => {
+                    if mode == PAGE_CUR_G || mode == PAGE_CUR_LE {
+                        low = mid;
+                        update_low_match(
+                            cur_matched_fields,
+                            cur_matched_bytes,
+                        );
+                    } else {
+                        up = mid;
+                        update_low_match(
+                            cur_matched_fields,
+                            cur_matched_bytes,
+                        );
+                    }
+                }
+            }
+        }
+
+        // We have found out low and up slots. Now we have to perform linear search.
+        let mut low_rec = page.page_dir_slot_get_rec(low);
+        let mut up_rec = page.page_dir_slot_get_rec(up);
+
+        // We have to search until the lower and upper records come to the distance of 1 of each other.
+        while low_rec.rec_get_next().unwrap() != up_rec {
+            let mid_rec = low_rec.rec_get_next().unwrap();
+
+            let cmp = cmp_dtuple_rec_with_match(
+                dtuple,
+                mid_rec,
+                &mut cur_matched_fields,
+                &mut cur_matched_bytes,
+            );
+
+            match cmp {
+                Ordering::Greater => {
+                    low_rec = mid_rec;
+                    update_low_match(cur_matched_fields, cur_matched_bytes);
+                }
+                Ordering::Less => {
+                    up_rec = mid_rec;
+                    update_up_match(cur_matched_fields, cur_matched_bytes);
+                }
+                Ordering::Equal => {
+                    if mode == PAGE_CUR_G || mode == PAGE_CUR_LE {
+                        up_rec = mid_rec;
+                        update_up_match(cur_matched_fields, cur_matched_bytes);
+                    } else {
+                        low_rec = mid_rec;
+                        update_low_match(
+                            cur_matched_fields,
+                            cur_matched_bytes,
+                        );
+                    }
+                }
+            }
+        }
+
+        if mode == PAGE_CUR_GE {
+            self.page_cur_position(up_rec);
+        } else {
+            self.page_cur_position(low_rec);
+        }
+    }
+
+    /// Position the cursor to the given record.
+    ///
+    /// # Arguments
+    ///
+    /// `rec`: The record to place the cursor to.
+    ///
+    pub fn page_cur_position(&mut self, rec: Record) {
+        self.rec = rec;
     }
 }

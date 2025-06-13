@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, RwLock};
 
-use tracing::{error, warn};
+use tracing::error;
 
 use crate::buf::buf0types::BufBlock;
 use crate::fil::fil0fil::Fil;

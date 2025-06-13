@@ -17,7 +17,7 @@ use crate::innodb::innodb0types::{
 use crate::mtr::mtr0mtr::Mtr;
 use crate::page::page0page::Page;
 use crate::sync::sync0rw::ReadWriteLatch;
-use crate::ut::ut0dbg::{ut_a, ut_ad};
+use crate::ut::ut0dbg::ut_ad;
 /// Magic number used to identify buffer pool pages that do not have a checksum.
 pub const BUF_NO_CHECKSUM_MAGIC: usize = 0xDEADBEEF;
 

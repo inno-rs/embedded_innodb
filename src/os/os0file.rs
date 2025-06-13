@@ -6,7 +6,6 @@ use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::runtime::Runtime;
 
-use crate::block_on;
 /// This module provides file I/O operations for the embedded InnoDB storage engine.
 /// It includes functionality for file creation, opening, reading, writing, and size retrieval.
 use crate::innodb::innodb0types::IB_FILE_BLOCK_SIZE;

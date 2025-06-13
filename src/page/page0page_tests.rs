@@ -4,7 +4,6 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use libc::pathconf;
     use rstest::{fixture, rstest};
     use tracing::info;
 
@@ -14,7 +13,7 @@ mod tests {
     use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
     use crate::mtr::mtr0mtr::Mtr;
     use crate::page::page0page::*;
-    use crate::rem::rem0rec::{Record, RecordData};
+    use crate::rem::rem0rec::{Record, RecordFieldData};
     use crate::tests::test0utils::{FieldType, create_records};
 
     struct PageFixture {
@@ -69,8 +68,8 @@ mod tests {
         let infimum_rec = page.page_get_infimum_rec();
         let extract_data = |rec: Record| -> String {
             return match rec.rec_get_data(0).unwrap() {
-                RecordData::Data(d) => d,
-                RecordData::SqlNullData() => {
+                RecordFieldData::Data(d) => d,
+                RecordFieldData::SqlNullData() => {
                     panic!("SQL NULL DATA");
                 }
             };
