@@ -19,7 +19,12 @@ impl DTuple {
     /// * A new DTuple instance with the specified number of fields.
     pub fn new(number_of_fields: usize) -> Self {
         let d_fields = vec![DField::new(vec![]); number_of_fields];
-        DTuple { n_fields: number_of_fields, info_bits: 0, fields: d_fields }
+        DTuple {
+            n_fields: number_of_fields,
+            info_bits: 0,
+            fields: d_fields,
+            n_fields_cmp: number_of_fields,
+        }
     }
 
     /// Sets the info bits of the tuple.
@@ -32,8 +37,20 @@ impl DTuple {
     ///     
     /// * `None` if the operation was successful, or an error if it failed.
     pub fn dtuple_set_info_bits(&mut self, info_bits: usize) {
-        info!("Setting info bits: {}", info_bits);
         self.info_bits = self.info_bits;
+    }
+
+    /// Sets the info n_fields_cmp of the tuple.
+    ///
+    /// # Arguments
+    ///
+    /// * `n_fields_cmp` - The number of fields to use during comparison.
+    ///
+    /// # Returns
+    ///     
+    /// * `None` if the operation was successful, or an error if it failed.
+    pub fn dtuple_set_n_fields_cmp(&mut self, n_fields_cmp: usize) {
+        self.n_fields_cmp = n_fields_cmp;
     }
 
     /// Gets the info bits of the tuple.
@@ -42,7 +59,6 @@ impl DTuple {
     ///
     /// * The info bits of the tuple.
     pub fn dtuple_get_info_bits(&self) -> usize {
-        info!("Getting info bits: {}", self.info_bits);
         self.info_bits
     }
 
@@ -56,7 +72,6 @@ impl DTuple {
     ///
     /// * The nth field of the tuple.
     pub fn dtuple_get_nth_field_mut(&mut self, n: usize) -> &mut DField {
-        info!("Getting field number: {}", n);
         if n < self.n_fields {
             self.fields.get_mut(n).unwrap()
         } else {
@@ -78,7 +93,6 @@ impl DTuple {
     ///
     /// * If the field number is out of range.
     pub fn dtuple_get_nth_field(&self, n: usize) -> &DField {
-        info!("Getting field number: {}", n);
         if n < self.n_fields {
             self.fields.get(n).unwrap()
         } else {
@@ -93,7 +107,6 @@ impl DTuple {
     /// * The number of fields in the tuple.
     ///
     pub fn dtuple_get_n_fields(&self) -> usize {
-        info!("Getting number of fields: {}", self.n_fields);
         self.n_fields
     }
 
@@ -136,6 +149,12 @@ impl DTuple {
         Some(BigRec { n_fields: 0, fields: vec![] })
     }
 
+    /// Checks if the dtuple is typed.
+    ///
+    /// # Returns
+    ///
+    /// True, if all the fields are type checked.
+    /// False, otherwise.
     pub fn dtuple_type_checked(&self) -> bool {
         let n_fields = self.dtuple_get_n_fields();
         for index in 0..n_fields {

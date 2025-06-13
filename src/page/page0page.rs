@@ -1,5 +1,6 @@
 use std::ptr::slice_from_raw_parts_mut;
 
+use tokio::time::timeout_at;
 use tracing::{info, warn};
 
 use crate::buf::buf0types::{BufBlock, Frame};
@@ -440,17 +441,21 @@ impl Page {
     /// # Returns
     ///
     /// * A `Record` object representing the middle record in the page.
-    pub fn page_get_middle_rec(&self) -> Record {
-        let middle = (self.page_header_get_field(PAGE_N_RECS)
-            + PAGE_HEAP_NO_USER_LOW)
-            / 2;
+    pub fn page_get_middle_rec(&self) -> Option<Record> {
+        // todo: this function only works with pages with more than 1 record. Why not 1?
+        let n_recs = self.page_n_get_recs();
+        if n_recs == 0 {
+            return None;
+        }
+
+        let middle = (n_recs + PAGE_HEAP_NO_USER_LOW) / 2;
 
         let mut i: usize = 0;
         let mut count: usize = 0;
         loop {
             let n_owned = self.page_dir_get_n_owned(i) as usize;
 
-            if (count + n_owned) >= middle {
+            if (count + n_owned) > middle {
                 break;
             }
 
@@ -458,13 +463,15 @@ impl Page {
             i += 1;
         }
 
+        ut_ad!(i > 0);
+
         let mut rec = self.page_dir_slot_get_rec(i - 1);
         for _ in 0..(middle - count) {
             let next = rec.rec_get_next();
             rec = next.unwrap();
         }
 
-        rec
+        Some(rec)
     }
 
     /// Sets the record pointer in the page directory slot.
@@ -579,9 +586,12 @@ impl Page {
     ///
     /// * The number of records owned by the specified slot as a `SlotId`.
     pub fn page_dir_get_n_owned(&self, slot: SlotId) -> SlotId {
-        let page_dir = unsafe { self.ptr.add(PAGE_HEADER as usize) };
-        let slot_ptr = unsafe { page_dir.add(slot as usize) };
-        let n_owned = unsafe { *(slot_ptr as *const u16) };
+        let n_owned = unsafe {
+            let slot_ptr =
+                self.ptr.add(slot as usize + PAGE_HEADER) as *mut u16;
+            slot_ptr.read_unaligned()
+        };
+
         n_owned as SlotId
     }
 
@@ -746,7 +756,7 @@ impl Page {
             &infimum_d_tuple,
             0,
         );
-        info!("infimum no of fields: {}", infimum_rec.rec_get_n_fields());
+        ut_ad!(infimum_rec.rec_get_n_fields() == 1);
         info!("infimum position: {}", infimum_rec.get_ptr() as usize);
         infimum_rec.rec_set_n_owned(1);
         // infimum_rec.rec_set_heap_no(0);
@@ -769,7 +779,7 @@ impl Page {
             &supremum_tuple,
             0,
         );
-        info!("supremum no of fields: {}", supremum_rec.rec_get_n_fields());
+        ut_ad!(supremum_rec.rec_get_n_fields() == 1);
         info!("supremum position: {}", supremum_rec.get_ptr() as usize);
         supremum_rec.rec_set_n_owned(1);
         // supremum_rec.rec_set_heap_no(1);
@@ -1044,7 +1054,7 @@ impl Page {
     /// Gets the page number of the next page in the linked list of pages.
     ///
     /// This method retrieves the page number of the next page in the
-    /// doubly-linked list of pages in the tablespace.
+    /// doubly linked list of pages in the tablespace.
     ///
     /// # Returns
     /// * The page number of the next page as a `PageNo`
@@ -1092,5 +1102,63 @@ impl Page {
     /// This method is currently a placeholder and needs to be implemented.
     pub fn page_data_calc_checksum(page_frame: &PageFrame) -> u32 {
         42
+    }
+
+    /// Get the page header output string for debugging purposes.
+    pub fn page_header_str(&self) -> String {
+        let mut out = String::new();
+        out.push_str(
+            &format!(
+                "\
+--------------------------------\n\
+PAGE HEADER INFO\n\
+Page address {}, n records {} \n\
+n dir slots {}, heap top {}\n\
+Page n heap {}, free {}, garbage {}\n\
+Page last insert {}, direction {}, n direction {}\n",
+                self.ptr as usize,
+                self.page_get_n_recs(),
+                self.page_header_get_field(PAGE_N_DIR_SLOTS),
+                self.page_header_get_field(PAGE_HEAP_TOP),
+                self.page_header_get_field(PAGE_N_HEAP),
+                self.page_header_get_field(PAGE_FREE),
+                self.page_header_get_field(PAGE_GARBAGE),
+                self.page_header_get_field(PAGE_LAST_INSERT),
+                self.page_header_get_field(PAGE_DIRECTION),
+                self.page_header_get_field(PAGE_N_DIRECTION),
+            )
+            .to_string(),
+        );
+
+        out
+    }
+
+    /// Print out the header for debugging purposes.
+    pub fn page_header_print(&self) {
+        let mut out = String::new();
+        out.push_str(
+            &format!(
+                "\
+--------------------------------\n\
+PAGE HEADER INFO\n\
+Page address {}, n records {} \n\
+n dir slots {}, heap top {}\n\
+Page n heap {}, free {}, garbage {}\n\
+Page last insert {}, direction {}, n direction {}\n",
+                self.ptr as usize,
+                self.page_get_n_recs(),
+                self.page_header_get_field(PAGE_N_DIR_SLOTS),
+                self.page_header_get_field(PAGE_HEAP_TOP),
+                self.page_header_get_field(PAGE_N_HEAP),
+                self.page_header_get_field(PAGE_FREE),
+                self.page_header_get_field(PAGE_GARBAGE),
+                self.page_header_get_field(PAGE_LAST_INSERT),
+                self.page_header_get_field(PAGE_DIRECTION),
+                self.page_header_get_field(PAGE_N_DIRECTION),
+            )
+            .to_string(),
+        );
+
+        info!("{}", out);
     }
 }

@@ -6,6 +6,7 @@ use tracing::info;
 use crate::buf::buf0types::BufBlock;
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
+use crate::fsp::fsp0fsp::ut_bits_in_bytes;
 use crate::innodb::innodb0types::IbSearchMode::{
     IbCurG, IbCurGe, IbCurL, IbCurLe, IbCurrUnSupp,
 };
@@ -46,6 +47,20 @@ pub const PAGE_CUR_L: usize = IbCurL as usize;
 /// If the search key is found, the cursor will be placed on that record.
 /// Otherwise, it will be placed on the last record less than the search key.
 pub const PAGE_CUR_LE: usize = IbCurLe as usize;
+
+/// A struct
+/// specifying the number of fields and bytes
+/// already currently matched to help avoid redundant comparisons.
+pub struct MatchCache {
+    /// Already matched fields in the upper limit record.
+    pub iup_matched_fields: usize,
+    /// Already matched bytes in the field not yet completely matched.
+    pub iup_matched_bytes: usize,
+    /// Already matched fields in the lower limit record.
+    pub ilow_matched_fields: usize,
+    /// Already matched bytes in the field not yet completely matched.
+    pub ilow_matched_bytes: usize,
+}
 
 /// A cursor structure for navigating through records in a page.
 ///
@@ -341,10 +356,10 @@ impl PageCur {
         self.page.page_set_next_rec(insert_rec, Some(next_rec));
         self.page.page_set_next_rec(self.rec, Some(insert_rec));
 
-        self.page.page_header_set_field(
-            PAGE_N_RECS,
-            1 + self.page.page_header_get_field(PAGE_N_RECS),
-        );
+        let n_recs = self.page.page_header_get_field(PAGE_N_RECS);
+        self.page.page_header_set_field(PAGE_N_RECS, 1 + n_recs);
+
+        ut_ad!(n_recs + 1 == self.page.page_header_get_field(PAGE_N_RECS));
 
         /* 5. Set the n_owned field in the inserted record to zero and set the heap no field.*/
 
@@ -369,5 +384,15 @@ impl PageCur {
         /* 9. Write the log record of the insert. */
 
         insert_rec_opt
+    }
+
+    /// Search the right position for the cursor.
+    pub fn page_cur_search_with_match(
+        &self,
+        index: &Index,
+        dtuple: &DTuple,
+        mode: usize,
+        match_cache: MatchCache,
+    ) {
     }
 }

@@ -84,8 +84,8 @@ pub fn cmp_rec_rec_with_match(
     while (cur_field < rec1_n_fields) && (cur_field < rec2_n_fields) {
         let col = index.get_nth_col(cur_field);
 
-        let m_type = col.lock().unwrap().d_type.m_type;
-        let pr_type = col.lock().unwrap().d_type.pr_type;
+        let m_type = col.lock().unwrap().dtype.m_type;
+        let pr_type = col.lock().unwrap().dtype.pr_type;
 
         let (_, rec1_f_len) = rec_1.rec_get_nth_field_offs(cur_field);
         let (_, rec2_f_len) = rec_2.rec_get_nth_field_offs(cur_field);

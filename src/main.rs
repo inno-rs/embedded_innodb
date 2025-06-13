@@ -18,6 +18,7 @@ mod mtr;
 mod os;
 mod page;
 mod rem;
+mod row;
 mod srv;
 mod sync;
 mod tests;

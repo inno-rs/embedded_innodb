@@ -1,7 +1,10 @@
 use std::sync::{Arc, Mutex};
 
-use crate::data::data0types::DType;
+use crate::data::data0types::{DATA_NOT_NULL, DATA_SYS_CHILD, DTuple, DType};
 use crate::innodb::innodb0types::{PageId, PageNo};
+use crate::rem::rem0rec::{REC_STATUS_NODE_PTR, Record};
+use crate::some_or_panic;
+use crate::ut::ut0dbg::ut_ad;
 
 pub struct Field {
     /// Pointer to the column.
@@ -84,10 +87,6 @@ impl Index {
         self.page_id.page_no
     }
 
-    pub fn is_clustered(&self) -> bool {
-        false
-    }
-
     pub fn get_page_id(&self) -> PageId {
         self.page_id
     }
@@ -119,6 +118,111 @@ impl Index {
     pub fn add_field(&mut self, field: Field) {
         self.fields.push(field);
     }
+
+    pub fn is_clustered(&self) -> bool {
+        match self.index_type {
+            IndexType::DictClustered => true,
+            IndexType::DictUnique | IndexType::DictUniversal => false,
+        }
+    }
+
+    /// Get the number of columns that uniquely identify the record.
+    ///
+    /// # Returns
+    /// Number of fields that uniquely identify the record.
+    /// `n_uniq` if clustered.
+    /// Otherwise, all fields.
+    pub fn get_n_unique_in_tree(&self) -> usize {
+        match self.is_clustered() {
+            true => self.n_uniq,
+            false => self.fields.len(),
+        }
+    }
+
+    /// Copy the types of the fields in the index to dtuple.
+    ///
+    /// # Arguments
+    ///
+    /// `dtuple`: A DTuple to which we copy the types.
+    /// `n_fields`: Number of fields to copy.
+    ///
+    pub fn copy_types(&self, dtuple: &mut DTuple, n_fields: usize) {
+        for i in 0..n_fields {
+            let field = some_or_panic!(self.fields.get(i));
+            let dest_field = some_or_panic!(dtuple.fields.get_mut(i));
+            let col = field.col.lock().unwrap();
+            dest_field.dtype = col.dtype.clone();
+        }
+    }
+
+    /// Build node ptr that represents a non-leaf node.
+    /// Non-leaf nodes contain the required field for comparison,
+    /// and the last fields is the child node page node.
+    ///
+    /// # Arguments
+    ///
+    /// `rec`: The record from which we need to construct the dtuple.
+    /// `page_no`: Child page no to put in the record.
+    ///
+    /// # Returns
+    ///
+    /// `DTuple` containing the contents of the record and the child page number in addition.
+    pub fn build_node_ptr(&self, rec: Record, page_no: PageNo) -> DTuple {
+        let n_unique = self.get_n_unique_in_tree();
+        // We are creating a non-leaf node.
+        // The last field is the page no to the child nodes of the btree.
+        let mut dtuple = DTuple::new(n_unique + 1);
+
+        // We are creating a non-leaf node.
+        // And as we mentioned above, we created an extra field to store the child page node.
+        // When searching in the index tree for the node pointer,
+        // we should not compare the last field.
+        dtuple.dtuple_set_n_fields_cmp(n_unique);
+
+        self.copy_types(&mut dtuple, n_unique);
+
+        let nth_field = dtuple.dtuple_get_nth_field_mut(n_unique);
+        nth_field.dfield_set_data(page_no.to_le_bytes().to_vec(), 4);
+
+        let dtype = &mut nth_field.dtype;
+        dtype.m_type = DATA_SYS_CHILD as u16;
+        dtype.pr_type = DATA_NOT_NULL;
+        dtype.len = 4;
+
+        rec.rec_copy_prefix_to_dtuple(n_unique);
+
+        dtuple.dtuple_set_info_bits(
+            dtuple.dtuple_get_info_bits() | REC_STATUS_NODE_PTR,
+        );
+
+        ut_ad!(dtuple.dtuple_type_checked());
+
+        dtuple
+    }
+
+    /// Builds a typed data tuple out of a physical record.
+    /// Copy all the fields.
+    ///
+    /// # Arguments
+    ///
+    /// `rec`: The record from which we need to construct the dtuple.
+    /// `page_no`: Child page no to put in the record.
+    ///
+    /// # Returns
+    ///
+    /// `DTuple` containing the contents of the record.
+    pub fn build_data_tuple(&self, rec: Record, page_no: PageNo) -> DTuple {
+        let n_fields = rec.rec_get_n_fields();
+        let mut dtuple = DTuple::new(n_fields);
+
+        self.copy_types(&mut dtuple, n_fields);
+
+        rec.rec_copy_prefix_to_dtuple(n_fields);
+
+        ut_ad!(dtuple.dtuple_type_checked());
+
+        dtuple
+    }
 }
 
 pub struct Column {
@@ -129,7 +233,7 @@ pub struct Column {
     /// Nonzero if this column appears in the ordering fields of the index.
     pub ord_part: usize,
     /// Type of the column.
-    pub d_type: DType,
+    pub dtype: DType,
 }
 
 pub struct Table {}

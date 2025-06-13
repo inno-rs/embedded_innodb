@@ -62,20 +62,20 @@ impl Drop for OwningPage {
 /// test data structures.
 pub enum FieldType {
     /// Signed 32-bit integer
-    Int(i32),
+    Int(Option<i32>),
     /// Unsigned 64-bit integer
-    UnsignedInt(u64),
+    UnsignedInt(Option<u64>),
     /// Binary data
-    Binary,
+    Binary(Option<Vec<u8>>),
     /// Variable-length string
     String(Option<String>),
     StringNull,
     /// Decimal number
-    Decimal,
+    Decimal(Option<String>),
     /// Single-precision floating point number
-    Float,
+    Float(Option<f32>),
     /// Double-precision floating point number
-    Double,
+    Double(Option<f64>),
 }
 
 /// Create records.
@@ -170,6 +170,7 @@ pub fn create_dtuples(n: usize, fields: Vec<FieldType>) -> Vec<OwningDTuple> {
                 dtuple: DTuple {
                     info_bits: 0,
                     n_fields: dfields.len(),
+                    n_fields_cmp: dfields.len(),
                     fields: dfields,
                 },
             }
@@ -192,10 +193,12 @@ pub fn create_dtuples(n: usize, fields: Vec<FieldType>) -> Vec<OwningDTuple> {
 /// An `OwningDField` instance containing the newly created field with test data.
 pub fn create_dfield(field_type: &FieldType) -> OwningDField {
     match field_type {
-        FieldType::Int(_) => {
+        FieldType::Int(i) => {
             // INT (signed 32-bit), value = 0x12345678 = 305419896
 
-            let data = vec![0x12, 0x34, 0x56, 0x78];
+            let data = i
+                .map(|a| a.to_le_bytes().to_vec())
+                .unwrap_or(vec![0x12, 0x34, 0x56, 0x78]);
             let len = data.len();
             let mut typ = DTYPE_INT.clone();
             typ.pr_type |= DATA_NOT_NULL;
@@ -210,9 +213,11 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
                     .unwrap(),
             }
         }
-        FieldType::UnsignedInt(_) => {
-            let data = vec![1, 0, 0, 0, 0, 0, 0, 0];
-            let data_ptr = data.as_ptr();
+        FieldType::UnsignedInt(ui) => {
+            let data = ui
+                .clone()
+                .map(|a| a.to_le_bytes().to_vec())
+                .unwrap_or(vec![1, 0, 0, 0, 0, 0, 0, 0]);
             let len = data.len();
             let mut typ = DTYPE_INT_UNSIGNED.clone();
             typ.pr_type |= DATA_NOT_NULL;
@@ -227,11 +232,11 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
                     .unwrap(),
             }
         }
-        FieldType::Binary => {
+        FieldType::Binary(bin) => {
             // BINARY(5), value = 01 02 03 04 05
 
-            let data = vec![0x01, 0x02, 0x03, 0x04, 0x05];
-            let data_ptr = data.as_ptr();
+            let data =
+                bin.clone().unwrap_or(vec![0x01, 0x02, 0x03, 0x04, 0x05]);
             let len = data.len();
             let mut typ = DTYPE_VARCHAR.clone();
             typ.pr_type |= DATA_NOT_NULL;
@@ -267,7 +272,6 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
                 .unwrap()
                 .as_bytes()
                 .to_vec();
-            let data_ptr = data.as_ptr();
             let len = data.len();
             let mut typ = DTYPE_VARCHAR.clone();
             typ.pr_type |= DATA_NOT_NULL;
@@ -282,10 +286,12 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
                     .unwrap(),
             }
         }
-        FieldType::Decimal => {
-            let data = b"1234.5678".to_vec();
+        FieldType::Decimal(d) => {
+            let data = d
+                .clone()
+                .map(|a| a.as_bytes().to_vec())
+                .unwrap_or(b"1234.5678".to_vec());
 
-            let data_ptr = data.as_ptr();
             let len = data.len();
             let mut typ = DTYPE_DECIMAL.clone();
             typ.pr_type |= DATA_NOT_NULL;
@@ -300,11 +306,12 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
                     .unwrap(),
             }
         }
-        FieldType::Float => {
+        FieldType::Float(f) => {
             // FLOAT, value = 3.14f32 → 0x40490FDB (little-endian)
-            let data = vec![0x40, 0x49, 0x0F, 0xDB];
+            let data = f
+                .map(|a| a.to_le_bytes().to_vec())
+                .unwrap_or(vec![0x40, 0x49, 0x0F, 0xDB]);
 
-            let data_ptr = data.as_ptr();
             let len = data.len();
             let mut typ = DTYPE_FLOAT.clone();
             typ.pr_type |= DATA_NOT_NULL;
@@ -319,11 +326,12 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
                     .unwrap(),
             }
         }
-        FieldType::Double => {
+        FieldType::Double(d) => {
             // DOUBLE, value = 3.14f64 → 0x40091EB851EB851F
-            let data = vec![0x40, 0x09, 0x1E, 0xB8, 0x51, 0xEB, 0x85, 0x1F];
+            let data = d.map(|a| a.to_le_bytes().to_vec()).unwrap_or(vec![
+                0x40, 0x09, 0x1E, 0xB8, 0x51, 0xEB, 0x85, 0x1F,
+            ]);
 
-            let data_ptr = data.as_ptr();
             let len = data.len();
             let mut typ = DTYPE_DOUBLE.clone();
             typ.pr_type |= DATA_NOT_NULL;
@@ -352,23 +360,25 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
 /// `Vec<Field>` containing all the newly created fields.
 pub fn create_new_fields(n: usize) -> Vec<Field> {
     let mut fields = Vec::<Field>::new();
-    fields.push(Field {
-        col: Arc::new(Mutex::new(Column {
+    for i in 0..n {
+        fields.push(Field {
+            col: Arc::new(Mutex::new(Column {
+                name: "".to_string(),
+                index: 0,
+                ord_part: 0,
+                dtype: DType {
+                    m_type: 0,
+                    len: 0,
+                    pr_type: 0,
+                    mb_min_len: 0,
+                    mb_max_len: 0,
+                },
+            })),
             name: "".to_string(),
-            index: 0,
-            ord_part: 0,
-            d_type: DType {
-                m_type: 0,
-                len: 0,
-                pr_type: 0,
-                mb_min_len: 0,
-                mb_max_len: 0,
-            },
-        })),
-        name: "".to_string(),
-        prefix_length: 0,
-        fixed_length: 0,
-    });
+            prefix_length: 0,
+            fixed_length: 0,
+        });
+    }
 
     fields
 }
