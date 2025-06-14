@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 use crate::buf::buf0types::{BufBlock, BufPage};
 use crate::data::data0types::{
     DATA_NOT_NULL, DField, DFieldBuilder, DTYPE_DECIMAL, DTYPE_DOUBLE,
-    DTYPE_FLOAT, DTYPE_INT, DTYPE_INT_UNSIGNED, DTYPE_VARCHAR, DTuple, DType,
+    DTYPE_FLOAT, DTYPE_INT, DTYPE_INT_UNSIGNED, DTYPE_VARCHAR, DTuple,
+    DTupleBuilder, DType,
 };
 use crate::dict::dict0types::{Column, Field, Index};
 use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE, UNIV_SQL_NULL};
@@ -63,6 +64,7 @@ impl Drop for OwningPage {
 pub enum FieldType {
     /// Signed 32-bit integer
     Int(Option<i32>),
+    IntNull(Option<i32>),
     /// Unsigned 64-bit integer
     UnsignedInt(Option<u64>),
     /// Binary data
@@ -167,12 +169,13 @@ pub fn create_dtuples(n: usize, fields: Vec<FieldType>) -> Vec<OwningDTuple> {
                 owning_fields.iter().map(|of| of.field.clone()).collect();
 
             OwningDTuple {
-                dtuple: DTuple {
-                    info_bits: 0,
-                    n_fields: dfields.len(),
-                    n_fields_cmp: dfields.len(),
-                    fields: dfields,
-                },
+                dtuple: DTupleBuilder::default()
+                    .info_bits(0)
+                    .n_fields(dfields.len())
+                    .n_fields_cmp(dfields.len())
+                    .fields(dfields)
+                    .build()
+                    .unwrap(),
             }
         })
         .collect()
@@ -203,6 +206,20 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             let mut typ = DTYPE_INT.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
+            OwningDField {
+                field_data_owner: vec![],
+                field: DFieldBuilder::default()
+                    .data(data)
+                    .len(len)
+                    .dtype(typ)
+                    .build()
+                    .unwrap(),
+            }
+        }
+        FieldType::IntNull(ni) => {
+            let data = ni.map(|a| a.to_le_bytes().to_vec()).unwrap_or(vec![]);
+            let len = data.len();
+            let typ = DTYPE_INT.clone();
             OwningDField {
                 field_data_owner: vec![],
                 field: DFieldBuilder::default()

@@ -1,9 +1,8 @@
 use std::ptr::slice_from_raw_parts_mut;
 
-use tokio::time::timeout_at;
 use tracing::{info, warn};
 
-use crate::buf::buf0types::{BufBlock, Frame};
+use crate::buf::buf0types::BufBlock;
 use crate::data::data0types::{
     DATA_ENGLISH, DATA_NOT_NULL, DATA_VARCHAR, DTuple,
 };
@@ -257,7 +256,7 @@ impl Page {
         match mtr {
             None => unsafe {
                 let loc =
-                    page.add((PAGE_HEADER + PAGE_MAX_TRX_ID)) as *mut TxnId;
+                    page.add(PAGE_HEADER + PAGE_MAX_TRX_ID) as *mut TxnId;
 
                 loc.write_unaligned(max_trx_id);
             },
@@ -274,7 +273,7 @@ impl Page {
     pub fn get_max_trx_id(&self) -> TxnId {
         unsafe {
             let page_ptr =
-                self.ptr.add((PAGE_HEADER + PAGE_MAX_TRX_ID)) as *const TxnId;
+                self.ptr.add(PAGE_HEADER + PAGE_MAX_TRX_ID) as *const TxnId;
             page_ptr.read_unaligned()
         }
     }
@@ -571,6 +570,12 @@ impl Page {
     /// - The number of slots in the page directory as a `SlotId`.
     pub fn page_dir_get_n_slots(&self) -> usize {
         self.page_header_get_field(PAGE_N_DIR_SLOTS)
+    }
+
+    /// Sets the number of slots in the page directory.
+    ///
+    pub fn page_dir_det_n_slots(&self, n_slots: usize) {
+        self.page_header_set_field(PAGE_N_DIR_SLOTS, n_slots)
     }
 
     /// Retrieves the number of records owned by a specific slot in the page directory.

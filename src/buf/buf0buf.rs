@@ -7,7 +7,6 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 
 use intrusive_collections::{LinkedList, UnsafeRef};
-use parking_lot::lock_api::RawRwLock;
 use tracing::info;
 
 use crate::buf::buf0lru::BufLRU;
@@ -18,7 +17,6 @@ use crate::buf::buf0types::{
     BufPage, BufPageState, BufPoolStats, FlushListAdapter, Request,
 };
 use crate::fil::fil0fil::Fil;
-use crate::fsp::fsp0fsp::ut_bits_in_bytes;
 use crate::innodb::innodb0types::{
     DbErr, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
 };

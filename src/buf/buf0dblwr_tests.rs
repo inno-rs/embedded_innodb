@@ -58,7 +58,7 @@ mod tests {
 
     #[rstest]
     fn test_new_double_write_buffer_is_empty(
-        mut dblwr_buf_fix: DblWrBufferFixture,
+        dblwr_buf_fix: DblWrBufferFixture,
     ) {
         assert!(dblwr_buf_fix.dblwr_buf.is_empty());
     }

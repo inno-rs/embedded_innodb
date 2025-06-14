@@ -4,11 +4,8 @@ use tokio::runtime::Runtime;
 
 use crate::fil::fil0types::FilNode;
 use crate::innodb::innodb0types::IB_FILE_BLOCK_SIZE;
-use crate::os::os0file::{
-    IORequest, os_file_read, os_file_write, os_file_write_async,
-};
+use crate::os::os0file::{IORequest, os_file_read, os_file_write};
 use crate::ut::ut0dbg::{ut_a, ut_ad};
-use crate::ut_panic;
 
 /// Context for I/O operations in the database system.
 ///

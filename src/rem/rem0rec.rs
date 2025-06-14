@@ -1,17 +1,13 @@
-use std::ops::Add;
-use std::ptr::{null, null_mut};
 use std::{ptr, slice};
 
-use strum_macros::Display;
 use tracing::{error, info};
 
-use crate::data::data0types::{DField, DTuple};
+use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
-use crate::fil::fil0types::{FIL_PAGE_NEXT, FIL_PAGE_PREV};
-use crate::innodb::innodb0types::{PageNo, UNIV_PAGE_SIZE, UNIV_SQL_NULL};
+use crate::innodb::innodb0types::{UNIV_PAGE_SIZE, UNIV_SQL_NULL};
 use crate::page::page0page::Page;
 use crate::rem::rem0types::REC_MAX_N_FIELDS;
-use crate::ut::ut0dbg::{ut_a, ut_ad};
+use crate::ut::ut0dbg::ut_ad;
 use crate::ut_panic;
 
 /// Info bit denoting the predefined minimum record:
@@ -100,9 +96,38 @@ pub const REC_OFFS_EXTERNAL_MASK: u16 = 0x3FFF;
 
 /// Record data enum.
 #[derive(Debug)]
-pub enum RecordData {
+pub enum RecordFieldData {
     Data(String),
     SqlNullData(),
+}
+
+impl RecordFieldData {
+    /// Check if the data is SQL null.
+    ///
+    /// # Returns
+    ///
+    /// A bool specifying if the record field data is null or not.
+    pub fn is_sql_null(&self) -> bool {
+        match self {
+            RecordFieldData::Data(_) => false,
+            RecordFieldData::SqlNullData() => true,
+        }
+    }
+
+    /// Get data from RecordData or panic if SQL null.
+    ///
+    /// # Returns
+    ///
+    /// String representation of the record data.
+    /// Panic otherwise.
+    pub fn data_or_panic(&self) -> String {
+        match self {
+            RecordFieldData::Data(d) => d.to_string(),
+            RecordFieldData::SqlNullData() => {
+                ut_panic!("field has data and is not null")
+            }
+        }
+    }
 }
 
 /// Sometimes we need records that don't have a backing page.
@@ -749,13 +774,13 @@ impl Record {
     /// # Panics
     ///
     /// * If the field number is out of range.
-    pub fn rec_get_nth_field(&self, n_field: usize) -> usize {
+    pub fn rec_get_nth_field(&self, n_field: usize) -> (usize, usize) {
         let fields_count = self.rec_get_n_fields();
         if n_field >= fields_count {
             panic!("rec_get_nth_field: n_field out of range");
         }
 
-        0
+        self.rec_get_nth_field_offs(n_field)
     }
 
     /// Returns the data size of a physical record which is the sum of field lengths.
@@ -780,7 +805,7 @@ impl Record {
     ///
     /// * The data of the nth field as a String.
     /// * `None` if the field number is out of range.
-    pub fn rec_get_data(&self, n_field: usize) -> Option<RecordData> {
+    pub fn rec_get_data(&self, n_field: usize) -> Option<RecordFieldData> {
         ut_ad!(self.rec_get_n_fields() > n_field);
 
         let (offset, length) = self.rec_get_nth_field_offs(n_field);
@@ -790,13 +815,13 @@ impl Record {
         );
 
         if length == UNIV_SQL_NULL {
-            return Some(RecordData::SqlNullData());
+            return Some(RecordFieldData::SqlNullData());
         }
 
         unsafe {
             let bytes = slice::from_raw_parts(self.ptr.add(offset), length);
             let data = std::str::from_utf8_unchecked(bytes).to_string();
-            Some(RecordData::Data(data))
+            Some(RecordFieldData::Data(data))
         }
     }
 
@@ -830,12 +855,12 @@ impl Record {
                     ut_panic!("rec_to_string: data out of range");
                 }
                 Some(d) => match d {
-                    RecordData::Data(data) => {
+                    RecordFieldData::Data(data) => {
                         let len = data.len();
                         output_builder
                             .push_str(&format!(" {}; len: {} ", data, len))
                     }
-                    RecordData::SqlNullData() => {
+                    RecordFieldData::SqlNullData() => {
                         output_builder
                             .push_str(&format!(" SQL NULL, len: {}", 5));
                     }
@@ -975,11 +1000,11 @@ impl Record {
             let data = rec_field.unwrap();
 
             match data {
-                RecordData::Data(d) => {
+                RecordFieldData::Data(d) => {
                     dfield.dfield_set_data(d.as_bytes().to_vec(), d.len());
                     // handle extern field??
                 }
-                RecordData::SqlNullData() => {
+                RecordFieldData::SqlNullData() => {
                     dfield.dfield_set_null();
                 }
             }

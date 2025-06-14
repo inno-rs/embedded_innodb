@@ -13,7 +13,6 @@ mod tests {
     use crate::buf::buf0lru::BufLRU;
     use crate::buf::buf0rea::BufRea;
     use crate::fil::fil0fil::Fil;
-    use crate::fsp::fsp0fsp::Fsp;
     use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
     use crate::log::log0log::Log;
     use crate::os::os0io::OsIo;
