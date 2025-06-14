@@ -50,6 +50,9 @@ pub const FIL_SPACE_MAGIC_N: usize = 89472;
 
 pub const FIL_NODE_MAGIC_N: usize = 89389;
 
+// start of the data on the page
+pub const FIL_PAGE_DATA: usize = 38;
+
 pub const FIL_PAGE_SPACE_ID_RANGE: Range<usize> =
     (FIL_PAGE_SPACE_ID..FIL_PAGE_SPACE_ID + 4);
 pub const FIL_PAGE_LSN_RANGE: Range<usize> = (FIL_PAGE_LSN..FIL_PAGE_LSN + 8);

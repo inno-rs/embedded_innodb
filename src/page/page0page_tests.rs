@@ -11,7 +11,7 @@ mod tests {
     use super::super::page0page::Page;
     use crate::buf::buf0types::{BufBlock, BufPage, Frame};
     use crate::dict::dict0types::Index;
-    use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
+    use crate::innodb::innodb0types::{PageFrame, PageId, UNIV_PAGE_SIZE};
     use crate::mtr::mtr0mtr::Mtr;
     use crate::page::page0page::*;
     use crate::rem::rem0rec::{Record, RecordData};
@@ -314,6 +314,13 @@ mod tests {
     #[test]
     fn test_page_get_free_space_of_empty() {
         assert_eq!(16191, Page::page_get_free_space_of_empty());
+    }
+
+    #[test]
+    fn test_page_data_calc_checksum() {
+        let mut my_byte_array: [u8; UNIV_PAGE_SIZE] = [0; UNIV_PAGE_SIZE];
+        let page_frame = PageFrame(&mut my_byte_array);
+        assert_eq!(2194025712, Page::page_data_calc_checksum(&page_frame));
     }
 
     #[rstest]
