@@ -1,11 +1,29 @@
 #[cfg(test)]
 mod tests {
-    use crate::innodb::innodb0types::{IB_FILE_BLOCK_SIZE, Lsn};
+    use std::sync::{Arc, Mutex};
+
+    use rstest::{fixture, rstest};
+
+    use crate::fil::fil0fil::Fil;
+    use crate::innodb::innodb0types::{
+        IB_FILE_BLOCK_SIZE, Lsn, UNIV_PAGE_SIZE,
+    };
     use crate::log::log0log::Log;
     use crate::log::log0types::LOG_BLOCK_HDR_SIZE;
+    use crate::os::os0io::OsIo;
+    use crate::os::os0runtime::create_runtime;
 
-    #[test]
-    fn test_block_convert_lsn_to_no() {
+    #[fixture]
+    fn log() -> Log {
+        let runtime = create_runtime(1);
+        let os_io = Arc::new(Mutex::new(OsIo::new(runtime.clone())));
+        let fil = Arc::new(Mutex::new(Fil::new(100, os_io.clone(), runtime)));
+
+        Log::new(UNIV_PAGE_SIZE * 10, fil)
+    }
+
+    #[rstest]
+    fn test_block_convert_lsn_to_no(log: Log) {
         // It should never be 0.
         {
             let lsn = 5;
@@ -24,10 +42,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_block_store_checksum() {
+    #[rstest]
+    fn test_block_store_checksum(mut log: Log) {
         let block_offset = 0;
-        let mut log = Log::new(IB_FILE_BLOCK_SIZE);
         let checksum = log.block_calc_checksum(block_offset);
 
         log.block_store_checksum(block_offset);
@@ -38,10 +55,9 @@ mod tests {
         assert_eq!(checksum, retrieved_checksum);
     }
 
-    #[test]
-    fn test_block_set_flush_bit() {
+    #[rstest]
+    fn test_block_set_flush_bit(mut log: Log) {
         let block_offset = IB_FILE_BLOCK_SIZE;
-        let mut log = Log::new(IB_FILE_BLOCK_SIZE * 2);
 
         {
             log.block_set_flush_bit(block_offset, true);
@@ -58,10 +74,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_block_set_header_no() {
+    #[rstest]
+    fn test_block_set_header_no(mut log: Log) {
         let block_offset = IB_FILE_BLOCK_SIZE;
-        let mut log = Log::new(IB_FILE_BLOCK_SIZE * 2);
         let hdr_no = 89;
 
         log.block_set_hdr_no(block_offset, hdr_no);
@@ -70,10 +85,9 @@ mod tests {
         assert_eq!(log.block_get_hdr_no(block_offset), hdr_no);
     }
 
-    #[test]
-    fn test_block_set_data_length() {
+    #[rstest]
+    fn test_block_set_data_length(mut log: Log) {
         let block_offset = IB_FILE_BLOCK_SIZE;
-        let mut log = Log::new(IB_FILE_BLOCK_SIZE * 2);
         let data_length = 100;
 
         log.block_set_data_length(block_offset, data_length);
@@ -82,10 +96,9 @@ mod tests {
         assert_eq!(log.block_get_data_length(block_offset), data_length);
     }
 
-    #[test]
-    fn test_block_set_first_rec_group() {
+    #[rstest]
+    fn test_block_set_first_rec_group(mut log: Log) {
         let block_offset = IB_FILE_BLOCK_SIZE;
-        let mut log = Log::new(IB_FILE_BLOCK_SIZE * 2);
         let first_rec_group = 200;
 
         log.block_set_first_rec_group(block_offset, first_rec_group);
@@ -97,10 +110,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_block_set_checkpoint_no() {
+    #[rstest]
+    fn test_block_set_checkpoint_no(mut log: Log) {
         let block_offset = IB_FILE_BLOCK_SIZE;
-        let mut log = Log::new(IB_FILE_BLOCK_SIZE * 2);
         let checkpoint_no = 300;
 
         log.block_set_checkpoint_number(block_offset, checkpoint_no);
@@ -112,10 +124,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_block_init() {
+    #[rstest]
+    fn test_block_init(mut log: Log) {
         let block_offset = IB_FILE_BLOCK_SIZE;
-        let mut log = Log::new(IB_FILE_BLOCK_SIZE * 2);
         let lsn = (IB_FILE_BLOCK_SIZE + 34) as Lsn;
         let block_no = Log::block_convert_lsn_to_no(lsn);
 
@@ -129,5 +140,20 @@ mod tests {
         );
         assert_eq!(log.block_get_first_rec_group(block_offset), 0);
         assert_eq!(log.block_get_checkpoint_number(block_offset), 0);
+    }
+
+    #[rstest]
+    fn test_reserve_and_write_fast_small_data(mut log: Log) {
+        let mut data = b"hello world!".to_vec();
+        let ret = log.reserve_and_write_fast(&mut data);
+        assert!(ret.is_ok());
+    }
+
+    #[rstest]
+    fn test_reserve_and_write_fast_big_data(mut log: Log) {
+        let mut data = b"hello world!".to_vec();
+        data.resize(IB_FILE_BLOCK_SIZE, 0u8);
+        let ret = log.reserve_and_write_fast(&mut data);
+        assert!(ret.is_err());
     }
 }

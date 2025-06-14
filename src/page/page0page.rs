@@ -7,7 +7,10 @@ use crate::data::data0types::{
     DATA_ENGLISH, DATA_NOT_NULL, DATA_VARCHAR, DTuple,
 };
 use crate::dict::dict0types::Index;
-use crate::fil::fil0types::{FIL_PAGE_DATA, FIL_PAGE_DATA_END, FIL_PAGE_NEXT, FIL_PAGE_OFFSET, FIL_PAGE_PREV, FIL_PAGE_SPACE_ID, FSEG_PAGE_DATA};
+use crate::fil::fil0types::{
+    FIL_PAGE_DATA, FIL_PAGE_DATA_END, FIL_PAGE_NEXT, FIL_PAGE_OFFSET,
+    FIL_PAGE_PREV, FIL_PAGE_SPACE_ID, FSEG_PAGE_DATA,
+};
 use crate::innodb::innodb0types::{
     PageFrame, PageNo, SpaceId, UNIV_PAGE_SIZE,
 };
@@ -1103,7 +1106,9 @@ impl Page {
     /// # Note
     /// This method is currently a placeholder and needs to be implemented.
     pub fn page_data_calc_checksum(page_frame: &PageFrame) -> u32 {
-        crc32fast::hash(&page_frame.0[FIL_PAGE_OFFSET..UNIV_PAGE_SIZE - FIL_PAGE_DATA])
+        crc32fast::hash(
+            &page_frame.0[FIL_PAGE_OFFSET..UNIV_PAGE_SIZE - FIL_PAGE_DATA],
+        )
     }
 
     /// Get the page header output string for debugging purposes.
