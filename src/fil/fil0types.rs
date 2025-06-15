@@ -318,3 +318,11 @@ pub struct FilSpaceContainer {
     /// FilSpace struct.
     pub fil_space: Rc<RefCell<FilSpace>>,
 }
+
+// Investigate more.
+// This is fine as FilSpaceContainer is only accessed with an Arc<Mutex>.
+// There is no need to wrap the inner ones with mutex.
+// That will be a huge performance penalty.
+// Additionally, we don't want to have fields separate mutability.
+unsafe impl Sync for FilSpaceContainer {}
+unsafe impl Send for FilSpaceContainer {}

@@ -1,12 +1,18 @@
 use std::sync::{Arc, Condvar, Mutex};
 
-use crate::innodb::innodb0types::{IB_FILE_BLOCK_SIZE, Lsn};
+use tracing::error;
+
+use crate::fil::fil0fil::Fil;
+use crate::innodb::innodb0types::{IB_FILE_BLOCK_SIZE, Lsn, PageNo, SpaceId};
 use crate::log::log0types::{
     LOG_BLOCK_CHECKPOINT_NO, LOG_BLOCK_FIRST_REC_GROUP,
     LOG_BLOCK_FLUSH_BIT_MASK, LOG_BLOCK_HDR_DATA_LENGTH, LOG_BLOCK_HDR_NO,
     LOG_BLOCK_HDR_SIZE, LOG_BLOCK_TRL_SIZE,
 };
+use crate::os::os0file::IORequest;
 use crate::ut::ut0dbg::ut_ad;
+
+pub const LOG_SPACE_FIRST_ID: usize = 0xFFFFFFF0;
 
 /// We write to alternative checkpoint blocks when we make new checkpoints.
 /// This is to avoid overwriting the previous checkpoint blocks resulting in corruption.
@@ -20,6 +26,8 @@ pub enum LogWaitMode {
 
 /// Database log
 pub struct Log {
+    /// Reference to fil.
+    fil: Arc<Mutex<Fil>>,
     /// Mutex to protect the log.
     mutex: Arc<Mutex<()>>,
     /// True when the log is flushed.
@@ -40,6 +48,8 @@ pub struct Log {
     buf_next_to_write: usize,
     /// End Lsn of the current running write.
     write_lsn: Lsn,
+    /// Number of i/o initiated so far.
+    n_log_ios: usize,
     /// The data in the buffer has been written to this offset
     /// when the current write operation is finished.
     write_end_offset: Lsn,
@@ -60,15 +70,16 @@ pub struct Log {
 }
 
 pub struct LogWriteResult {
-    start_lsn: Lsn,
-    end_lsn: Lsn,
+    pub start_lsn: Lsn,
+    pub end_lsn: Lsn,
 }
 
 impl Log {
-    pub fn new(buffer_size: usize) -> Self {
+    pub fn new(buffer_size: usize, fil: Arc<Mutex<Fil>>) -> Self {
         ut_ad!(buffer_size != 0 && buffer_size % IB_FILE_BLOCK_SIZE == 0);
 
         Log {
+            fil,
             mutex: Arc::from(Mutex::new(())),
             flushed: false,
             flushed_event: Default::default(),
@@ -79,6 +90,7 @@ impl Log {
             max_buf_free: 0,
             buf_next_to_write: 0,
             write_lsn: 0,
+            n_log_ios: 0,
             write_end_offset: 0,
             current_flush_lsn: 0,
             flushed_to_disk_lsn: 0,
@@ -313,7 +325,7 @@ impl Log {
     /// # Returns
     ///
     /// * The checksum for the block.
-    pub(crate) fn block_calc_checksum(&self, block_offset: usize) -> u32 {
+    pub fn block_calc_checksum(&self, block_offset: usize) -> u32 {
         // Calculate the checksum for the block
         let start = block_offset;
         let end = block_offset + IB_FILE_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE;
@@ -392,11 +404,11 @@ impl Log {
     ) -> Result<LogWriteResult, String> {
         let len = data.len();
 
-        let data_len = (len + self.buf_free) % IB_FILE_BLOCK_SIZE;
+        let data_len = len + self.buf_free % IB_FILE_BLOCK_SIZE;
 
         if data_len > IB_FILE_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE {
             /* The string does not within fit within the current block. */
-            return Err("Data length exceeds buffer size".to_string());
+            return Err("Data length exceeds block size".to_string());
         }
 
         let start_lsn = self.lsn;
@@ -442,7 +454,39 @@ impl Log {
         }
     }
 
-    pub fn group_write_buf(&self) {}
+    pub fn group_write_buf(
+        &mut self,
+        block_offset: usize,
+        len: usize,
+        start_lsn: Lsn,
+    ) {
+        ut_ad!(start_lsn % IB_FILE_BLOCK_SIZE as u64 == 0);
+        ut_ad!(len % IB_FILE_BLOCK_SIZE == 0);
+
+        for i in 0..(len / IB_FILE_BLOCK_SIZE) {
+            self.block_store_checksum(block_offset + i)
+        }
+
+        self.n_log_ios += 1;
+
+        let mut fil = self.fil.lock().unwrap();
+        let io_result = fil.io(
+            IORequest::AsyncLogWrite,
+            false,
+            LOG_SPACE_FIRST_ID as SpaceId,
+            block_offset as PageNo,
+            0,
+            self.buf.as_mut_slice(),
+            len,
+        );
+
+        match io_result {
+            Ok(r) => {}
+            Err(e) => {
+                error!("io error: {}", e);
+            }
+        }
+    }
 
     /// Checks if the log is written upto the given LSN.
     ///
@@ -458,20 +502,12 @@ impl Log {
         log_wait: LogWaitMode,
         flush_to_disk: bool,
     ) {
-        let do_wait = || {
-            let flushed = &self.flushed;
-            let mtx = self.mutex.clone();
-            let cond_var = self.flushed_event.clone();
-            match log_wait {
-                LogWaitMode::LogWait => {
-                    let _guard = cond_var
-                        .wait_while(mtx.lock().unwrap(), |_| *flushed)
-                        .unwrap();
-                    return;
-                }
-                LogWaitMode::LogNoWait => {
-                    return;
-                }
+        let do_wait = || match log_wait {
+            LogWaitMode::LogWait => {
+                return;
+            }
+            LogWaitMode::LogNoWait => {
+                return;
             }
         };
 
@@ -503,15 +539,16 @@ impl Log {
 
             self.n_pending_writes += 1;
 
-            let start_offset = self.buf_next_to_write;
-            let end_offset = self.buf_free;
+            let start_offset = self.buf_free;
+            let end_offset = self.buf_next_to_write;
 
             let area_start =
                 (start_offset / IB_FILE_BLOCK_SIZE) * IB_FILE_BLOCK_SIZE;
             let area_end =
-                (start_offset / IB_FILE_BLOCK_SIZE) * (IB_FILE_BLOCK_SIZE + 1);
+                (end_offset / IB_FILE_BLOCK_SIZE) * (IB_FILE_BLOCK_SIZE + 1);
 
-            debug_assert!(area_end - area_start > 0);
+            ut_ad!(area_start % IB_FILE_BLOCK_SIZE == 0);
+            ut_ad!(area_end - area_start > 0);
 
             self.write_lsn = self.lsn;
 
@@ -521,7 +558,7 @@ impl Log {
 
             self.buf_free += IB_FILE_BLOCK_SIZE;
 
-            self.group_write_buf();
+            self.group_write_buf(area_start, area_end, 0);
 
             self.n_pending_writes -= 1;
         }

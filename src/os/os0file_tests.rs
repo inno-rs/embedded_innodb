@@ -10,8 +10,9 @@ mod tests {
     #[test]
     fn test_os_file_write() {
         // Create a test file
+        let file_name = "test_file.txt";
         let file_creation_result =
-            os_file_create("test_file.txt", CreateMode::OsFileOpen);
+            os_file_create(file_name, CreateMode::OsFileOpen);
         assert!(file_creation_result.is_some());
 
         let mut os_file = file_creation_result.unwrap();
@@ -41,13 +42,16 @@ mod tests {
         assert!(read_result.is_ok());
 
         assert_eq!(read_buffer, data);
+
+        os_file_delete(&file_name).expect("should remove file");
     }
 
     #[test]
     fn test_os_file_get_size() {
         // Create a test file
+        let file_name = "test.txt";
         let file_creation_result =
-            os_file_create("test.txt", CreateMode::OsFileOpen);
+            os_file_create(file_name, CreateMode::OsFileOpen);
         assert!(file_creation_result.is_some());
 
         let mut os_file = file_creation_result.unwrap();
@@ -71,6 +75,8 @@ mod tests {
             data.len(),
             "File size should match written data length"
         );
+
+        os_file_delete(&file_name).expect("should remove file");
     }
 
     #[test]
@@ -99,8 +105,9 @@ mod tests {
 
     #[test]
     fn test_os_file_fsync() {
+        let file_name = "test_file_fsync.txt";
         let file_creation_result =
-            os_file_create("test_file_fsync.txt", CreateMode::OsFileOpen);
+            os_file_create(file_name, CreateMode::OsFileOpen);
 
         let mut os_file = file_creation_result.unwrap();
 
@@ -109,8 +116,12 @@ mod tests {
         data.resize(IB_FILE_BLOCK_SIZE, 0);
         let offset = 0;
         let len = data.len();
-        os_file_write(&mut os_file, data.as_slice(), offset, len);
+        os_file_write(&mut os_file, data.as_slice(), offset, len)
+            .expect("write should succeed");
+
         let result = os_file_fsync(os_file);
         assert!(result.is_ok());
+
+        os_file_delete(&file_name).expect("should remove file");
     }
 }
