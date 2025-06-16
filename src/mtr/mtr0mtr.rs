@@ -1,7 +1,9 @@
+use crate::buf::buf0types::BufBlock;
 pub(crate) use crate::mtr::mtr0log::MLog;
 pub(crate) use crate::mtr::mtr0types::{
     LatchHandle, LockMode, MemoSlot, MtrLogMode, MtrState, Savepoint,
 };
+use crate::mtr::mtr0types::OtherResource;
 use crate::ut::ut0dbg::ut_ad;
 use crate::ut_panic;
 
@@ -38,7 +40,6 @@ impl Mtr {
     /// Starts a new mini-transaction by setting its state to ACTIVE
     /// and resetting the log record count.
     /// Start (or restart) this mini‐transaction.
-    /// Mirrors C++ `mtr_t::start()`: reset counters, flags, and state.
     pub fn start(&mut self) -> &mut Self {
         // logging mode → ALL
         self.log_mode = MtrLogMode::MTR_LOG_MODE_ALL;
@@ -110,6 +111,36 @@ impl Mtr {
         let old = self.log_mode;
         self.log_mode = new_mode;
         old
+    }
+
+    /// Release a single memo slot in-place (C++ `mtr_memo_slot_release`).
+    pub fn memo_slot_release(&mut self, slot: &mut MemoSlot) {
+        // Swap out the slot with a dummy so we don't double-release
+        let owned = std::mem::replace(
+            slot,
+            MemoSlot::Other(OtherResource { id: 0, flags: 0 }),
+        );
+        match owned {
+            MemoSlot::PageFix { page, mode } => {
+                // TODO: call buffer-pool release: srv_buf_pool.release(page, mode, self)
+            }
+            MemoSlot::PageDirty(page) => {
+                // TODO: release dirty page: srv_buf_pool.release(page, /* buf_fix type */, self)
+            }
+            MemoSlot::Latch { handle, mode } => {
+                match mode {
+                    LockMode::Shared => {
+                        // TODO: rw_lock_s_unlock(handle)
+                    }
+                    LockMode::Exclusive => {
+                        // TODO: rw_lock_x_unlock(handle)
+                    }
+                }
+            }
+            MemoSlot::Other(res) => {
+                // TODO: debug assert for MTR_MEMO_MODIFY and memo_contains
+            }
+        }
     }
 
     pub fn commit(&mut self) {
@@ -225,15 +256,7 @@ impl Mtr {
         self.log_mode = MtrLogMode::MTR_LOG_NONE;
     }
 
-    /// Release a buffer block at a savepoint without rolling back others.
-    pub fn release_block_at_savepoint(
-        &mut self,
-        savepoint: Savepoint,
-        block: /*BufBlock placeholder*/ usize,
-    ) {
-        // TODO: find slot matching this block at `savepoint` and release it
-    }
-
+    
     /// Release an s-latch stored at a savepoint.
     pub fn release_s_latch_at_savepoint(
         &mut self,
@@ -264,5 +287,78 @@ impl Mtr {
     /// Is this mini-transaction active?
     pub fn is_active(&self) -> bool {
         self.mtr_state == MtrState::MTR_ACTIVE
+    }
+
+
+    /// Release a buffer block at a savepoint without rolling back others.
+    pub fn release_block_at_savepoint(
+        &mut self,
+        savepoint: Savepoint,
+        block: &BufBlock,
+    ) {
+        ut_ad!(self.is_active(), "release only in ACTIVE state");
+        #[cfg(debug_assertions)] {
+            ut_ad!(self.magic_n == MTR_MAGIC_N, "magic mismatch");
+        }
+        assert!(savepoint < self.memo.len(), "invalid savepoint");
+
+        // 1) ensure the memo slot really is that page:
+        let mut slot_ref = std::mem::replace(
+            &mut self.memo[savepoint],
+            MemoSlot::Other(OtherResource { id: 0, flags: 0 }),
+        );
+        match slot_ref {
+            MemoSlot::PageFix { page, .. }
+            | MemoSlot::PageDirty(page) => {
+                // In debug: check page ID matches block
+                #[cfg(debug_assertions)] {
+                    let page_id = block.buf_page.borrow().borrow().get_page_id();
+                    ut_ad!(page_id == page);
+                }
+            }
+            _ => ut_panic!("slot at {} is not a page slot", savepoint)
+        }
+
+        // 2) release that slot (unfix/dirty) in place
+        self.memo_slot_release(&mut slot_ref);
+
+        // 3) drop the fix count under lock
+        block.fix_dec(); // Unpinning the page
+    }
+
+    pub fn mtr_state(&self) -> &MtrState {
+        &self.mtr_state
+    }
+
+    pub fn log_mode(&self) -> MtrLogMode {
+        self.log_mode
+    }
+
+    pub fn modifications(&self) -> bool {
+        self.modifications
+    }
+
+    pub fn n_log_records(&self) -> usize {
+        self.n_log_records
+    }
+
+    pub fn memo(&self) -> &Vec<MemoSlot> {
+        &self.memo
+    }
+
+    pub fn log_buffer(&self) -> &MLog {
+        &self.log_buffer
+    }
+
+    pub fn log_buffer_mut(&mut self) -> &mut MLog {
+        &mut self.log_buffer
+    }
+
+    pub fn savepoints(&self) -> &Vec<Savepoint> {
+        &self.savepoints
+    }
+
+    pub fn magic_n(&self) -> u32 {
+        self.magic_n
     }
 }

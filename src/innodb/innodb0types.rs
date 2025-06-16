@@ -96,7 +96,7 @@ impl Drop for RawPage {
     }
 }
 
-#[derive(Hash, Clone, Copy, Eq, PartialEq)]
+#[derive(Hash, Clone, Copy, Eq, PartialEq, Debug)]
 pub struct PageId {
     /// The space id of the page.
     pub space_id: SpaceId,

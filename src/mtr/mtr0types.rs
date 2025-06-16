@@ -36,9 +36,9 @@
 ║ MLOG_SINGLE_REC_FLAG (flag)    ║ 128   ║ OR-flag: single-record MTR optimization       ║
 ╚═══════════════════════════════╩═══════╩══════════════════════════════════════════════╝
 */
+
 use innodb::innodb0types::PageId;
 use strum_macros::Display;
-
 use crate::innodb;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +53,7 @@ pub enum MtrLogMode {
     MTR_LOG_SHORT_INSERTS = 3,
 }
 
-#[derive(Display)]
+#[derive(Display, Debug)]
 pub enum MlogType {
     /// Unknown log type.
     MLOG_UNKNOWN = 0,
@@ -93,6 +93,14 @@ pub enum MlogType {
     MLOG_UNDO_INIT = 22,
     /// Discard an undo-log header.
     MLOG_UNDO_HDR_DISCARD = 23,
+    ///If a single mtr writes several log records, this
+    ///log record ends the sequence of these records
+    MLOG_MULTI_REC_END = 24,
+
+    MLOG_WRITE_STRING = 25,
+
+    MLOG_FULL_PAGE = 26,
+    
 }
 
 #[derive(Display, Clone, Eq, PartialEq, Debug)]
