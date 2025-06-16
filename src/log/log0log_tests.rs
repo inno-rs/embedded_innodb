@@ -145,8 +145,12 @@ mod tests {
     #[rstest]
     fn test_reserve_and_write_fast_small_data(mut log: Log) {
         let mut data = b"hello world!".to_vec();
-        let ret = log.reserve_and_write_fast(&mut data);
-        assert!(ret.is_ok());
+        let result = log.reserve_and_write_fast(&mut data).unwrap();
+
+        assert_eq!(result.start_lsn, 0);
+        assert_eq!(result.end_lsn as usize, data.len());
+        assert_eq!(log.get_lsn() as usize, data.len());
+        assert_eq!(&log.buf()[0..data.len()], data.as_slice());
     }
 
     #[rstest]
@@ -155,5 +159,21 @@ mod tests {
         data.resize(IB_FILE_BLOCK_SIZE, 0u8);
         let ret = log.reserve_and_write_fast(&mut data);
         assert!(ret.is_err());
+    }
+
+    #[rstest]
+    fn test_reserve_and_write_fast_multiple(mut log: Log) {
+        let data1 = b"abc".to_vec();
+        let res1 = log.reserve_and_write_fast(&data1).unwrap();
+
+        let data2 = b"def".to_vec();
+        let res2 = log.reserve_and_write_fast(&data2).unwrap();
+
+        assert_eq!(res1.start_lsn, 0);
+        assert_eq!(res1.end_lsn, 3);
+        assert_eq!(res2.start_lsn, 3);
+        assert_eq!(res2.end_lsn, 6);
+        assert_eq!(log.get_lsn(), 6);
+        assert_eq!(&log.buf()[0..6], b"abcdef");
     }
 }

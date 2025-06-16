@@ -92,8 +92,8 @@ impl Log {
             flushed_event: Default::default(),
             lsn: 0,
             buf_free: 0,
-            buf: vec![0; buffer_size], // Initialize with a buffer of size 1024
-            buf_size: 0,
+            buf: vec![0; buffer_size],
+            buf_size: buffer_size,
             max_buf_free: 0,
             buf_next_to_write: 0,
             write_lsn: 0,
@@ -421,7 +421,7 @@ impl Log {
         let start_lsn = self.lsn;
 
         // Copy the data into the buffer
-        self.buf[self.buf_free..len].copy_from_slice(data);
+        self.buf[self.buf_free..self.buf_free + len].copy_from_slice(data);
 
         let log_block =
             (self.buf_free / IB_FILE_BLOCK_SIZE) * IB_FILE_BLOCK_SIZE;
@@ -440,6 +440,12 @@ impl Log {
     /// * The current log sequence number.
     pub fn get_lsn(&self) -> Lsn {
         self.lsn
+    }
+
+    /// Get a slice of the log buffer.
+    #[cfg(test)]
+    pub(crate) fn buf(&self) -> &[u8] {
+        &self.buf
     }
 
     /// Tries to establish a big enough margin of free space in the log buffer
