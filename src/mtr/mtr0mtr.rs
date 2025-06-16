@@ -1,9 +1,9 @@
 use crate::buf::buf0types::BufBlock;
 pub(crate) use crate::mtr::mtr0log::MLog;
+use crate::mtr::mtr0types::OtherResource;
 pub(crate) use crate::mtr::mtr0types::{
     LatchHandle, LockMode, MemoSlot, MtrLogMode, MtrState, Savepoint,
 };
-use crate::mtr::mtr0types::OtherResource;
 use crate::ut::ut0dbg::ut_ad;
 use crate::ut_panic;
 
@@ -256,7 +256,6 @@ impl Mtr {
         self.log_mode = MtrLogMode::MTR_LOG_NONE;
     }
 
-    
     /// Release an s-latch stored at a savepoint.
     pub fn release_s_latch_at_savepoint(
         &mut self,
@@ -289,7 +288,6 @@ impl Mtr {
         self.mtr_state == MtrState::MTR_ACTIVE
     }
 
-
     /// Release a buffer block at a savepoint without rolling back others.
     pub fn release_block_at_savepoint(
         &mut self,
@@ -297,7 +295,8 @@ impl Mtr {
         block: &BufBlock,
     ) {
         ut_ad!(self.is_active(), "release only in ACTIVE state");
-        #[cfg(debug_assertions)] {
+        #[cfg(debug_assertions)]
+        {
             ut_ad!(self.magic_n == MTR_MAGIC_N, "magic mismatch");
         }
         assert!(savepoint < self.memo.len(), "invalid savepoint");
@@ -308,15 +307,16 @@ impl Mtr {
             MemoSlot::Other(OtherResource { id: 0, flags: 0 }),
         );
         match slot_ref {
-            MemoSlot::PageFix { page, .. }
-            | MemoSlot::PageDirty(page) => {
+            MemoSlot::PageFix { page, .. } | MemoSlot::PageDirty(page) => {
                 // In debug: check page ID matches block
-                #[cfg(debug_assertions)] {
-                    let page_id = block.buf_page.borrow().borrow().get_page_id();
+                #[cfg(debug_assertions)]
+                {
+                    let page_id =
+                        block.buf_page.borrow().borrow().get_page_id();
                     ut_ad!(page_id == page);
                 }
             }
-            _ => ut_panic!("slot at {} is not a page slot", savepoint)
+            _ => ut_panic!("slot at {} is not a page slot", savepoint),
         }
 
         // 2) release that slot (unfix/dirty) in place

@@ -37,9 +37,9 @@
 ╚═══════════════════════════════╩═══════╩══════════════════════════════════════════════╝
 */
 
+use crate::innodb;
 use innodb::innodb0types::PageId;
 use strum_macros::Display;
-use crate::innodb;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MtrLogMode {
@@ -100,7 +100,6 @@ pub enum MlogType {
     MLOG_WRITE_STRING = 25,
 
     MLOG_FULL_PAGE = 26,
-    
 }
 
 #[derive(Display, Clone, Eq, PartialEq, Debug)]

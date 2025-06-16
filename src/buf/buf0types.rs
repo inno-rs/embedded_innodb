@@ -604,7 +604,7 @@ impl BufBlock {
     pub fn get_page(&self) -> Page {
         Page::new(self.frame)
     }
-    
+
     pub fn get_page_frame(&self) -> PageFrame {
         let page_frame = unsafe {
             PageFrame(&mut *(self.frame as *mut [u8; UNIV_PAGE_SIZE]))
@@ -613,17 +613,11 @@ impl BufBlock {
     }
     /// Grab the block’s write‐lock, then decrement its buf_fix_count.
     pub fn fix_dec(&self) {
-        
-        // Acquire exclusive lock on this block
-        let _guard = self.rw_lock.write();
-
         // Mutate the inner BufPage’s fix count
         let page_rc = self.buf_page.borrow().clone();
         let mut page = page_rc.borrow_mut();
-        page.buf_fix_count = page
-            .buf_fix_count
-            .checked_sub(1)
-            .expect("unbalanced fix_dec");
+        page.buf_fix_count =
+            page.buf_fix_count.checked_sub(1).expect("unbalanced fix_dec");
         // guard drops here, releasing the lock
     }
 }
