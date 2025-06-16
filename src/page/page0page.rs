@@ -405,10 +405,9 @@ impl Page {
                 let block = self.page_header_get_ptr(PAGE_HEAP_TOP);
 
                 /* 1. Update the page header to point to the new heap top.  */
-                self.page_header_set_field(
-                    PAGE_HEAP_TOP,
-                    self.page_header_get_field(PAGE_HEAP_TOP) + need,
-                );
+                let new_heap_top =
+                    self.page_header_get_field(PAGE_HEAP_TOP) + need;
+                self.page_header_set_field(PAGE_HEAP_TOP, new_heap_top);
 
                 /* 2. Update the heap no in the page header. */
                 let heap_no = self.page_dir_get_n_heap();
@@ -513,7 +512,7 @@ impl Page {
         ut_ad!(slot < n_slots);
 
         /* Update the page header */
-        self.page_header_set_field(PAGE_N_DIR_SLOTS, n_slots + 1);
+        self.page_dir_set_n_slots(n_slots + 1);
 
         let slot_ptr = self.page_dir_get_nth_slot(n_slots);
 
@@ -527,11 +526,16 @@ impl Page {
     }
 
     /// Splits a directory slot that owns too many records.
+    ///
+    /// # Arguments
+    ///
+    /// `slot`: The slot to split.
+    ///
     pub fn page_dir_split_slot(&self, slot: SlotId) {
         ut_ad!(slot > 0);
 
         let n_owned = self.page_dir_get_n_owned(slot);
-        ut_ad!(n_owned == PAGE_DIR_SLOT_MIN_N_OWNED + 1);
+        ut_ad!(n_owned == PAGE_DIR_SLOT_MAX_N_OWNED + 1);
 
         /* 1. We loop
         to find a record approximately in the middle of the records owned by the slot. */
@@ -553,7 +557,7 @@ impl Page {
         self.page_dir_set_n_owned(new_slot, n_owned / 2);
 
         /* 4. Finally, we update the number of record-field of the original slot.*/
-        self.page_dir_set_n_owned(slot, n_owned - (n_owned / 2));
+        self.page_dir_set_n_owned(slot + 1, n_owned - (n_owned / 2));
     }
 
     /// Retrieves the number of records in the page.
@@ -577,7 +581,7 @@ impl Page {
 
     /// Sets the number of slots in the page directory.
     ///
-    pub fn page_dir_det_n_slots(&self, n_slots: usize) {
+    pub fn page_dir_set_n_slots(&self, n_slots: usize) {
         self.page_header_set_field(PAGE_N_DIR_SLOTS, n_slots)
     }
 
@@ -590,14 +594,9 @@ impl Page {
     /// # Returns
     ///
     /// * The number of records owned by the specified slot as a `SlotId`.
-    pub fn page_dir_get_n_owned(&self, slot: SlotId) -> SlotId {
-        let n_owned = unsafe {
-            let slot_ptr =
-                self.ptr.add(slot as usize + PAGE_HEADER) as *mut u16;
-            slot_ptr.read_unaligned()
-        };
-
-        n_owned as SlotId
+    pub fn page_dir_get_n_owned(&self, slot: SlotId) -> usize {
+        let rec = self.page_dir_slot_get_rec(slot);
+        rec.rec_get_n_owned()
     }
 
     /// Sets the number of records owned by a specific slot in the page directory.
@@ -609,11 +608,9 @@ impl Page {
     /// # Parameters
     /// * `slot` - The slot ID to set the number of owned records for
     /// * `n_owned` - The new number of records owned by the slot
-    pub fn page_dir_set_n_owned(&self, slot: SlotId, n_owned: SlotId) {
-        unsafe {
-            let n_owned_ptr = self.ptr.add(PAGE_HEADER + slot) as *mut u16;
-            n_owned_ptr.write_unaligned(n_owned as u16);
-        }
+    pub fn page_dir_set_n_owned(&self, slot: SlotId, n_owned: usize) {
+        let rec = self.page_dir_slot_get_rec(slot);
+        rec.rec_set_n_owned(n_owned);
     }
 
     /// Finds the owner slot of a given record in the page directory.
@@ -993,6 +990,7 @@ impl Page {
     ///
     /// * The maximum size in bytes that can be inserted on top of the heap record.
     pub fn page_get_max_insert_size(&self, n_recs: usize) -> usize {
+        info!("heap top={}", self.page_header_get_field(PAGE_HEAP_TOP));
         let occupied = self.page_header_get_field(PAGE_HEAP_TOP)
             - PAGE_SUPREMUM_END
             + Self::page_dir_calc_reserved_space(
@@ -1039,7 +1037,7 @@ impl Page {
             cur = cur.rec_get_next().unwrap();
         }
 
-        rec
+        cur
     }
 
     /// Gets the page number of the previous page in the linked list of pages.

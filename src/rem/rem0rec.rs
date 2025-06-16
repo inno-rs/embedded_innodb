@@ -840,8 +840,8 @@ impl Record {
 
         let mut output_builder = String::new();
         output_builder.push_str(&format!(
-            "PHYSICAL RECORD: n_fields {}; {}-byte offsets; info bits {}",
-            n_fields, byte_format, info_bits
+            "PHYSICAL RECORD: n_fields {}; {}-byte offsets; info bits {}; n owned {};",
+            n_fields, byte_format, info_bits, self.rec_get_n_owned()
         ));
 
         output_builder.push_str(" fields ");

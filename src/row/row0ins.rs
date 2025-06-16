@@ -1,7 +1,5 @@
-use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
-use crate::btr::btr0cur::BTreeCursor;
 use crate::data::data0types::DTuple;
 use crate::dict::dict0dict::Dict;
 use crate::dict::dict0types::Index;
@@ -31,13 +29,6 @@ impl RowInsert {
     ) -> Result<(), DbErr> {
         let index = index.lock().unwrap();
         let btree = { self.dict.lock().unwrap().get_btree() };
-
-        let cursor = BTreeCursor::new(
-            &index,
-            self.dict.lock().unwrap().get_fsp(),
-            self.lock_sys.clone(),
-            btree.borrow_mut().deref_mut(),
-        );
 
         Ok(())
     }
