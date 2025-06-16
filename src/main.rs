@@ -39,12 +39,12 @@ mod utils;
 ///
 /// # Usage in code
 ///
-/// After initialization, you can use the following macros from the tracing crate:
-/// - `info!`: For general information messages
-/// - `warn!`: For warning messages
-/// - `error!`: For error messages
-/// - `debug!`: For debug messages (only shown when log level is DEBUG or lower)
-/// - `trace!`: For detailed trace messages (only shown when log level is TRACE)
+/// After initialization, you can use macros from the [`tracing`] crate:
+/// - [`info!`] for informational messages
+/// - [`warn!`] for warnings
+/// - [`error!`] for errors
+/// - [`debug!`] for debug output (shown when the level is DEBUG or lower)
+/// - [`trace!`] for detailed trace output (shown when the level is TRACE)
 ///
 /// Example:
 /// ```

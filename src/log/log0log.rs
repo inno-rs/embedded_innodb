@@ -24,7 +24,11 @@ pub enum LogWaitMode {
     LogWait,
 }
 
-/// Database log
+/// In-memory representation of the redo log.
+///
+/// The log accumulates records in a buffer until they are flushed to the
+/// on-disk log files. It tracks log sequence numbers (LSNs) and manages
+/// asynchronous flush operations.
 pub struct Log {
     /// Reference to fil.
     fil: Arc<Mutex<Fil>>,
@@ -75,6 +79,9 @@ pub struct LogWriteResult {
 }
 
 impl Log {
+    /// Create a new [`Log`] instance.
+    ///
+    /// `buffer_size` must be a non-zero multiple of [`IB_FILE_BLOCK_SIZE`].
     pub fn new(buffer_size: usize, fil: Arc<Mutex<Fil>>) -> Self {
         ut_ad!(buffer_size != 0 && buffer_size % IB_FILE_BLOCK_SIZE == 0);
 
@@ -222,7 +229,7 @@ impl Log {
         self.buf[start..end].copy_from_slice(&(data_len as u32).to_le_bytes());
     }
 
-    /// Gets the offset of the first mtr log record in a lo
+    /// Gets the offset of the first MTR log record in a log block.
     ///
     /// # Arguments
     ///
@@ -454,6 +461,10 @@ impl Log {
         }
     }
 
+    /// Write a contiguous slice of the log buffer to disk.
+    ///
+    /// `block_offset` and `len` must be aligned to
+    /// [`IB_FILE_BLOCK_SIZE`]. `start_lsn` must also be block aligned.
     pub fn group_write_buf(
         &mut self,
         block_offset: usize,
@@ -488,7 +499,7 @@ impl Log {
         }
     }
 
-    /// Checks if the log is written upto the given LSN.
+    /// Checks if the log has been written up to the given LSN.
     ///
     /// # Arguments
     ///
@@ -619,11 +630,9 @@ impl Log {
     ///
     /// # Arguments
     ///
-    /// * `lsn` - The log sequence number to make the checkpoint at or later lsn.
-    /// * `write_always` -
-    /// This function usually checks
-    /// if the new checkpoint is done at a later lsn than the current one or not.
-    /// If `write_always` is true, it will always write the checkpoint.
+    /// * `lsn` - The log sequence number to checkpoint at or a later value.
+    /// * `write_always` - When `true`, always write a checkpoint even if
+    ///   the resulting LSN is not ahead of the current checkpoint.
     pub fn make_checkpoint_at(&mut self, lsn: Lsn, write_always: bool) {
         while !self.preflush_pool_modified_page(lsn, true) {}
         while !self.checkpoint(false, write_always) {}
