@@ -142,6 +142,7 @@ impl BTree {
             self.fsp.clone(),
             self.lock_sys.clone(),
             self,
+            self.buf_pool.clone(),
         );
         btr_cursor.search_to_nth_level(
             vec![],

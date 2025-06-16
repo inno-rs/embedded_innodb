@@ -274,7 +274,7 @@ mod tests {
 
             assert_eq!(
                 rec.rec_to_string(),
-                "PHYSICAL RECORD: n_fields 3; 1-byte offsets; info bits 0 fields  0:  Hello World; len: 11  1:  Mario; len: 5  2:  Mushroom; len: 8 "
+                "PHYSICAL RECORD: n_fields 3; 1-byte offsets; info bits 0; n owned 0; fields  0:  Hello World; len: 11  1:  Mario; len: 5  2:  Mushroom; len: 8 "
             );
         }
 
@@ -291,7 +291,7 @@ mod tests {
 
             assert_eq!(
                 rec.rec_to_string(),
-                "PHYSICAL RECORD: n_fields 2; 1-byte offsets; info bits 0 fields  0:  Hello World; len: 11  1:  \u{15}N\0\0\0\0\0\0; len: 8 "
+                "PHYSICAL RECORD: n_fields 2; 1-byte offsets; info bits 0; n owned 0; fields  0:  Hello World; len: 11  1:  \u{15}N\0\0\0\0\0\0; len: 8 "
             );
         }
     }

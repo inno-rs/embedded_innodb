@@ -1,10 +1,13 @@
-use std::cell::RefCell;
+use std::ops::Deref;
 use std::ptr::null_mut;
-use std::rc::Rc;
+use std::sync::RwLock;
 use std::sync::{Arc, Mutex};
 
+use parking_lot::RwLock as ParkingLotRwLock;
+
 use crate::btr::btr0btr::BTree;
-use crate::buf::buf0types::{BufBlock, BufPage};
+use crate::buf::buf0buf::BufPool;
+use crate::buf::buf0types::BufBlock;
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
 use crate::fsp::fsp0fsp::Fsp;
@@ -54,7 +57,9 @@ pub struct BTreeCursor<'a> {
     /// Current page cursor position.
     page_cur: Option<PageCur>,
     /// The current buffer block being accessed.
-    buf_block: BufBlock,
+    buf_block: Option<Arc<ParkingLotRwLock<BufBlock>>>,
+    /// Reference to the BufferPool.
+    buf_pool: Arc<RwLock<BufPool>>,
 }
 
 impl<'a> BTreeCursor<'a> {
@@ -72,6 +77,7 @@ impl<'a> BTreeCursor<'a> {
         fsp: Arc<Mutex<Fsp>>,
         lock_sys: Arc<Mutex<LockSys>>,
         btree: &'a BTree,
+        buf_pool: Arc<RwLock<BufPool>>,
     ) -> Self {
         BTreeCursor {
             index,
@@ -79,10 +85,8 @@ impl<'a> BTreeCursor<'a> {
             lock_sys,
             btree,
             page_cur: None,
-            buf_block: BufBlock::new(
-                RefCell::new(Rc::new(RefCell::new(BufPage::dummy()))),
-                null_mut(),
-            ),
+            buf_block: None,
+            buf_pool,
         }
     }
 
@@ -256,10 +260,12 @@ impl<'a> BTreeCursor<'a> {
 
         {
             let lock_sys = self.lock_sys.lock().unwrap();
+            let buf_block = self.buf_block.as_ref().unwrap();
+            let buf_block_ref = buf_block.read();
             let err = lock_sys.rec_insert_check_and_lock(
                 flags,
                 rec,
-                &self.buf_block,
+                buf_block_ref.deref(),
                 self.index,
                 mtr,
             );

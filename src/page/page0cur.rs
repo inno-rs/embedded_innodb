@@ -370,6 +370,7 @@ impl PageCur {
         let n_owned = owner_rec.rec_get_n_owned();
 
         owner_rec.rec_set_n_owned(n_owned + 1);
+        ut_ad!(owner_rec.rec_get_n_owned() == n_owned + 1);
 
         /* 8. Now we have incremented the n_owner fields of owner record.
         If the number exceeds PAGE_DIR_SLOT_MAX_N_OWNED,

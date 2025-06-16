@@ -365,4 +365,54 @@ mod tests {
         page.page_dir_add_slot(3);
         assert_eq!(5, page.page_dir_get_n_slots());
     }
+
+    /* START PAGE DIRECTORY TESTS */
+
+    #[rstest]
+    fn test_page_directory_on_empty_page(page_fixture: PageFixture) {
+        let page = page_fixture.page;
+
+        assert_eq!(2, page.page_dir_get_n_slots());
+
+        let rec = page.page_dir_slot_get_rec(0);
+        assert!(page.page_rec_is_infimum(rec));
+        assert_eq!(page.page_dir_find_owner_slot(rec), 0);
+
+        let rec = page.page_dir_slot_get_rec(1);
+        assert!(page.page_rec_is_supremum(rec));
+        assert_eq!(page.page_dir_find_owner_slot(rec), 1);
+    }
+
+    #[test]
+    fn test_page_directory_slot_size() {
+        // If the page has 7 records, the supremum will own only 8 recs. This will not lead to splitting.
+        {
+            let owning_page = create_records(
+                7,
+                vec![FieldType::String(Some("foo".to_string()))],
+            );
+
+            assert_eq!(owning_page.page.page_dir_get_n_slots(), 2);
+        }
+
+        {
+            let owning_page = create_records(
+                11,
+                vec![FieldType::String(Some("foo".to_string()))],
+            );
+
+            assert_eq!(owning_page.page.page_dir_get_n_slots(), 3);
+        }
+
+        {
+            let owning_page = create_records(
+                20,
+                vec![FieldType::String(Some("foo".to_string()))],
+            );
+
+            assert_eq!(owning_page.page.page_dir_get_n_slots(), 6);
+        }
+    }
+
+    /* END PAGE DIRECTORY TESTS */
 }
