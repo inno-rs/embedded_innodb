@@ -8,30 +8,54 @@ use crate::ut::ut0dbg::ut_ad;
 /// * `val` - The value to write.
 ///
 ///
-
 pub fn mach_write_to_1(buf: &mut [u8], val: u8) {
     ut_ad!(buf.len() >= 1);
     buf[0] = val;
 }
+/// Store 2 bytes in the buffer in little-endian format.
+///
+/// # Arguments
+///
+/// * `buf` - The buffer to write to.
+/// * `val` - The value to write.
+///
 pub fn mach_write_to_2(buf: &mut [u8], val: u16) {
     ut_ad!(buf.len() >= 2);
     buf[..2].copy_from_slice(&val.to_le_bytes());
 }
 
-/// Write three low-order bytes in little-endian.
+/// Store 3 bytes in the buffer in little-endian format.
+///
+/// # Arguments
+///
+/// * `buf` - The buffer to write to.
+/// * `val` - The value to write (only the three low-order bytes are used).
+///
 fn mach_write_to_3(buf: &mut [u8], val: u32) {
-    assert!(buf.len() >= 3);
+    ut_ad!(buf.len() >= 3);
     let bytes = val.to_le_bytes();
     buf[..3].copy_from_slice(&bytes[..3]);
 }
 
-/// Write four bytes in little-endian.
+/// Store 4 bytes in the buffer in little-endian format.
+///
+/// # Arguments
+///
+/// * `buf` - The buffer to write to.
+/// * `val` - The value to write.
+///
 pub fn mach_write_to_4(buf: &mut [u8], val: u32) {
     ut_ad!(buf.len() >= 4);
     buf[..4].copy_from_slice(&val.to_le_bytes());
 }
 
-/// Write eight bytes in little-endian.
+/// Store 8 bytes in the buffer in little-endian format.
+///
+/// # Arguments
+///
+/// * `buf` - The buffer to write to.
+/// * `val` - The value to write.
+///
 pub fn mach_write_to_8(buf: &mut [u8], val: u64) {
     ut_ad!(buf.len() >= 8);
     buf[..8].copy_from_slice(&val.to_le_bytes());
@@ -90,6 +114,7 @@ pub fn mach_write_compressed(buf: &mut [u8], v: u32) -> usize {
     buf[0] = 0xF0;
     let tail = v.to_le_bytes(); // [u8; 4]
     buf[1..5].copy_from_slice(&tail);
+
     5
 }
 

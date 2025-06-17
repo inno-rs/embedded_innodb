@@ -216,8 +216,11 @@ mod tests {
         let os_io = Arc::new(Mutex::new(OsIo::new(runtime.clone())));
         let fil = Arc::new(Mutex::new(Fil::new(100, os_io, runtime.clone())));
         // Total log size of 16 MB.
-        let log_sys =
-            Arc::new(Mutex::new(Log::new(UNIV_PAGE_SIZE * 100, fil)));
+        let log_sys = Arc::new(Mutex::new(Log::new(
+            UNIV_PAGE_SIZE * 100,
+            fil,
+            Default::default(),
+        )));
         let (tx, rx) = mpsc::channel(100);
         let notifier = Arc::new(Mutex::new(MockLogFlushNotifier::new()));
 
@@ -237,7 +240,7 @@ mod tests {
         assert!(result.is_ok());
         let write_result = result.unwrap();
         assert_eq!(write_result.start_lsn, LOG_START_LSN as u64);
-        assert_eq!(write_result.end_lsn, (data.len() + LOG_START_LSN) as Lsn);
+        assert_eq!(write_result.end_lsn, data.len() as Lsn + LOG_START_LSN);
 
         // Send the message to flush
         tx.blocking_send(LogFlushTrigger::WriteUpTo(data.len() as Lsn))

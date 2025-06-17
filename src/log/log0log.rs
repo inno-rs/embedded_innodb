@@ -3,14 +3,24 @@ use std::sync::{Arc, Condvar, Mutex};
 use tracing::error;
 
 use crate::fil::fil0fil::Fil;
-use crate::innodb::innodb0types::{IB_FILE_BLOCK_SIZE, Lsn, PageNo, SpaceId};
-use crate::log::log0types::{
-    LOG_BLOCK_CHECKPOINT_NO, LOG_BLOCK_FIRST_REC_GROUP,
-    LOG_BLOCK_FLUSH_BIT_MASK, LOG_BLOCK_HDR_DATA_LENGTH, LOG_BLOCK_HDR_NO,
-    LOG_BLOCK_HDR_SIZE, LOG_BLOCK_TRL_SIZE, LOG_START_LSN,
+use crate::innodb::innodb0types::{
+    IB_FILE_BLOCK_SIZE, Lsn, PageNo, SpaceId, UNIV_PAGE_SIZE,
 };
+use crate::log::log0types::{
+    CheckpointBuf, LOG_BLOCK_CHECKPOINT_NO, LOG_BLOCK_FIRST_REC_GROUP,
+    LOG_BLOCK_FLUSH_BIT_MASK, LOG_BLOCK_HDR_DATA_LENGTH, LOG_BLOCK_HDR_NO,
+    LOG_BLOCK_HDR_SIZE, LOG_BLOCK_TRL_SIZE, LOG_CHECKPOINT_CHECKSUM_1,
+    LOG_CHECKPOINT_CHECKSUM_1_RANGE, LOG_CHECKPOINT_LOG_BUF_SIZE_RANGE,
+    LOG_CHECKPOINT_LSN_RANGE, LOG_CHECKPOINT_NO_RANGE,
+    LOG_CHECKPOINT_OFFSET_RANGE, LOG_CHECKPOINT_UNUSED_LSN_RANGE,
+    LOG_FILE_HEADER_SIZE, LOG_START_LSN, LogGroup, LogGroupState,
+};
+use crate::mach::mach0data::{mach_write_to_4, mach_write_to_8};
 use crate::os::os0file::IORequest;
+use crate::srv::srv0srv::Config;
 use crate::ut::ut0dbg::ut_ad;
+use crate::ut::ut0math::ut_align_down;
+use crate::ut::ut0rnd::ut_fold_string;
 
 pub const LOG_SPACE_FIRST_ID: usize = 0xFFFFFFF0;
 
@@ -26,10 +36,9 @@ pub enum LogWaitMode {
 
 /// Database log
 pub struct Log {
+    config: Arc<Config>,
     /// Reference to fil.
     fil: Arc<Mutex<Fil>>,
-    /// Mutex to protect the log.
-    mutex: Arc<Mutex<()>>,
     /// True when the log is flushed.
     flushed: bool,
     /// Condition variable to signal when the log is flushed.
@@ -44,6 +53,8 @@ pub struct Log {
     buf_size: usize,
     /// Recommended maximum value of buf_free.
     max_buf_free: usize,
+    /// Log group associated with log.
+    group: LogGroup,
     /// First offset in the log buffer to write to.
     buf_next_to_write: usize,
     /// End Lsn of the current running write.
@@ -75,12 +86,18 @@ pub struct LogWriteResult {
 }
 
 impl Log {
-    pub fn new(buffer_size: usize, fil: Arc<Mutex<Fil>>) -> Self {
+    pub fn new(
+        buffer_size: usize,
+        fil: Arc<Mutex<Fil>>,
+        config: Arc<Config>,
+    ) -> Self {
         ut_ad!(buffer_size != 0 && buffer_size % IB_FILE_BLOCK_SIZE == 0);
+        let n_log_files = config.n_log_files;
+        let total_size = config.log_file_size * UNIV_PAGE_SIZE;
 
         Log {
+            config,
             fil,
-            mutex: Arc::from(Mutex::new(())),
             flushed: false,
             flushed_event: Default::default(),
             lsn: LOG_START_LSN as Lsn,
@@ -88,6 +105,17 @@ impl Log {
             buf: vec![0; buffer_size], // Initialize with a buffer of size 1024
             buf_size: buffer_size,
             max_buf_free: 0,
+            group: LogGroup {
+                id: 0,
+                n_files: n_log_files,
+                file_size: total_size,
+                space_id: 0,
+                state: LogGroupState::Ok,
+                lsn: LOG_START_LSN,
+                lsn_offset: LOG_FILE_HEADER_SIZE,
+                n_pending_writes: 0,
+                checkpoint_buf: Box::new(CheckpointBuf::new()),
+            },
             buf_next_to_write: 0,
             write_lsn: 0,
             n_log_ios: 0,
@@ -100,6 +128,63 @@ impl Log {
             next_checkpoint_lsn: 0,
             n_pending_checkpoint_writes: 0,
         }
+    }
+
+    /// Calculate the offset within the group excluding the log file headers.
+    /// Since the offset keeps on increasing,
+    /// and we are writing logs in a circular fashion between the two log files,
+    /// this function helps calculate where the offset will fall.
+    ///
+    /// # Arguments
+    ///
+    /// `offset`: The real offset within the group.
+    ///
+    /// # Returns
+    ///
+    /// The offset within the log group.
+    pub fn group_calc_size_offset(&self, offset: u64) -> u64 {
+        offset - (1 + (offset / self.group.file_size as u64))
+    }
+
+    /// Calculates the offset within a log group when the log file headers are included.
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - The offset within the log group excluding headers.
+    ///
+    /// # Returns
+    ///
+    /// * The real offset within the log group including headers.
+    ///
+    pub fn group_calc_real_offset(&self, offset: u64) -> u64 {
+        offset
+            + LOG_FILE_HEADER_SIZE
+                * (1 + offset
+                    / (self.group.file_size as u64 - LOG_FILE_HEADER_SIZE))
+    }
+
+    /// Total capacity of the log group. Log file headers are not included.
+    pub fn group_get_capacity(&self) -> u64 {
+        (self.group.file_size as u64 - LOG_FILE_HEADER_SIZE)
+            * self.group.n_files as u64
+    }
+
+    /// Calculates an offset of the lsn within the group.
+    pub fn group_calc_lsn_offset(&self) -> u64 {
+        let gr_lsn = self.group.lsn;
+        let gr_lsn_offset_size = self.group_calc_size_offset(gr_lsn);
+        let group_size = self.group_get_capacity() as u64;
+
+        let difference = if self.lsn > gr_lsn {
+            self.lsn - gr_lsn
+        } else {
+            let diff = (gr_lsn - self.lsn) % group_size;
+            group_size - diff
+        };
+
+        let offset = (gr_lsn_offset_size + difference) % group_size;
+
+        self.group_calc_real_offset(offset)
     }
 
     /// Gets the flush bit from the log block header.
@@ -222,7 +307,7 @@ impl Log {
         self.buf[start..end].copy_from_slice(&(data_len as u32).to_le_bytes());
     }
 
-    /// Gets the offset of the first mtr log record in a lo
+    /// Gets the offset of the first mtr log record in a log block.
     ///
     /// # Arguments
     ///
@@ -526,6 +611,18 @@ impl Log {
         }
     }
 
+    /// Writes a portion of the log buffer to disk.
+    ///
+    /// This function calculates checksums for each log block in the specified range,
+    /// increments the I/O counter, and initiates an asynchronous write operation
+    /// to persist the log data to disk.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_offset` - The offset in the log buffer where the write should start.
+    /// * `len` - The length of data to write, must be a multiple of the block size.
+    /// * `start_lsn` - The LSN corresponding to the start of the write.
+    ///
     pub fn group_write_buf(
         &mut self,
         block_offset: usize,
@@ -560,13 +657,23 @@ impl Log {
         }
     }
 
-    /// Checks if the log is written upto the given LSN.
+    /// Ensures the log is written up to the given LSN.
+    ///
+    /// This function checks if the log has been written up to the specified LSN.
+    /// If not, it initiates a write operation to ensure the log is written up to that point.
+    /// Depending on the parameters,
+    /// it may also wait for the write to complete and/or flush to disk.
     ///
     /// # Arguments
     ///
-    /// * `lsn` - The log sequence number up to which lsn should be written.
-    /// * `log_wait` - The log wait mode.
+    /// * `lsn` - The log sequence number up to which log should be written.
+    /// * `log_wait` - The log wait mode (LogWait or LogNoWait).
     /// * `flush_to_disk` - Whether to flush the log to disk.
+    ///
+    /// # Returns
+    ///
+    /// This function does not return a value
+    /// but ensures the log is written up to the specified LSN.
     ///
     pub fn write_up_to(
         &mut self,
@@ -630,13 +737,23 @@ impl Log {
 
             self.buf_free += IB_FILE_BLOCK_SIZE;
 
-            self.group_write_buf(area_start, area_end, 0);
+            self.group_write_buf(
+                area_start,
+                area_end,
+                ut_align_down(self.write_lsn, IB_FILE_BLOCK_SIZE as Lsn),
+            );
 
             self.n_pending_writes -= 1;
         }
     }
 
-    /// Checks if a flush operation is completed and does the completion work if yes.
+    /// Checks if a flush operation is completed and performs the necessary cleanup.
+    ///
+    /// This function verifies if there are no pending writes, and if so, it may
+    /// move log content to the beginning of the buffer to optimize space usage.
+    /// This is particularly useful when a significant portion of the buffer has been
+    /// written and can be reused.
+    ///
     pub fn sys_check_flush_completion(&mut self) {
         if self.n_pending_writes == 0 {
             if self.write_end_offset > (self.max_buf_free / 2) as u64 {
@@ -654,16 +771,20 @@ impl Log {
         }
     }
 
-    /// Advances the lsn to the least lsn greater than the given lsn.
-    /// All the pages in the range are flushed to disk.
+    /// Advances the LSN to the least LSN greater than the given LSN and flushes modified pages.
+    ///
+    /// This function ensures that all modified pages with LSNs up to the specified value
+    /// are flushed to disk. It's an important part of the checkpoint mechanism to ensure
+    /// data durability.
     ///
     /// # Arguments
     ///
     /// * `lsn` - The log sequence number to advance to.
+    /// * `write_always` - If true, forces the operation even if it might not be necessary.
     ///
     /// # Returns
     ///
-    /// * `true` if the lsn was advanced, `false` otherwise.
+    /// * `true` if the LSN was advanced and all pages were flushed, `false` otherwise.
     pub fn preflush_pool_modified_page(
         &mut self,
         lsn: Lsn,
@@ -672,19 +793,101 @@ impl Log {
         false
     }
 
-    /// Checkpoint the log.
+    /// Creates a checkpoint in the log.
+    ///
+    /// A checkpoint is a point in the log sequence where all modified pages up to that point
+    /// have been written to disk. This allows the database to recover from that point in case
+    /// of a crash, without having to replay the entire log.
     ///
     /// # Arguments
     ///
-    /// * `sync` - Whether to sync the log to disk.
-    /// * `write_always` - Whether to write the log even if it is not necessary.
+    /// * `sync` - If true, synchronously waits for the checkpoint to be written to disk.
+    /// * `write_always` - If true, forces writing the checkpoint even if it might not be necessary
+    ///   based on LSN comparison with the previous checkpoint.
     ///
     /// # Returns
     ///
-    /// * `true` if the checkpoint was successful, `false` if the checkpoint was already running.
+    /// * `true` if the checkpoint was successfully initiated, `false` if a checkpoint operation
+    ///   was already in progress.
     ///
     pub fn checkpoint(&mut self, sync: bool, write_always: bool) -> bool {
         false
+    }
+
+    /// Writes checkpoint information to the log group's checkpoint buffer.
+    ///
+    /// This method populates the checkpoint buffer with various pieces of information:
+    /// 1. The checkpoint number
+    /// 2. The checkpoint LSN (Log Sequence Number)
+    /// 3. The checkpoint offset (set to 0)
+    /// 4. The log buffer size
+    /// 5. The unused LSN (set to maximum value)
+    ///
+    /// # Arguments
+    ///
+    /// * `log_group` - The log group whose checkpoint buffer will be updated
+    pub fn group_checkpoint(&mut self, log_group: &mut LogGroup) {
+        // 1. Write the checkpoint number.
+        mach_write_to_8(
+            &mut log_group.checkpoint_buf.0[LOG_CHECKPOINT_NO_RANGE],
+            self.next_checkpoint_number as u64,
+        );
+
+        // 2. Write the checkpoint lsn.
+        mach_write_to_8(
+            &mut log_group.checkpoint_buf.0[LOG_CHECKPOINT_LSN_RANGE],
+            self.next_checkpoint_lsn as u64,
+        );
+
+        // 3. Write the checkpoint offset.
+        mach_write_to_4(
+            &mut log_group.checkpoint_buf.0[LOG_CHECKPOINT_OFFSET_RANGE],
+            0,
+        );
+
+        // 4. Log buffer size.
+        mach_write_to_4(
+            &mut log_group.checkpoint_buf.0[LOG_CHECKPOINT_LOG_BUF_SIZE_RANGE],
+            self.buf_size as u32,
+        );
+
+        // 5. Write unused LSN
+        mach_write_to_8(
+            &mut log_group.checkpoint_buf.0[LOG_CHECKPOINT_UNUSED_LSN_RANGE],
+            u64::MAX,
+        );
+
+        // 6. Write Checksum
+        let checksum1 = ut_fold_string(
+            &log_group.checkpoint_buf.0[0..LOG_CHECKPOINT_CHECKSUM_1],
+        );
+        mach_write_to_4(
+            &mut log_group.checkpoint_buf.0[LOG_CHECKPOINT_CHECKSUM_1_RANGE],
+            checksum1,
+        );
+
+        // We write the checkpoint information alternatively to each checkpoint place.
+        let write_offset = if self.next_checkpoint_number & 1 == 0 {
+            LOG_CHECKPOINT_1
+        } else {
+            LOG_CHECKPOINT_2
+        };
+
+        // Checkpoint information is written to the first log file only.
+        let write_result = {
+            let mut fil_guard = self.fil.lock().unwrap();
+            fil_guard.io(
+                IORequest::AsyncLogWrite,
+                false,
+                self.group.space_id,
+                (write_offset / UNIV_PAGE_SIZE) as PageNo,
+                write_offset % UNIV_PAGE_SIZE,
+                &mut self.group.checkpoint_buf.0,
+                IB_FILE_BLOCK_SIZE,
+            )
+        };
+
+        ut_ad!(write_result.is_ok());
     }
 
     /// Makes a checkpoint at the given LSN or later.
@@ -692,10 +895,9 @@ impl Log {
     /// # Arguments
     ///
     /// * `lsn` - The log sequence number to make the checkpoint at or later lsn.
-    /// * `write_always` -
-    /// This function usually checks
-    /// if the new checkpoint is done at a later lsn than the current one or not.
-    /// If `write_always` is true, it will always write the checkpoint.
+    /// * `write_always` - Controls whether to force writing the checkpoint.
+    ///   This function usually checks if the new checkpoint is done at a later lsn than the current one.
+    ///   If `write_always` is true, it will always write the checkpoint regardless of LSN comparison.
     pub fn make_checkpoint_at(&mut self, lsn: Lsn, write_always: bool) {
         while !self.preflush_pool_modified_page(lsn, true) {}
         while !self.checkpoint(false, write_always) {}
@@ -719,7 +921,7 @@ impl Log {
     }
 
     #[cfg(debug_assertions)]
-    pub fn get_log_buffer(&mut self) -> Vec<u8> {
-        self.buf.clone()
+    pub fn get_log_buffer(&mut self) -> &Vec<u8> {
+        &self.buf
     }
 }
