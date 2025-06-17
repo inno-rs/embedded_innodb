@@ -7,7 +7,7 @@ use crate::innodb::innodb0types::{IB_FILE_BLOCK_SIZE, Lsn, PageNo, SpaceId};
 use crate::log::log0types::{
     LOG_BLOCK_CHECKPOINT_NO, LOG_BLOCK_FIRST_REC_GROUP,
     LOG_BLOCK_FLUSH_BIT_MASK, LOG_BLOCK_HDR_DATA_LENGTH, LOG_BLOCK_HDR_NO,
-    LOG_BLOCK_HDR_SIZE, LOG_BLOCK_TRL_SIZE,
+    LOG_BLOCK_HDR_SIZE, LOG_BLOCK_TRL_SIZE, LOG_START_LSN,
 };
 use crate::os::os0file::IORequest;
 use crate::ut::ut0dbg::ut_ad;
@@ -83,10 +83,10 @@ impl Log {
             mutex: Arc::from(Mutex::new(())),
             flushed: false,
             flushed_event: Default::default(),
-            lsn: 0,
-            buf_free: 0,
+            lsn: LOG_START_LSN as Lsn,
+            buf_free: LOG_BLOCK_HDR_SIZE,
             buf: vec![0; buffer_size], // Initialize with a buffer of size 1024
-            buf_size: 0,
+            buf_size: buffer_size,
             max_buf_free: 0,
             buf_next_to_write: 0,
             write_lsn: 0,
@@ -414,7 +414,8 @@ impl Log {
         let start_lsn = self.lsn;
 
         // Copy the data into the buffer
-        self.buf[self.buf_free..len].copy_from_slice(data);
+        let range = self.buf_free..self.buf_free + len;
+        self.buf[range].copy_from_slice(data);
 
         let log_block =
             (self.buf_free / IB_FILE_BLOCK_SIZE) * IB_FILE_BLOCK_SIZE;
@@ -422,6 +423,77 @@ impl Log {
 
         self.buf_free += len;
         self.lsn += len as Lsn;
+
+        Ok(LogWriteResult { start_lsn, end_lsn: self.lsn })
+    }
+
+    /// Write the given data to the log buffer.
+    ///
+    /// # Arguments
+    ///
+    /// `data`: The data to write.
+    ///
+    /// # Returns
+    ///
+    /// `Result<LogWriteResult, String>` containing the result of the operation.
+    /// If successful, the result contains the start lsn and the end lsn.
+    /// Otherwise, error string.
+    pub fn write_low(
+        &mut self,
+        data: &[u8],
+    ) -> Result<LogWriteResult, String> {
+        let start_lsn = self.lsn;
+        let mut str_len = data.len();
+        let mut dest_offset: usize = 0;
+        while str_len > 0 {
+            let mut data_len = (self.buf_free % IB_FILE_BLOCK_SIZE) + str_len;
+
+            let mut len = if data_len < IB_FILE_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE
+            {
+                // Data fits in the current block.
+                str_len
+            } else {
+                data_len = IB_FILE_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE;
+                IB_FILE_BLOCK_SIZE
+                    - (self.buf_free % IB_FILE_BLOCK_SIZE)
+                    - LOG_BLOCK_TRL_SIZE
+            };
+
+            // copy len amount of data to log buffer.
+            let src_range = self.buf_free..self.buf_free + len;
+            let dest_range = dest_offset..dest_offset + len;
+            self.buf[src_range].copy_from_slice(&data[dest_range]);
+
+            str_len -= len;
+            dest_offset += len;
+
+            let block_offset = self.buf_free / IB_FILE_BLOCK_SIZE;
+            self.block_set_data_length(block_offset, len);
+
+            if data_len == IB_FILE_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE {
+                // This block is full.
+                // When the block is full, we put the data length to be the size of the whole block.
+                // Otherwise, just the amount of actual data without header and trailer.
+                // Verify this behavior when reading logs.
+                self.block_set_data_length(block_offset, IB_FILE_BLOCK_SIZE);
+                self.block_set_checkpoint_number(
+                    block_offset,
+                    self.next_checkpoint_number,
+                );
+                len += LOG_BLOCK_HDR_SIZE + LOG_BLOCK_TRL_SIZE;
+
+                self.lsn += len as Lsn;
+
+                // Initialize a new block.
+                self.block_init(block_offset + 1, self.lsn);
+            } else {
+                self.lsn += len as Lsn;
+            }
+
+            self.buf_free += len;
+
+            ut_ad!(self.buf_free < self.buf_size);
+        }
 
         Ok(LogWriteResult { start_lsn, end_lsn: self.lsn })
     }
@@ -644,5 +716,10 @@ impl Log {
         if self.n_pending_checkpoint_writes == 0 {
             self.complete_checkpoint();
         }
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn get_log_buffer(&mut self) -> Vec<u8> {
+        self.buf.clone()
     }
 }

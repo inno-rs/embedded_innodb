@@ -177,6 +177,7 @@ mod tests {
         LogFlusherLoop,
     };
     use crate::log::log0log::Log;
+    use crate::log::log0types::LOG_START_LSN;
     use crate::os::os0io::OsIo;
     use crate::os::os0runtime::create_runtime;
     use crate::ut::ut0ut::GLOBAL_RUNTIME;
@@ -228,15 +229,15 @@ mod tests {
             flusher_loop.start_loop().await
         });
 
-        assert_eq!(log_sys.lock().unwrap().get_lsn(), 0);
+        assert_eq!(log_sys.lock().unwrap().get_lsn(), LOG_START_LSN as u64);
         let data = b"hello world!".to_vec();
         let result = {
             log_sys.lock().unwrap().reserve_and_write_fast(data.as_slice())
         };
         assert!(result.is_ok());
         let write_result = result.unwrap();
-        assert_eq!(write_result.start_lsn, 0);
-        assert_eq!(write_result.end_lsn, data.len() as Lsn);
+        assert_eq!(write_result.start_lsn, LOG_START_LSN as u64);
+        assert_eq!(write_result.end_lsn, (data.len() + LOG_START_LSN) as Lsn);
 
         // Send the message to flush
         tx.blocking_send(LogFlushTrigger::WriteUpTo(data.len() as Lsn))
