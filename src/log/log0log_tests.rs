@@ -9,7 +9,9 @@ mod tests {
         IB_FILE_BLOCK_SIZE, Lsn, UNIV_PAGE_SIZE,
     };
     use crate::log::log0log::Log;
-    use crate::log::log0types::LOG_BLOCK_HDR_SIZE;
+    use crate::log::log0types::{
+        LOG_BLOCK_HDR_SIZE, LOG_BLOCK_TRL_SIZE, LOG_START_LSN,
+    };
     use crate::os::os0io::OsIo;
     use crate::os::os0runtime::create_runtime;
 
@@ -144,9 +146,79 @@ mod tests {
 
     #[rstest]
     fn test_reserve_and_write_fast_small_data(mut log: Log) {
-        let mut data = b"hello world!".to_vec();
-        let ret = log.reserve_and_write_fast(&mut data);
-        assert!(ret.is_ok());
+        let input1 = b"hello world!";
+        let input2 = b"bye bye world!";
+        {
+            let ret = log.reserve_and_write_fast(&mut input1.to_vec());
+            assert!(ret.is_ok());
+
+            let log_write_result = ret.unwrap();
+            assert_eq!(log_write_result.start_lsn, LOG_START_LSN as u64);
+            assert_eq!(
+                log_write_result.end_lsn,
+                LOG_START_LSN as u64 + input1.to_vec().len() as u64
+            );
+        }
+
+        {
+            let ret = log.reserve_and_write_fast(&mut input2.to_vec());
+            assert!(ret.is_ok());
+
+            let log_write_result = ret.unwrap();
+            assert_eq!(
+                log_write_result.start_lsn,
+                (LOG_START_LSN + input1.len()) as u64
+            );
+            assert_eq!(
+                log_write_result.end_lsn,
+                (input1.to_vec().len() + input2.to_vec().len() + LOG_START_LSN)
+                    as u64
+            );
+        }
+    }
+
+    #[rstest]
+    fn test_write_log(mut log: Log) {
+        let mut input1 = b"hello world!".to_vec();
+        input1.resize(IB_FILE_BLOCK_SIZE, 'a' as u8);
+        let mut input2 = b"bye bye world!".to_vec();
+        input2.resize(IB_FILE_BLOCK_SIZE, 'a' as u8);
+
+        {
+            let ret = log.write_low(&mut input1);
+            assert!(ret.is_ok());
+
+            let log_write_result = ret.unwrap();
+            assert_eq!(log_write_result.start_lsn, LOG_START_LSN as u64);
+            assert_eq!(
+                log_write_result.end_lsn,
+                (LOG_START_LSN
+                    + input1.to_vec().len()
+                    + LOG_BLOCK_HDR_SIZE
+                    + LOG_BLOCK_TRL_SIZE) as u64
+            );
+        }
+
+        {
+            let ret = log.write_low(&mut input2.to_vec());
+            assert!(ret.is_ok());
+
+            let log_write_result = ret.unwrap();
+            assert_eq!(
+                log_write_result.start_lsn,
+                (LOG_START_LSN
+                    + input1.to_vec().len()
+                    + LOG_BLOCK_HDR_SIZE
+                    + LOG_BLOCK_TRL_SIZE) as u64
+            );
+            assert_eq!(
+                log_write_result.end_lsn,
+                (input1.to_vec().len()
+                    + input2.to_vec().len()
+                    + (LOG_BLOCK_HDR_SIZE + LOG_BLOCK_TRL_SIZE) * 2
+                    + LOG_START_LSN) as u64
+            );
+        }
     }
 
     #[rstest]
