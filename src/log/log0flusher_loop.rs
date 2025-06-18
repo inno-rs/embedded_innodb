@@ -177,6 +177,7 @@ mod tests {
         LogFlusherLoop,
     };
     use crate::log::log0log::Log;
+    use crate::log::log0types::LOG_START_LSN;
     use crate::os::os0io::OsIo;
     use crate::os::os0runtime::create_runtime;
     use crate::ut::ut0ut::GLOBAL_RUNTIME;
@@ -215,8 +216,11 @@ mod tests {
         let os_io = Arc::new(Mutex::new(OsIo::new(runtime.clone())));
         let fil = Arc::new(Mutex::new(Fil::new(100, os_io, runtime.clone())));
         // Total log size of 16 MB.
-        let log_sys =
-            Arc::new(Mutex::new(Log::new(UNIV_PAGE_SIZE * 100, fil)));
+        let log_sys = Arc::new(Mutex::new(Log::new(
+            UNIV_PAGE_SIZE * 100,
+            fil,
+            Default::default(),
+        )));
         let (tx, rx) = mpsc::channel(100);
         let notifier = Arc::new(Mutex::new(MockLogFlushNotifier::new()));
 
@@ -228,15 +232,15 @@ mod tests {
             flusher_loop.start_loop().await
         });
 
-        assert_eq!(log_sys.lock().unwrap().get_lsn(), 0);
+        assert_eq!(log_sys.lock().unwrap().get_lsn(), LOG_START_LSN as u64);
         let data = b"hello world!".to_vec();
         let result = {
             log_sys.lock().unwrap().reserve_and_write_fast(data.as_slice())
         };
         assert!(result.is_ok());
         let write_result = result.unwrap();
-        assert_eq!(write_result.start_lsn, 0);
-        assert_eq!(write_result.end_lsn, data.len() as Lsn);
+        assert_eq!(write_result.start_lsn, LOG_START_LSN as u64);
+        assert_eq!(write_result.end_lsn, data.len() as Lsn + LOG_START_LSN);
 
         // Send the message to flush
         tx.blocking_send(LogFlushTrigger::WriteUpTo(data.len() as Lsn))

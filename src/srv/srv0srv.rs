@@ -17,6 +17,8 @@ pub struct Config {
     pub buf_pool_size: usize,
     /// Path to the redo log directory.
     pub log_dir: String,
+    /// Number of log files.
+    pub n_log_files: usize,
     /// Size of the log file in pages.
     pub log_file_size: usize,
 }
@@ -28,6 +30,7 @@ impl Default for Config {
             log_buffer_size: 128, // Default size in pages
             buf_pool_size: 1024,  // Default size in pages
             log_dir: "/tmp/".to_string(),
+            n_log_files: 2,
             log_file_size: 200, // Default size in pages
         }
     }

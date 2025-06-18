@@ -165,7 +165,6 @@ impl Page {
         Page { ptr }
     }
 
-    #[cfg(debug_assertions)]
     pub fn page_rec_check(&self, rec: Record) -> bool {
         ut_ad!(
             self.page_offset(rec) <= self.page_header_get_field(PAGE_HEAP_TOP)

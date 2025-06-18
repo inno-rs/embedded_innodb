@@ -17,7 +17,7 @@ pub struct Mtr {
     log_buffer: MLog,
     savepoints: Vec<Savepoint>,
     pub(crate) dblwr_create_in_progress: bool,
-    #[cfg(debug_assertions)]
+    dblwr_create_in_progress: bool,
     magic_n: u32,
 }
 
@@ -32,7 +32,6 @@ impl Mtr {
             log_buffer: MLog::new(),
             savepoints: Vec::new(),
             dblwr_create_in_progress: false,
-            #[cfg(debug_assertions)]
             magic_n: MTR_MAGIC_N,
         }
     }

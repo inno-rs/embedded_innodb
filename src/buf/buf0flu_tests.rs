@@ -44,8 +44,11 @@ mod tests {
                 UNIV_PAGE_SIZE,
             )));
 
-            let redo_log =
-                Arc::new(Mutex::new(Log::new(UNIV_PAGE_SIZE, fil.clone())));
+            let redo_log = Arc::new(Mutex::new(Log::new(
+                UNIV_PAGE_SIZE,
+                fil.clone(),
+                Default::default(),
+            )));
             Self { buf_flu: BufFlush::new(dblwr_buf, fil, redo_log) }
         }
     }
