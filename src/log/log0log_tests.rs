@@ -21,7 +21,7 @@ mod tests {
         let os_io = Arc::new(Mutex::new(OsIo::new(runtime.clone())));
         let fil = Arc::new(Mutex::new(Fil::new(100, os_io.clone(), runtime)));
 
-        Log::new(UNIV_PAGE_SIZE * 10, fil)
+        Log::new(UNIV_PAGE_SIZE * 10, fil, Default::default())
     }
 
     #[rstest]
@@ -167,12 +167,13 @@ mod tests {
             let log_write_result = ret.unwrap();
             assert_eq!(
                 log_write_result.start_lsn,
-                (LOG_START_LSN + input1.len()) as u64
+                LOG_START_LSN + input1.len() as Lsn
             );
             assert_eq!(
                 log_write_result.end_lsn,
-                (input1.to_vec().len() + input2.to_vec().len() + LOG_START_LSN)
-                    as u64
+                input1.to_vec().len() as Lsn
+                    + input2.to_vec().len() as Lsn
+                    + LOG_START_LSN
             );
         }
     }
@@ -192,10 +193,10 @@ mod tests {
             assert_eq!(log_write_result.start_lsn, LOG_START_LSN as u64);
             assert_eq!(
                 log_write_result.end_lsn,
-                (LOG_START_LSN
-                    + input1.to_vec().len()
-                    + LOG_BLOCK_HDR_SIZE
-                    + LOG_BLOCK_TRL_SIZE) as u64
+                LOG_START_LSN as Lsn
+                    + input1.to_vec().len() as Lsn
+                    + LOG_BLOCK_HDR_SIZE as Lsn
+                    + LOG_BLOCK_TRL_SIZE as Lsn
             );
         }
 
@@ -206,17 +207,17 @@ mod tests {
             let log_write_result = ret.unwrap();
             assert_eq!(
                 log_write_result.start_lsn,
-                (LOG_START_LSN
-                    + input1.to_vec().len()
-                    + LOG_BLOCK_HDR_SIZE
-                    + LOG_BLOCK_TRL_SIZE) as u64
+                LOG_START_LSN
+                    + input1.to_vec().len() as Lsn
+                    + LOG_BLOCK_HDR_SIZE as Lsn
+                    + LOG_BLOCK_TRL_SIZE as Lsn
             );
             assert_eq!(
                 log_write_result.end_lsn,
-                (input1.to_vec().len()
-                    + input2.to_vec().len()
-                    + (LOG_BLOCK_HDR_SIZE + LOG_BLOCK_TRL_SIZE) * 2
-                    + LOG_START_LSN) as u64
+                input1.to_vec().len() as Lsn
+                    + input2.to_vec().len() as Lsn
+                    + (LOG_BLOCK_HDR_SIZE + LOG_BLOCK_TRL_SIZE) as Lsn * 2
+                    + LOG_START_LSN as Lsn
             );
         }
     }
@@ -227,5 +228,37 @@ mod tests {
         data.resize(IB_FILE_BLOCK_SIZE, 0u8);
         let ret = log.reserve_and_write_fast(&mut data);
         assert!(ret.is_err());
+    }
+
+    #[rstest]
+    fn test_group_get_capacity(log: Log) {
+        let capacity = log.group_get_capacity();
+        assert_eq!(capacity, 6_549_504);
+    }
+
+    #[rstest]
+    fn test_group_calc_size_offset(log: Log) {
+        // Does not work for 0. Why??
+
+        let val = log.group_calc_size_offset(1000);
+        assert_eq!(val, 999);
+
+        let val = log.group_calc_size_offset(2453235235);
+        assert_eq!(val, 2453234486);
+    }
+
+    #[rstest]
+    fn test_group_calc_real_offset(log: Log) {
+        let val = log.group_calc_real_offset(0);
+        assert_eq!(val, 2048);
+
+        let val = log.group_calc_real_offset(100);
+        assert_eq!(val, 2148);
+
+        let val = log.group_calc_real_offset(10000);
+        assert_eq!(val, 12048);
+
+        let val = log.group_calc_real_offset(2453235235);
+        assert_eq!(val, 2454771235);
     }
 }

@@ -1,7 +1,9 @@
-use crate::innodb::innodb0types::IB_FILE_BLOCK_SIZE;
+use std::ops::Range;
+
+use crate::innodb::innodb0types::{IB_FILE_BLOCK_SIZE, Lsn, SpaceId};
 
 /// The counting of the log sequence numbers (LSN) starts from the given value.
-pub const LOG_START_LSN: usize = 16 * IB_FILE_BLOCK_SIZE;
+pub const LOG_START_LSN: Lsn = 16 * IB_FILE_BLOCK_SIZE as Lsn;
 
 /// Offsets to the log block header.
 
@@ -40,3 +42,71 @@ pub const LOG_BLOCK_HDR_SIZE: usize = 12;
 pub const LOG_BLOCK_CHECKSUM: usize = 4;
 /// Trailer size in bytes.
 pub const LOG_BLOCK_TRL_SIZE: usize = 4;
+
+/// Offsets for checkpoint number.
+pub const LOG_CHECKPOINT_NO: usize = 0;
+pub const LOG_CHECKPOINT_NO_RANGE: Range<usize> =
+    LOG_CHECKPOINT_NO..LOG_CHECKPOINT_NO + 8;
+pub const LOG_CHECKPOINT_LSN: usize = 8;
+pub const LOG_CHECKPOINT_LSN_RANGE: Range<usize> =
+    LOG_CHECKPOINT_LSN..LOG_CHECKPOINT_LSN + 8;
+pub const LOG_CHECKPOINT_OFFSET: usize = 16;
+pub const LOG_CHECKPOINT_OFFSET_RANGE: Range<usize> =
+    LOG_CHECKPOINT_OFFSET..LOG_CHECKPOINT_OFFSET + 4;
+pub const LOG_CHECKPOINT_LOG_BUF_SIZE: usize = 20;
+pub const LOG_CHECKPOINT_LOG_BUF_SIZE_RANGE: Range<usize> =
+    LOG_CHECKPOINT_LOG_BUF_SIZE..LOG_CHECKPOINT_LOG_BUF_SIZE + 4;
+pub const LOG_CHECKPOINT_UNUSED_LSN: usize = 24;
+pub const LOG_CHECKPOINT_UNUSED_LSN_RANGE: Range<usize> =
+    LOG_CHECKPOINT_UNUSED_LSN..LOG_CHECKPOINT_UNUSED_LSN + 8;
+
+pub const LOG_CHECKPOINT_GROUP_ARRAY: usize = 32;
+
+pub const LOG_CHECKPOINT_CHECKSUM_1: usize =
+    LOG_CHECKPOINT_GROUP_ARRAY + 32 * 8;
+pub const LOG_CHECKPOINT_CHECKSUM_1_RANGE: Range<usize> =
+    LOG_CHECKPOINT_CHECKSUM_1..LOG_CHECKPOINT_CHECKSUM_1 + 4;
+
+pub const LOG_CHECKPOINT_1: usize = IB_FILE_BLOCK_SIZE;
+
+/// This is the second location in the log header where we write checkpoint information.
+/// We alternate between LOG_CHECKPOINT_1 and LOG_CHECKPOINT_2 to prevent corruption.
+pub const LOG_CHECKPOINT_2: usize = 3 * IB_FILE_BLOCK_SIZE;
+
+pub const LOG_FILE_HEADER_SIZE: u64 = 4 * IB_FILE_BLOCK_SIZE as u64;
+
+#[repr(align(512))]
+pub struct CheckpointBuf<const SIZE: usize>(pub [u8; SIZE]);
+
+impl<const SIZE: usize> CheckpointBuf<SIZE> {
+    pub fn new() -> Self {
+        Self { 0: [0; SIZE] }
+    }
+}
+
+pub enum LogGroupState {
+    Ok,
+    Corrupted,
+}
+
+/// LogGroup consists of a number of log files, each of which is of the same size.
+pub struct LogGroup {
+    /// Log group id.
+    pub id: usize,
+    /// Number of files in the log group.
+    pub n_files: usize,
+    /// Size of the individual file in bytes. This also includes the file header.
+    pub file_size: usize,
+    /// File space id.
+    pub space_id: SpaceId,
+    /// State of the log group.
+    pub state: LogGroupState,
+    /// Lsn used to fix coordinates within the log group.
+    pub lsn: Lsn,
+    /// The offset of the above lsn.
+    pub lsn_offset: u64,
+    /// Number of pending flush-writes to this log group.
+    pub n_pending_writes: usize,
+    /// Buffer to keep checkpoint information.
+    pub checkpoint_buf: Box<CheckpointBuf<IB_FILE_BLOCK_SIZE>>,
+}

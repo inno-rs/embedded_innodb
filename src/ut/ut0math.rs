@@ -1,3 +1,5 @@
+use crate::ut::ut0dbg::ut_ad;
+
 /// Rounds up a number to the next power of 2.
 ///
 /// This macro takes an integer value and rounds it up to the next power of 2.
@@ -39,4 +41,117 @@ macro_rules! ut_2_power_up {
             x + 1
         }
     }};
+}
+
+/// A trait for unsigned integer types that can be used with the math utility functions.
+///
+/// This trait is implemented for all types that satisfy the requirements for
+/// bitwise operations and comparisons needed by functions like `ut_is_2pow` and
+/// `ut_align_down`.
+///
+/// # Examples
+///
+/// ```
+/// // The trait is automatically implemented for standard unsigned integer types
+/// use innodb::ut::ut0math::{UInt, ut_is_2pow};
+///
+/// fn check_power_of_two<T: UInt>(value: T) -> bool {
+///     ut_is_2pow(value)
+/// }
+///
+/// assert!(check_power_of_two(64u32));
+/// assert!(check_power_of_two(256u64));
+/// ```
+pub trait UInt:
+    Copy
+    + PartialEq
+    + PartialOrd
+    + From<u8>
+    + std::ops::BitAnd<Output = Self>
+    + std::ops::Sub<Output = Self>
+    + std::ops::Not<Output = Self>
+{
+}
+
+impl<T> UInt for T where
+    T: Copy
+        + PartialEq
+        + PartialOrd
+        + From<u8>
+        + std::ops::BitAnd<Output = T>
+        + std::ops::Sub<Output = T>
+        + std::ops::Not<Output = T>
+{
+}
+
+/// Checks if the provided number is a power of 2.
+///
+/// This function uses a bitwise algorithm to determine if a number is a power of 2.
+/// A number is a power of 2 if and only if it has exactly one bit set to 1.
+/// The algorithm works by checking if the number is non-zero and if the bitwise AND
+/// of the number and (number - 1) is zero.
+///
+/// # Examples
+///
+/// ```
+/// use innodb::ut::ut0math::ut_is_2pow;
+///
+/// assert!(!ut_is_2pow(0));     // 0 is not a power of 2
+/// assert!(ut_is_2pow(1));      // 1 is 2^0
+/// assert!(ut_is_2pow(2));      // 2 is 2^1
+/// assert!(!ut_is_2pow(3));     // 3 is not a power of 2
+/// assert!(ut_is_2pow(4));      // 4 is 2^2
+/// assert!(ut_is_2pow(64));     // 64 is 2^6
+/// assert!(!ut_is_2pow(100));   // 100 is not a power of 2
+/// ```
+///
+/// # Parameters
+/// * `n` - The number to check
+///
+/// # Returns
+/// * `true` if the number is a power of 2
+/// * `false` if the number is 0 or not a power of 2
+pub fn ut_is_2pow<T: UInt>(n: T) -> bool {
+    n != T::from(0) && (n & (n - T::from(1))) == T::from(0)
+}
+
+/// Aligns a number down to the nearest multiple of the given alignment.
+///
+/// This function rounds down a number to the nearest multiple of the alignment value.
+/// The alignment value must be a power of 2. The function works by masking out the
+/// lower bits of the number that represent the offset from the alignment boundary.
+///
+/// # Examples
+///
+/// ```
+/// use innodb::ut::ut0math::ut_align_down;
+///
+/// // Align to 512 (IB_FILE_BLOCK_SIZE)
+/// assert_eq!(ut_align_down(10, 512), 0);
+/// assert_eq!(ut_align_down(512, 512), 512);
+/// assert_eq!(ut_align_down(513, 512), 512);
+/// assert_eq!(ut_align_down(1000, 512), 512);
+/// assert_eq!(ut_align_down(1024, 512), 1024);
+/// assert_eq!(ut_align_down(1025, 512), 1024);
+///
+/// // Align to powers of 2
+/// assert_eq!(ut_align_down(15, 8), 8);
+/// assert_eq!(ut_align_down(16, 8), 16);
+/// assert_eq!(ut_align_down(17, 8), 16);
+/// ```
+///
+/// # Parameters
+/// * `n` - The number to align down
+/// * `align_no` - The alignment value (must be a power of 2)
+///
+/// # Returns
+/// * The largest multiple of `align_no` that is less than or equal to `n`
+///
+/// # Panics
+/// * In debug mode, panics if `align_no` is 0 or not a power of 2
+pub fn ut_align_down<T: UInt>(n: T, align_no: T) -> T {
+    ut_ad!(align_no > T::from(0));
+    ut_ad!(ut_is_2pow(align_no));
+
+    n & !(align_no - T::from(1))
 }
