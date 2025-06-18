@@ -86,8 +86,8 @@ mod tests {
             1,
             vec![FieldType::String(Some("Hello World 89".to_string()))],
         );
-        let owning_dtuple = dtuples.first().unwrap();
-        let n_fields = owning_dtuple.dtuple.n_fields;
+        let dtuple = dtuples.first().unwrap();
+        let n_fields = dtuple.n_fields;
 
         let mut orphan_record =
             OrphanRecord::new(vec![0; UNIV_PAGE_SIZE], n_fields);
@@ -95,7 +95,7 @@ mod tests {
         let rec: Record = orphan_record.get_record();
 
         let index = Index::new(PageId::dummy());
-        rec.rec_convert_dtuple_to_rec(&index, &owning_dtuple.dtuple, 0);
+        rec.rec_convert_dtuple_to_rec(&index, &dtuple, 0);
 
         assert_eq!(page_cur_fixture.page.page_n_get_recs(), 0);
         let new_rec =

@@ -13,7 +13,7 @@ mod tests {
             ],
         );
 
-        let dtuple = &dtuples.first().unwrap().dtuple;
+        let dtuple = dtuples.first().unwrap();
 
         assert_eq!(3, dtuple.n_fields);
         assert_eq!(3, dtuple.fields.len());
