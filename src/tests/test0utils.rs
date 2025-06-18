@@ -1,7 +1,8 @@
 use std::alloc::{Layout, alloc_zeroed};
 use std::cell::RefCell;
+use std::ops::Deref;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::buf::buf0types::{BufBlock, BufPage};
 use crate::data::data0types::{
@@ -27,7 +28,7 @@ pub struct OwningPage {
     /// The Page structure that references the memory in page_mem
     pub page: Page,
     /// BufBlock containing page, and bufpage.
-    pub buf_block: BufBlock,
+    pub buf_block: Arc<RwLock<BufBlock>>,
 }
 
 impl Drop for OwningPage {
@@ -78,8 +79,8 @@ pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
     let buf_block = owning_page.buf_block.clone();
 
     let mut page_cur = PageCur::new(
-        Arc::new(Index::new(PageId::dummy())),
-        owning_page.page.page_get_infimum_rec(),
+        Arc::new(Mutex::new(Index::new(PageId::dummy()))),
+        Some(owning_page.page.page_get_infimum_rec()),
         buf_block,
         owning_page.page,
     );
@@ -108,15 +109,20 @@ pub fn create_raw_page() -> OwningPage {
     let mem = unsafe { alloc_zeroed(layout) };
 
     let index = Index::new(PageId::dummy());
-    let buf_block = BufBlock::new(
+    let buf_block = Arc::new(RwLock::new(BufBlock::new(
         RefCell::new(Rc::new(RefCell::new(BufPage::dummy()))),
         mem,
-    );
+    )));
 
+    let buf_block_clone = buf_block.clone();
     OwningPage {
         page_mem: mem,
-        page: Page::page_create(&index, &buf_block, None),
-        buf_block,
+        page: Page::page_create(
+            &index,
+            buf_block.read().unwrap().deref(),
+            None,
+        ),
+        buf_block: buf_block_clone,
     }
 }
 

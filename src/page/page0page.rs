@@ -147,7 +147,7 @@ pub const PAGE_DIR: usize = FIL_PAGE_DATA_END;
 pub const PAGE_DIR_SLOT_SIZE: usize = 2;
 
 #[derive(Copy, Clone)]
-pub(crate) struct Page {
+pub struct Page {
     ptr: *mut u8,
 }
 

@@ -22,7 +22,7 @@ pub(crate) use debug_assert as ut_ad;
 #[macro_export]
 macro_rules! ut_panic {
     ($msg:expr $(, $args:tt)* ) => {
-        panic!($msg $(, $args)*);
+        panic!($msg $(, $args)*)
     };
 }
 

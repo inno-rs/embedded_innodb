@@ -106,13 +106,13 @@ pub enum MlogType {
 #[derive(Display, Clone, Eq, PartialEq, Debug)]
 pub enum MtrState {
     /// Undefined state.
-    MTR_UNDEFINED = 0,
+    MtrUndefined = 0,
     /// The mini-transaction is active.
-    MTR_ACTIVE = 123,
+    MtrActive = 123,
     /// The mini-transaction is in the process of committing.
-    MTR_COMMITTING = 64,
+    MtrCommitting = 64,
     /// The mini-transaction has committed.
-    MTR_COMMITTED = 76,
+    MtrCommitted = 76,
 }
 
 /**
@@ -124,17 +124,22 @@ pub enum LogMode {
     Sync,
     Async,
 }
+
 /// Whether you fixed a page in shared or exclusive mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FixMode {
+    /// Page is fixed in shared mode, allowing concurrent reads.
     Shared,
+    /// Page is fixed in exclusive mode, preventing concurrent access.
     Exclusive,
+    /// No latch is held on the page.
+    NoLatch,
 }
 
 /// A handle to an InnoDB latch.  
 /// Wraps the raw pointer for safety/documentation.
 #[derive(Debug, PartialEq, Copy, Clone)]
-pub struct LatchHandle(*mut std::ffi::c_void);
+pub struct LatchHandle();
 
 /// Whether the latch was taken shared or exclusive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,7 +159,6 @@ pub struct OtherResource {
 
 /// Now our MemoSlot is a true Rust enum: each variant has its own fields,
 /// so you can’t mix page‐IDs with latch‐IDs by accident.
-
 #[derive(PartialEq, Copy, Clone)]
 pub enum MemoSlot {
     /// A page “fix” (latch) in shared or exclusive mode.

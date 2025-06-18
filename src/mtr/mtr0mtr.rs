@@ -23,7 +23,7 @@ pub struct Mtr {
 impl Mtr {
     pub fn new() -> Self {
         Self {
-            mtr_state: MtrState::MTR_UNDEFINED,
+            mtr_state: MtrState::MtrUndefined,
             log_mode: MtrLogMode::MTR_LOG_MODE_ALL,
             modifications: false,
             n_log_records: 0,
@@ -46,7 +46,7 @@ impl Mtr {
         // clear any prior log-record count
         self.n_log_records = 0;
         // now Active
-        self.mtr_state = MtrState::MTR_ACTIVE;
+        self.mtr_state = MtrState::MtrActive;
 
         // clear out any old memo/log data
         self.memo.clear();
@@ -63,15 +63,45 @@ impl Mtr {
     ///  Record a resource so it can be undone later.
     pub fn memo_push(&mut self, slot: MemoSlot) {
         ut_ad!(
-            self.mtr_state == MtrState::MTR_ACTIVE,
+            self.mtr_state == MtrState::MtrActive,
             "memo push is only allowed in the ACTIVE state"
         );
         self.memo.push(slot);
     }
 
+    /// Check if memo contains the given item.
+    ///
+    /// This function checks if the mini-transaction's memo list contains
+    /// a specific resource that matches the provided slot.
+    ///
+    /// # Arguments
+    /// * `slot` - The memo slot to check for
+    ///
+    /// # Returns
+    /// `true` if the memo list contains the specified slot, `false` otherwise
+    pub fn memo_contains(&self, slot: &MemoSlot) -> bool {
+        ut_ad!(
+            self.mtr_state == MtrState::MtrActive
+                || self.mtr_state == MtrState::MtrCommitting
+        );
+
+        self.memo.iter().any(|&x| x == *slot)
+    }
+
+    /// Returns a mutable reference to the mini-transaction's log buffer.
+    ///
+    /// This method provides access to the log buffer, allowing operations
+    /// to be recorded in the mini-transaction log.
+    ///
+    /// # Returns
+    /// A mutable reference to the MLog buffer
+    pub fn mlog(&mut self) -> &mut MLog {
+        &mut self.log_buffer
+    }
+
     pub fn memo_release(&mut self, to_release: &MemoSlot) {
         ut_ad!(
-            self.mtr_state == MtrState::MTR_ACTIVE,
+            self.mtr_state == MtrState::MtrActive,
             "memo release only allowed when ACTIVE"
         );
         if let Some(pos) = self.memo.iter().rposition(|s| s == to_release) {
@@ -142,17 +172,17 @@ impl Mtr {
     }
 
     pub fn commit(&mut self) {
-        ut_ad!(self.mtr_state == MtrState::MTR_ACTIVE);
-        self.mtr_state = MtrState::MTR_COMMITTING;
+        ut_ad!(self.mtr_state == MtrState::MtrActive);
+        self.mtr_state = MtrState::MtrCommitting;
         // 1) flush self.log_buffer.buf into the shared redo‐log
         //    (call into your Log Manager API here)
         // 2) release all remaining memo slots (same as rollback_to_savepoint(0))
         while let Some(slot) = self.memo.pop() { /* ... */ }
         self.savepoints.clear();
-        self.mtr_state = MtrState::MTR_COMMITTED;
+        self.mtr_state = MtrState::MtrCommitted;
         self.magic_n = 0;
         // Optionally transition to UNDEFINED
-        self.mtr_state = MtrState::MTR_UNDEFINED;
+        self.mtr_state = MtrState::MtrUndefined;
     }
 
     /// Mark that this MTR is doing a doublewrite-buffer create.
@@ -177,7 +207,7 @@ impl Mtr {
             "MTR magic mismatch in rollback_to_savepoint"
         );
         ut_ad!(
-            self.mtr_state == MtrState::MTR_ACTIVE,
+            self.mtr_state == MtrState::MtrActive,
             "must be ACTIVE to rollback to savepoint"
         );
 
@@ -283,7 +313,7 @@ impl Mtr {
 
     /// Is this mini-transaction active?
     pub fn is_active(&self) -> bool {
-        self.mtr_state == MtrState::MTR_ACTIVE
+        self.mtr_state == MtrState::MtrActive
     }
 
     /// Release a buffer block at a savepoint without rolling back others.
