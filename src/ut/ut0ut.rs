@@ -8,16 +8,6 @@ use tokio::runtime::Runtime;
 /// It is particularly useful for code that needs to perform
 /// asynchronous operations but is called from synchronous code.
 ///
-/// # Examples
-///
-/// ```
-/// let result = block_on!(async_function());
-/// ```
-///
-/// # Panics
-///
-/// This macro will panic if the global runtime has not been initialized
-/// or if the async task panics.
 #[macro_export]
 macro_rules! block_on {
     ($expr:expr) => {
