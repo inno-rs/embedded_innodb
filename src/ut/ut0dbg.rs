@@ -19,13 +19,6 @@ pub(crate) use debug_assert as ut_ad;
 /// It always triggers a panic with the provided message and optional format arguments.
 /// Unlike `ut_a` and `ut_ad`, this macro is explicitly used to terminate execution
 /// when an invalid state is detected, regardless of build configuration.
-///
-/// # Examples
-///
-/// ```
-/// ut_panic!("Invalid state detected");
-/// ut_panic!("Invalid value: {}", value);
-/// ```
 #[macro_export]
 macro_rules! ut_panic {
     ($msg:expr $(, $args:tt)* ) => {
@@ -42,6 +35,7 @@ macro_rules! ut_panic {
 /// # Examples
 ///
 /// ```
+/// use innodb::some_or_panic;
 /// let opt = Some(42);
 /// let value = some_or_panic!(opt, "Expected a value");
 /// assert_eq!(value, 42);
@@ -90,16 +84,6 @@ static INIT: Once = Once::new();
 /// This function sets up the tracing subscriber with a test writer and TRACE level logging.
 /// It uses the `Once` guard to ensure that initialization happens only once, regardless
 /// of how many times this function is called.
-///
-/// # Examples
-///
-/// ```
-/// // Initialize tracing at the start of your program or tests
-/// init_tracing();
-///
-/// // Now you can use tracing macros
-/// tracing::info!("Application started");
-/// ```
 #[ctor]
 fn init_tracing() {
     INIT.call_once(|| {

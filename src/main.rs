@@ -3,34 +3,11 @@ extern crate core;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
 
-mod btr;
-mod buf;
-mod data;
-mod dict;
-mod fil;
-mod fsp;
-mod fut;
-mod innodb;
-mod lock;
-mod log;
-mod mach;
-mod mtr;
-mod os;
-mod page;
-mod rem;
-mod row;
-mod srv;
-mod sync;
-mod tests;
-mod trx;
-mod ut;
-mod utils;
-
 /// Initialize the tracing logger.
 ///
 /// This function sets up the tracing subscriber with a default configuration.
 /// The log level can be controlled via the RUST_LOG environment variable.
-/// For example:
+/// For example,
 ///   - RUST_LOG=info cargo run
 ///   - RUST_LOG=debug cargo run
 ///   - RUST_LOG=trace cargo run

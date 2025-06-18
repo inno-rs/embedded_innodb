@@ -7,6 +7,7 @@
 /// # Examples
 ///
 /// ```
+/// use innodb::ut_2_power_up;
 /// assert_eq!(ut_2_power_up!(0), 1);     // Special case: 0 returns 1
 /// assert_eq!(ut_2_power_up!(1), 1);     // Special case: 1 returns 1
 /// assert_eq!(ut_2_power_up!(3), 4);     // 3 rounds up to 4 (2^2)
