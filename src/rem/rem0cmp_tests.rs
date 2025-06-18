@@ -188,7 +188,7 @@ mod tests {
         #[case] out: Ordering,
     ) {
         let dtuples = create_dtuples(1, fields1);
-        let dtuple = &dtuples[0].dtuple;
+        let dtuple = &dtuples[0];
 
         let owning_page = create_records(1, fields2);
         let user_records = get_user_records(owning_page.page);
@@ -236,7 +236,7 @@ mod tests {
         #[case] out: Ordering,
     ) {
         let dtuples = create_dtuples(1, fields1);
-        let dtuple = &dtuples[0].dtuple;
+        let dtuple = &dtuples[0];
 
         let owning_page = create_records(1, fields2);
         let user_records = get_user_records(owning_page.page);

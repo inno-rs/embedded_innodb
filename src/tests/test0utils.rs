@@ -17,26 +17,6 @@ use crate::page::page0page::Page;
 use crate::rem::rem0rec::Record;
 use crate::some_or_panic;
 
-/// A structure that owns both the data vectors and the DTuple that references them.
-///
-/// This ensures that the data referenced by the DTuple remains valid for the lifetime
-/// of the OwningDTuple instance.
-pub struct OwningDTuple {
-    /// The DTuple structure that references the data in field_vectors
-    pub dtuple: DTuple,
-}
-
-/// A structure that owns both the data vector and the DField that references it.
-///
-/// This ensures that the data referenced by the DField remains valid for the lifetime
-/// of the OwningDField instance.
-pub struct OwningDField {
-    /// Vector containing the raw field data
-    pub field_data_owner: Vec<u8>,
-    /// The DField structure that references the data in field_data_owner
-    pub field: DField,
-}
-
 /// A structure that owns both the page memory and the Page object that references it.
 ///
 /// This ensures that the memory referenced by the Page remains valid for the lifetime
@@ -46,6 +26,7 @@ pub struct OwningPage {
     pub page_mem: *mut u8,
     /// The Page structure that references the memory in page_mem
     pub page: Page,
+    /// BufBlock containing page, and bufpage.
     pub buf_block: BufBlock,
 }
 
@@ -105,13 +86,8 @@ pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
 
     let mut mtr = Mtr::new();
     let index = Index::new(PageId::dummy());
-    for owning_dtuple in dtuples {
-        page_cur.page_cur_tuple_insert(
-            &owning_dtuple.dtuple,
-            &index,
-            0,
-            &mut mtr,
-        );
+    for dtuple in dtuples {
+        page_cur.page_cur_tuple_insert(&dtuple, &index, 0, &mut mtr);
         page_cur.page_cur_move_to_next();
     }
 
@@ -160,23 +136,19 @@ pub fn create_raw_page() -> OwningPage {
 ///
 /// A vector of `OwningDTuple` instances, each containing a data tuple with
 /// fields of the specified types.
-pub fn create_dtuples(n: usize, fields: Vec<FieldType>) -> Vec<OwningDTuple> {
+pub fn create_dtuples(n: usize, fields: Vec<FieldType>) -> Vec<DTuple> {
     (0..n)
-        .map(|_| -> OwningDTuple {
-            let owning_fields: Vec<OwningDField> =
-                fields.iter().map(|f| create_dfield(f)).collect();
+        .map(|_| -> DTuple {
             let dfields: Vec<DField> =
-                owning_fields.iter().map(|of| of.field.clone()).collect();
+                fields.iter().map(|f| create_dfield(f)).collect();
 
-            OwningDTuple {
-                dtuple: DTupleBuilder::default()
-                    .info_bits(0)
-                    .n_fields(dfields.len())
-                    .n_fields_cmp(dfields.len())
-                    .fields(dfields)
-                    .build()
-                    .unwrap(),
-            }
+            DTupleBuilder::default()
+                .info_bits(0)
+                .n_fields(dfields.len())
+                .n_fields_cmp(dfields.len())
+                .fields(dfields)
+                .build()
+                .unwrap()
         })
         .collect()
 }
@@ -194,7 +166,7 @@ pub fn create_dtuples(n: usize, fields: Vec<FieldType>) -> Vec<OwningDTuple> {
 /// # Returns
 ///
 /// An `OwningDField` instance containing the newly created field with test data.
-pub fn create_dfield(field_type: &FieldType) -> OwningDField {
+pub fn create_dfield(field_type: &FieldType) -> DField {
     match field_type {
         FieldType::Int(i) => {
             // INT (signed 32-bit), value = 0x12345678 = 305419896
@@ -206,29 +178,23 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             let mut typ = DTYPE_INT.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
-            OwningDField {
-                field_data_owner: vec![],
-                field: DFieldBuilder::default()
-                    .data(data)
-                    .len(len)
-                    .dtype(typ)
-                    .build()
-                    .unwrap(),
-            }
+            DFieldBuilder::default()
+                .data(data)
+                .len(len)
+                .dtype(typ)
+                .build()
+                .unwrap()
         }
         FieldType::IntNull(ni) => {
             let data = ni.map(|a| a.to_le_bytes().to_vec()).unwrap_or(vec![]);
             let len = data.len();
             let typ = DTYPE_INT.clone();
-            OwningDField {
-                field_data_owner: vec![],
-                field: DFieldBuilder::default()
-                    .data(data)
-                    .len(len)
-                    .dtype(typ)
-                    .build()
-                    .unwrap(),
-            }
+            DFieldBuilder::default()
+                .data(data)
+                .len(len)
+                .dtype(typ)
+                .build()
+                .unwrap()
         }
         FieldType::UnsignedInt(ui) => {
             let data = ui
@@ -239,15 +205,12 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             let mut typ = DTYPE_INT_UNSIGNED.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
-            OwningDField {
-                field_data_owner: vec![],
-                field: DFieldBuilder::default()
-                    .data(data)
-                    .len(len)
-                    .dtype(typ)
-                    .build()
-                    .unwrap(),
-            }
+            DFieldBuilder::default()
+                .data(data)
+                .len(len)
+                .dtype(typ)
+                .build()
+                .unwrap()
         }
         FieldType::Binary(bin) => {
             // BINARY(5), value = 01 02 03 04 05
@@ -258,29 +221,23 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             let mut typ = DTYPE_VARCHAR.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
-            OwningDField {
-                field_data_owner: vec![],
-                field: DFieldBuilder::default()
-                    .data(data)
-                    .len(len)
-                    .dtype(typ)
-                    .build()
-                    .unwrap(),
-            }
+            DFieldBuilder::default()
+                .data(data)
+                .len(len)
+                .dtype(typ)
+                .build()
+                .unwrap()
         }
         FieldType::StringNull => {
             let len = UNIV_SQL_NULL;
             let typ = DTYPE_VARCHAR.clone();
 
-            OwningDField {
-                field_data_owner: vec![],
-                field: DFieldBuilder::default()
-                    .data(vec![])
-                    .len(len)
-                    .dtype(typ)
-                    .build()
-                    .unwrap(),
-            }
+            DFieldBuilder::default()
+                .data(vec![])
+                .len(len)
+                .dtype(typ)
+                .build()
+                .unwrap()
         }
         FieldType::String(s) => {
             let data = s
@@ -293,15 +250,12 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             let mut typ = DTYPE_VARCHAR.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
-            OwningDField {
-                field_data_owner: vec![],
-                field: DFieldBuilder::default()
-                    .data(data)
-                    .len(len)
-                    .dtype(typ)
-                    .build()
-                    .unwrap(),
-            }
+            DFieldBuilder::default()
+                .data(data)
+                .len(len)
+                .dtype(typ)
+                .build()
+                .unwrap()
         }
         FieldType::Decimal(d) => {
             let data = d
@@ -313,15 +267,12 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             let mut typ = DTYPE_DECIMAL.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
-            OwningDField {
-                field_data_owner: vec![],
-                field: DFieldBuilder::default()
-                    .data(data)
-                    .len(len)
-                    .dtype(typ)
-                    .build()
-                    .unwrap(),
-            }
+            DFieldBuilder::default()
+                .data(data)
+                .len(len)
+                .dtype(typ)
+                .build()
+                .unwrap()
         }
         FieldType::Float(f) => {
             // FLOAT, value = 3.14f32 → 0x40490FDB (little-endian)
@@ -333,15 +284,12 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             let mut typ = DTYPE_FLOAT.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
-            OwningDField {
-                field_data_owner: vec![],
-                field: DFieldBuilder::default()
-                    .data(data)
-                    .len(len)
-                    .dtype(typ)
-                    .build()
-                    .unwrap(),
-            }
+            DFieldBuilder::default()
+                .data(data)
+                .len(len)
+                .dtype(typ)
+                .build()
+                .unwrap()
         }
         FieldType::Double(d) => {
             // DOUBLE, value = 3.14f64 → 0x40091EB851EB851F
@@ -353,15 +301,12 @@ pub fn create_dfield(field_type: &FieldType) -> OwningDField {
             let mut typ = DTYPE_DOUBLE.clone();
             typ.pr_type |= DATA_NOT_NULL;
 
-            OwningDField {
-                field_data_owner: vec![],
-                field: DFieldBuilder::default()
-                    .data(data)
-                    .len(len)
-                    .dtype(typ)
-                    .build()
-                    .unwrap(),
-            }
+            DFieldBuilder::default()
+                .data(data)
+                .len(len)
+                .dtype(typ)
+                .build()
+                .unwrap()
         }
     }
 }
