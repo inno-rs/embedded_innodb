@@ -13,7 +13,7 @@ pub(super) mod tests {
     use crate::fil::fil0fil::Fil;
     use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
     use crate::mtr::mtr0mtr::Mtr;
-    use crate::mtr::mtr0mtr::MtrState::MTR_ACTIVE;
+    use crate::mtr::mtr0mtr::MtrState::MtrActive;
     use crate::os::os0io::OsIo;
     use crate::os::os0runtime::create_runtime;
     use crate::sync::sync0rw::ReadWriteLatch;
@@ -78,7 +78,7 @@ pub(super) mod tests {
     fn test_create_space(buf_pool_fixture: BufPoolFixture) {
         let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
         let mut mtr = Mtr::new();
-        mtr.set_mtr_state(MTR_ACTIVE);
+        mtr.set_mtr_state(MtrActive);
 
         // Try creating when there are no pages in the pool.
         let result = buf_pool.create(0, 0, &mut mtr);
@@ -107,7 +107,7 @@ pub(super) mod tests {
     fn test_buf_pool_get_page(buf_pool_fixture: BufPoolFixture) {
         let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
         let mut mtr = Mtr::new();
-        mtr.set_mtr_state(MTR_ACTIVE);
+        mtr.set_mtr_state(MtrActive);
 
         // Initialize a chunk to have some pages.
         let _result = buf_pool.chunk_init(10 * UNIV_PAGE_SIZE);
@@ -130,7 +130,7 @@ pub(super) mod tests {
     fn test_buf_pool_get_multiple(buf_pool_fixture: BufPoolFixture) {
         let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
         let mut mtr = Mtr::new();
-        mtr.set_mtr_state(MTR_ACTIVE);
+        mtr.set_mtr_state(MtrActive);
 
         // Add some pages, and then retry creating.
         let _result = buf_pool.chunk_init(10 * UNIV_PAGE_SIZE);

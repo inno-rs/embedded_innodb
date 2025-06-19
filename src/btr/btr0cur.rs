@@ -3,21 +3,22 @@ use std::ptr::null_mut;
 use std::sync::RwLock;
 use std::sync::{Arc, Mutex};
 
-use parking_lot::RwLock as ParkingLotRwLock;
-
 use crate::btr::btr0btr::BTree;
+use crate::btr::btr0types::BTR_ESTIMATE;
 use crate::buf::buf0buf::BufPool;
-use crate::buf::buf0types::BufBlock;
+use crate::buf::buf0types::{BufBlock, Request};
 use crate::data::data0types::DTuple;
 use crate::dict::dict0types::Index;
 use crate::fsp::fsp0fsp::Fsp;
-use crate::innodb::innodb0types::DbErr;
 use crate::innodb::innodb0types::DbErr::{DbFail, DbSuccess, DbTooBigRecord};
+use crate::innodb::innodb0types::{DbErr, PageId};
 use crate::lock::lock0lock::LockSys;
 use crate::mtr::mtr0mtr::Mtr;
-use crate::page::page0cur::PageCur;
+use crate::page::page0cur::{MatchCache, PageCur};
 use crate::page::page0page::Page;
 use crate::rem::rem0rec::Record;
+use crate::some_or_panic;
+use crate::sync::sync0rw::ReadWriteLatch;
 use crate::ut::ut0dbg::ut_ad;
 
 /// Flag indicating that undo logging should be skipped for this operation.
@@ -46,8 +47,10 @@ pub struct Path {
 /// within a B-tree index structure. It maintains the current position within the
 /// B-tree and provides operations relative to that position.
 pub struct BTreeCursor<'a> {
+    /// Height of the tree.
+    tree_height: usize,
     /// The index being accessed by this cursor.
-    index: &'a Index,
+    index: Arc<Mutex<Index>>,
     /// File segment manager for handling space allocation.
     fsp: Arc<Mutex<Fsp>>,
     /// Lock management system.
@@ -57,7 +60,7 @@ pub struct BTreeCursor<'a> {
     /// Current page cursor position.
     page_cur: Option<PageCur>,
     /// The current buffer block being accessed.
-    buf_block: Option<Arc<ParkingLotRwLock<BufBlock>>>,
+    buf_block: Option<Arc<RwLock<BufBlock>>>,
     /// Reference to the BufferPool.
     buf_pool: Arc<RwLock<BufPool>>,
 }
@@ -73,13 +76,14 @@ impl<'a> BTreeCursor<'a> {
     /// # Returns
     /// A new BTreeCursor instance initialized with the provided references
     pub fn new(
-        index: &'a Index,
+        index: Arc<Mutex<Index>>,
         fsp: Arc<Mutex<Fsp>>,
         lock_sys: Arc<Mutex<LockSys>>,
         btree: &'a BTree,
         buf_pool: Arc<RwLock<BufPool>>,
     ) -> Self {
         BTreeCursor {
+            tree_height: 0,
             index,
             fsp,
             lock_sys,
@@ -144,7 +148,7 @@ impl<'a> BTreeCursor<'a> {
             }
         }
 
-        let is_clustered = self.index.is_clustered();
+        let is_clustered = self.index.lock().unwrap().is_clustered();
 
         // If there have been many consecutive inserts on the page, and we are on the leaf, check if we have to split the page to reserve enough free space for future updates of records.
 
@@ -165,15 +169,20 @@ impl<'a> BTreeCursor<'a> {
                 ut_ad!(false, "page cursor should not be None");
             }
             Some(cur) => {
-                insert_rec =
-                    cur.page_cur_tuple_insert(dtuple, self.index, n_ext, mtr);
+                insert_rec = cur.page_cur_tuple_insert(
+                    dtuple,
+                    self.index.lock().unwrap().deref(),
+                    n_ext,
+                    mtr,
+                );
             }
         }
 
         let reorg = false;
 
         if insert_rec.is_none() && !reorg {
-            let success = self.page_reorganize(self.index, mtr);
+            let success =
+                self.page_reorganize(self.index.lock().unwrap().deref(), mtr);
         }
 
         Ok(5)
@@ -261,12 +270,12 @@ impl<'a> BTreeCursor<'a> {
         {
             let lock_sys = self.lock_sys.lock().unwrap();
             let buf_block = self.buf_block.as_ref().unwrap();
-            let buf_block_ref = buf_block.read();
+            let buf_block_ref = buf_block.read().unwrap();
             let err = lock_sys.rec_insert_check_and_lock(
                 flags,
                 rec,
                 buf_block_ref.deref(),
-                self.index,
+                self.index.lock().unwrap().deref(),
                 mtr,
             );
 
@@ -312,14 +321,86 @@ impl<'a> BTreeCursor<'a> {
     /// * `latch_mode` - Latching strategy to use during traversal
     /// * `mtr` - Mini-transaction for logging the operation
     pub fn search_to_nth_level(
-        &self,
+        &mut self,
         paths: Vec<Path>,
-        index: &Index,
         level: usize,
         dtuple: &DTuple,
         mode: usize,
         latch_mode: usize,
         mtr: &mut Mtr,
     ) {
+        // Verify that the search tuple is valid for this index
+        ut_ad!(self.index.lock().unwrap().check_search_tuple(dtuple));
+        ut_ad!(dtuple.dtuple_type_checked());
+
+        // Track the height of the tree as we traverse it
+        let mut height: Option<usize> = None;
+        let latch = ReadWriteLatch::SLatch;
+
+        // Check if we're in estimation mode
+        let estimate = latch_mode & BTR_ESTIMATE;
+
+        let page_cursor = self.page_cur.as_mut().unwrap();
+
+        // Get the root page ID from the index
+        let PageId { space_id, page_no } = {
+            let index = self.index.lock().unwrap();
+            index.get_page_id()
+        };
+
+        // Initialize a cache for matching records
+        let mut match_cache: MatchCache = Default::default();
+
+        // Search loop - continues until we find the target position
+        let found = false;
+        while found == false {
+            // Get the buffer block for the current page
+            let block = self.buf_pool.write().unwrap().get(Request {
+                rw_latch: ReadWriteLatch::SLatch,
+                page_id: PageId { space_id, page_no },
+                mode,
+                mtr,
+            });
+
+            if block.is_none() {
+                // Retry getting the block again if the request failed
+                continue;
+            }
+
+            let block = some_or_panic!(block);
+            let page = block.read().unwrap().get_page();
+
+            // Verify that the page belongs to the correct index
+            ut_ad!(
+                BTree::page_get_index_id(&page)
+                    == self.index.lock().unwrap().get_index_id()
+            );
+
+            if height.is_none() {
+                // We are in the root node, initialize the tree height
+                let level = BTree::page_get_level(&page);
+                height.replace(level);
+                self.tree_height = level + 1;
+            }
+
+            let height_val = some_or_panic!(height);
+            if height_val == 0 {
+                // We have reached the leaf level
+                if latch == ReadWriteLatch::NoLatch {
+                    // Unlatch the page, and then return.
+                }
+            }
+
+            // Create a page cursor for the current page
+            let mut page_cur =
+                PageCur::new(self.index.clone(), None, block, page);
+
+            // Search for the position of the data tuple in the current page
+            page_cur.page_cur_search_with_match(
+                dtuple,
+                mode,
+                &mut match_cache,
+            );
+        }
     }
 }

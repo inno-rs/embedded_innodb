@@ -29,6 +29,8 @@ pub enum IndexType {
 }
 
 pub struct Index {
+    /// Index id.
+    id: usize,
     /// Type of index,
     index_type: IndexType,
     /// Number of user defined columns in the index. In the internal representation, we have more.
@@ -47,6 +49,7 @@ pub struct Index {
 impl Index {
     pub fn new(page_id: PageId) -> Self {
         Self {
+            id: 0,
             index_type: IndexType::DictClustered,
             n_user_defined_cols: 0,
             n_uniq: 0,
@@ -73,6 +76,14 @@ impl Index {
         } else {
             panic!("Column index out of range");
         }
+    }
+
+    /// Returns the unique identifier of this index.
+    ///
+    /// # Returns
+    /// The index ID as a usize
+    pub fn get_index_id(&self) -> usize {
+        self.id
     }
 
     /// Retrieves the page number of the root page of this index.
@@ -222,6 +233,24 @@ impl Index {
         ut_ad!(dtuple.dtuple_type_checked());
 
         dtuple
+    }
+
+    /// Verifies that a data tuple is valid for searching in this index.
+    ///
+    /// This function checks that the number of fields in the tuple that will be
+    /// compared during a search does not exceed the number of unique fields in the index.
+    ///
+    /// # Arguments
+    /// * `dtuple` - The data tuple to check
+    ///
+    /// # Returns
+    /// `true` if the tuple is valid for searching, asserts in debug mode if invalid
+    pub fn check_search_tuple(&self, dtuple: &DTuple) -> bool {
+        ut_ad!(
+            dtuple.dtuple_get_n_fields_cmp() <= self.get_n_unique_in_tree()
+        );
+
+        true
     }
 }
 

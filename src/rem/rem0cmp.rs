@@ -44,7 +44,7 @@ fn cmp_whole_field(
         }
 
         DATA_DECIMAL => {
-            ut_panic!("Handle decimal comparison");
+            ut_panic!("Handle decimal comparison")
         }
 
         _ => {

@@ -474,7 +474,6 @@ impl BufPage {
 /// BufBlock represents a buffer block in the buffer pool, which contains both
 /// the metadata about a page (BufPage) and a pointer to the actual page data in memory.
 /// It also includes a lock for concurrency control.
-#[derive(Clone)]
 pub struct BufBlock {
     /// Counter that tracks modifications to this buffer block.
     /// Incremented each time the block is removed from the hash table.

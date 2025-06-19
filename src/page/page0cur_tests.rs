@@ -2,8 +2,9 @@
 mod tests {
     use std::alloc::{Layout, alloc_zeroed};
     use std::cell::RefCell;
+    use std::ops::Deref;
     use std::rc::Rc;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, RwLock};
 
     use rstest::{fixture, rstest};
     use tracing::info;
@@ -42,15 +43,20 @@ mod tests {
             let frame = get_raw_block();
             let buf_page =
                 RefCell::new(Rc::new(RefCell::new(BufPage::dummy())));
-            let buf_block = BufBlock::new(buf_page, frame);
+            let buf_block =
+                Arc::new(RwLock::new(BufBlock::new(buf_page, frame)));
             let index = Index::new(PageId::dummy());
-            let page = Page::page_create(&index, &buf_block, None);
+            let page = Page::page_create(
+                &index,
+                buf_block.write().unwrap().deref(),
+                None,
+            );
             let infimum_rec = page.page_get_infimum_rec();
             PageCurFixture {
                 ptr: frame,
                 page_cur: PageCur::new(
-                    Arc::new(Index::new(PageId::dummy())),
-                    infimum_rec,
+                    Arc::new(Mutex::new(Index::new(PageId::dummy()))),
+                    Some(infimum_rec),
                     buf_block,
                     page,
                 ),

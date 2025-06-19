@@ -10,7 +10,7 @@ mod tests {
         let mut mtr = Mtr::new();
         assert!(!mtr.is_active());
         mtr.start();
-        assert_eq!(mtr.get_mtr_state(), MtrState::MTR_ACTIVE);
+        assert_eq!(mtr.get_mtr_state(), MtrState::MtrActive);
         assert!(mtr.is_active());
     }
 
@@ -77,6 +77,6 @@ mod tests {
         mtr.start();
         mtr.memo_push(MemoSlot::Other(OtherResource { id: 3, flags: 0 }));
         mtr.commit();
-        assert_eq!(mtr.get_mtr_state(), MtrState::MTR_UNDEFINED);
+        assert_eq!(mtr.get_mtr_state(), MtrState::MtrUndefined);
     }
 }

@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 
 use tracing::info;
 
@@ -62,17 +62,28 @@ pub struct MatchCache {
     pub ilow_matched_bytes: usize,
 }
 
+impl Default for MatchCache {
+    fn default() -> Self {
+        MatchCache {
+            iup_matched_fields: 0,
+            iup_matched_bytes: 0,
+            ilow_matched_fields: 0,
+            ilow_matched_bytes: 0,
+        }
+    }
+}
+
 /// A cursor structure for navigating through records in a page.
 ///
 /// This cursor is used to traverse, insert, and delete records on a page.
 /// It maintains a reference to the current record, the page, and the index.
 pub struct PageCur {
     /// The index to which the cursor belongs
-    index: Arc<Index>,
+    index: Arc<Mutex<Index>>,
     /// The record to which the cursor points
     rec: Record,
     /// The buffer block containing the page
-    block: BufBlock,
+    block: Arc<RwLock<BufBlock>>,
     /// The page on which the cursor operates
     page: Page,
 }
@@ -90,11 +101,12 @@ impl PageCur {
     ///
     /// * A new `PageCur` instance.
     pub fn new(
-        index: Arc<Index>,
-        rec: Record,
-        block: BufBlock,
+        index: Arc<Mutex<Index>>,
+        rec: Option<Record>,
+        block: Arc<RwLock<BufBlock>>,
         page: Page,
     ) -> Self {
+        let rec = rec.unwrap_or(page.page_get_infimum_rec());
         PageCur { index, rec, block, page }
     }
 
@@ -112,7 +124,7 @@ impl PageCur {
     /// # Returns
     ///
     /// * The buffer block associated with the cursor.
-    fn page_cur_get_block(&self) -> BufBlock {
+    fn page_cur_get_block(&self) -> Arc<RwLock<BufBlock>> {
         self.block.clone()
     }
 
@@ -390,7 +402,6 @@ impl PageCur {
     /// Search the right position for the cursor.
     pub fn page_cur_search_with_match(
         &mut self,
-        index: &Index,
         dtuple: &DTuple,
         mode: usize,
         match_cache: &mut MatchCache,

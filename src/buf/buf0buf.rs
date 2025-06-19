@@ -120,7 +120,7 @@ impl BufPool {
     /// * `Some(&BufBlock)` - A reference to the buffer block containing the requested page
     /// * `None` - If the page is not in the pool and cannot be loaded based on request mode
     pub fn get(&mut self, request: Request) -> Option<Arc<RwLock<BufBlock>>> {
-        ut_ad!(request.mtr.get_mtr_state() == MtrState::MTR_ACTIVE);
+        ut_ad!(request.mtr.get_mtr_state() == MtrState::MtrActive);
         ut_ad!(
             request.rw_latch == ReadWriteLatch::NoLatch
                 || request.rw_latch == ReadWriteLatch::SLatch
@@ -508,7 +508,7 @@ impl BufPool {
         page_no: PageNo,
         mtr: &mut Mtr,
     ) -> Option<Arc<RwLock<BufBlock>>> {
-        ut_ad!(mtr.get_mtr_state() == MtrState::MTR_ACTIVE);
+        ut_ad!(mtr.get_mtr_state() == MtrState::MtrActive);
 
         let free_block = self.get_free_block();
         if let Some(block) = free_block {
