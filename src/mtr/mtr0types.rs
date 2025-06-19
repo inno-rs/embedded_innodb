@@ -54,7 +54,7 @@ pub enum MtrLogMode {
     MTR_LOG_SHORT_INSERTS = 3,
 }
 
-#[derive(Display, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MlogType {
     /// Unknown log type.
     MLOG_UNKNOWN = 0,
@@ -101,6 +101,9 @@ pub enum MlogType {
     MLOG_WRITE_STRING = 25,
 
     MLOG_FULL_PAGE = 26,
+
+    /** Biggest value (used in assertions) */
+    MLOG_BIGGEST_TYPE = 47,
 }
 
 #[derive(Display, Clone, Eq, PartialEq, Debug)]

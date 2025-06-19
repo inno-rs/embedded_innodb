@@ -118,6 +118,25 @@ pub fn mach_write_compressed(buf: &mut [u8], v: u32) -> usize {
     5
 }
 
+/// Compresses and writes a 64-bit integer into `buf`.
+///
+/// First writes the upper 32 bits (`v >> 32`) as a compressed ULINT
+/// (1–5 bytes), then writes the lower 32 bits (`v as u32`) in 4 bytes LE.
+///
+/// Returns the total number of bytes written (compressed high part + 4).
+pub fn mach_uint64_write_compressed(buf: &mut [u8], v: u64) -> usize {
+    // 1) high 32 bits → compressed ULINT
+    let high = (v >> 32) as u32;
+    let n_high = mach_write_compressed(buf, high);
+
+    // 2) low 32 bits → 4 bytes little-endian
+    let low_bytes = (v as u32).to_le_bytes();
+    buf[n_high..n_high + 4].copy_from_slice(&low_bytes);
+
+    // total bytes = compressed_high + 4
+    n_high + 4
+}
+
 /// Read 4 bytes from the buffer.
 ///
 /// # Arguments

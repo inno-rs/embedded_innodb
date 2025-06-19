@@ -181,7 +181,7 @@ impl Page {
     /// * The tablespace identifier as a `SpaceId`.
     pub fn page_get_space_id(&self) -> SpaceId {
         unsafe {
-            let ptr = self.ptr.add(FIL_PAGE_SPACE_ID) as *const u16;
+            let ptr = self.ptr.add(FIL_PAGE_SPACE_ID) as *const u32;
             ptr.read_unaligned() as SpaceId
         }
     }
@@ -206,8 +206,8 @@ impl Page {
     /// * `()`: This function does not return a value.
     pub fn page_set_space_id(&self, space_id: SpaceId) {
         unsafe {
-            let ptr = self.ptr.add(FIL_PAGE_SPACE_ID) as *mut u16;
-            ptr.write_unaligned(space_id as u16);
+            let ptr = self.ptr.add(FIL_PAGE_SPACE_ID) as *mut u32;
+            ptr.write_unaligned(space_id as u32);
         }
     }
 
@@ -218,8 +218,18 @@ impl Page {
     /// * The file page offset as a `usize`.
     pub fn page_get_fil_offset(&self) -> usize {
         unsafe {
-            let ptr = self.ptr.add(FIL_PAGE_OFFSET) as *const u16;
+            let ptr = self.ptr.add(FIL_PAGE_OFFSET) as *const u32;
             ptr.read_unaligned() as usize
+        }
+    }
+
+    /// Write a new 4-byte page-offset field (little-endian).
+    pub fn page_set_fil_offset(&mut self, new_offset: usize) {
+        let v: u32 = new_offset as u32;
+        let le = v.to_le_bytes();
+        unsafe {
+            let dst = self.ptr.add(FIL_PAGE_OFFSET);
+            dst.copy_from_nonoverlapping(le.as_ptr(), 4);
         }
     }
 
@@ -236,6 +246,20 @@ impl Page {
         unsafe {
             let array_ptr = self.ptr as *mut [u8; UNIV_PAGE_SIZE];
             PageFrame(&mut *array_ptr)
+        }
+    }
+
+    /// Wraps a mutable page‐sized buffer as a Page.
+    /// NOTE: Currently it is only used for unit tests.
+    pub fn from_buffer(buf: &mut [u8]) -> Self {
+        assert_eq!(
+            buf.len(),
+            UNIV_PAGE_SIZE,
+            "Page::from_buffer requires exactly {} bytes",
+            UNIV_PAGE_SIZE
+        );
+        Page {
+            ptr: buf.as_mut_ptr(),
         }
     }
 

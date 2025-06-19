@@ -16,6 +16,7 @@ pub struct Mtr {
     memo: Vec<MemoSlot>,
     log_buffer: MLog,
     savepoints: Vec<Savepoint>,
+    pub(crate) dblwr_create_in_progress: bool,
     dblwr_create_in_progress: bool,
     magic_n: u32,
 }
