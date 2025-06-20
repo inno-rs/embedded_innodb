@@ -4,12 +4,12 @@ mod tests {
 
     use tracing::info;
 
-    use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
-    use crate::page::page0page::Page;
-    use crate::rem::rem0rec::*;
-    use crate::some_or_panic;
-    use crate::tests::test0utils::{
-        FieldType, create_records, get_user_records,
+    use crate::{
+        innodb::innodb0types::UNIV_PAGE_SIZE,
+        page::page0page::Page,
+        rem::rem0rec::*,
+        some_or_panic,
+        tests::test0utils::{FieldType, create_records, get_user_records},
     };
 
     fn get_new_rec() -> (Record, Layout, *mut u8) {

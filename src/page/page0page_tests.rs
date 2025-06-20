@@ -1,20 +1,24 @@
 #[cfg(test)]
 mod tests {
-    use std::alloc::{Layout, alloc_zeroed};
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    use std::{
+        alloc::{Layout, alloc_zeroed},
+        cell::RefCell,
+        rc::Rc,
+    };
 
     use rstest::{fixture, rstest};
     use tracing::info;
 
     use super::super::page0page::Page;
-    use crate::buf::buf0types::{BufBlock, BufPage, Frame};
-    use crate::dict::dict0types::Index;
-    use crate::innodb::innodb0types::{PageFrame, PageId, UNIV_PAGE_SIZE};
-    use crate::mtr::mtr0mtr::Mtr;
-    use crate::page::page0page::*;
-    use crate::rem::rem0rec::{Record, RecordFieldData};
-    use crate::tests::test0utils::{FieldType, create_records};
+    use crate::{
+        buf::buf0types::{BufBlock, BufPage, Frame},
+        dict::dict0types::Index,
+        innodb::innodb0types::{PageFrame, PageId, UNIV_PAGE_SIZE},
+        mtr::mtr0mtr::Mtr,
+        page::page0page::*,
+        rem::rem0rec::{Record, RecordFieldData},
+        tests::test0utils::{FieldType, create_records},
+    };
 
     struct PageFixture {
         index: Index,
@@ -102,7 +106,7 @@ mod tests {
         );
         assert_eq!(page.page_header_get_field(PAGE_N_DIRECTION), 0);
         assert_eq!(page.page_header_get_field(PAGE_N_RECS), 0);
-        assert_eq!(page.get_max_trx_id(), 0);
+        assert_eq!(page.page_get_max_trx_id(), 0);
 
         // Check the slots in the page header
         assert_eq!(
@@ -170,9 +174,9 @@ mod tests {
         let page = &page_fixture.page;
         let max_trx_id: crate::utils::TxnId = 2352325;
 
-        page.set_max_trx_id(max_trx_id, None);
+        page.page_set_max_trx_id(max_trx_id, None);
 
-        let retrieved_max_trx_id = page.get_max_trx_id();
+        let retrieved_max_trx_id = page.page_get_max_trx_id();
         assert_eq!(retrieved_max_trx_id, max_trx_id);
     }
 

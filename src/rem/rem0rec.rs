@@ -2,13 +2,15 @@ use std::{ptr, slice};
 
 use tracing::{error, info};
 
-use crate::data::data0types::DTuple;
-use crate::dict::dict0types::Index;
-use crate::innodb::innodb0types::{UNIV_PAGE_SIZE, UNIV_SQL_NULL};
-use crate::page::page0page::Page;
-use crate::rem::rem0types::REC_MAX_N_FIELDS;
-use crate::ut::ut0dbg::ut_ad;
-use crate::ut_panic;
+use crate::{
+    data::data0types::DTuple,
+    dict::dict0types::Index,
+    innodb::innodb0types::{UNIV_PAGE_SIZE, UNIV_SQL_NULL},
+    page::page0page::Page,
+    rem::rem0types::REC_MAX_N_FIELDS,
+    ut::{ut0dbg::ut_ad, ut0math::ut_align_down},
+    ut_panic,
+};
 
 /// Info bit denoting the predefined minimum record:
 /// this bit is set if and only if the record
@@ -259,9 +261,8 @@ impl Record {
     ///
     /// *const u8
     pub fn page_align(&self) -> *mut u8 {
-        let align = UNIV_PAGE_SIZE;
         let addr = self.ptr as usize;
-        let aligned_addr = addr & !(align - 1); // Align down by masking lower bits
+        let aligned_addr = ut_align_down(addr, UNIV_PAGE_SIZE); // Align down by masking lower bits
         aligned_addr as *mut u8
     }
 
@@ -306,7 +307,7 @@ impl Record {
 
             match rec.rec_get_next() {
                 Some(next_rec) => rec = next_rec,
-                None => panic!("rec_get_prev: no next record"),
+                None => ut_panic!("rec_get_prev: no next record"),
             }
         }
 

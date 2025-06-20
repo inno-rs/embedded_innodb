@@ -1,23 +1,31 @@
-use std::cmp::Ordering;
-use std::sync::{Arc, Mutex, RwLock};
+use std::{
+    cmp::Ordering,
+    sync::{Arc, Mutex, RwLock},
+};
 
 use tracing::info;
 
-use crate::buf::buf0types::BufBlock;
-use crate::data::data0types::DTuple;
-use crate::dict::dict0types::Index;
-use crate::innodb::innodb0types::IbSearchMode::{
-    IbCurG, IbCurGe, IbCurL, IbCurLe, IbCurrUnSupp,
+use crate::{
+    buf::buf0types::BufBlock,
+    data::data0types::DTuple,
+    dict::dict0types::Index,
+    innodb::innodb0types::{
+        IbSearchMode::{IbCurG, IbCurGe, IbCurL, IbCurLe, IbCurrUnSupp},
+        PageId, UNIV_PAGE_SIZE,
+    },
+    mtr::mtr0mtr::Mtr,
+    page::page0page::{
+        PAGE_DIR_SLOT_MAX_N_OWNED, PAGE_DIR_SLOT_MIN_N_OWNED, PAGE_N_RECS,
+        Page,
+    },
+    rem::{
+        rem0cmp::cmp_dtuple_rec_with_match,
+        rem0rec::{OrphanRecord, Record},
+    },
+    some_or_panic,
+    ut::ut0dbg::ut_ad,
+    ut_panic,
 };
-use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
-use crate::mtr::mtr0mtr::Mtr;
-use crate::page::page0page::{
-    PAGE_DIR_SLOT_MAX_N_OWNED, PAGE_DIR_SLOT_MIN_N_OWNED, PAGE_N_RECS, Page,
-};
-use crate::rem::rem0cmp::cmp_dtuple_rec_with_match;
-use crate::rem::rem0rec::{OrphanRecord, Record};
-use crate::ut::ut0dbg::ut_ad;
-use crate::{some_or_panic, ut_panic};
 
 /// Search modes for positioning a page cursor.
 ///

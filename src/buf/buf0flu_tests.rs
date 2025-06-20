@@ -1,22 +1,27 @@
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::sync::{Arc, Mutex, RwLock};
+    use std::{
+        cell::RefCell,
+        sync::{Arc, Mutex, RwLock},
+    };
 
     use rstest::{fixture, rstest};
 
-    use crate::buf::buf0buf::BufPool;
-    use crate::buf::buf0dblwr::{
-        DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer, WriteBuffer,
+    use crate::{
+        buf::{
+            buf0buf::BufPool,
+            buf0dblwr::{
+                DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer, WriteBuffer,
+            },
+            buf0flu::BufFlush,
+            buf0lru::BufLRU,
+            buf0rea::BufRea,
+        },
+        fil::fil0fil::Fil,
+        innodb::innodb0types::UNIV_PAGE_SIZE,
+        log::log0log::Log,
+        os::{os0io::OsIo, os0runtime::create_runtime},
     };
-    use crate::buf::buf0flu::BufFlush;
-    use crate::buf::buf0lru::BufLRU;
-    use crate::buf::buf0rea::BufRea;
-    use crate::fil::fil0fil::Fil;
-    use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
-    use crate::log::log0log::Log;
-    use crate::os::os0io::OsIo;
-    use crate::os::os0runtime::create_runtime;
 
     struct BufFluFixture {
         buf_flu: BufFlush,

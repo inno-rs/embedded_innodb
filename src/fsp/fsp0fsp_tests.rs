@@ -1,12 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use crate::fil::fil0types::{
-        FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET,
-        FIL_PAGE_SPACE_ID,
+    use crate::{
+        fil::fil0types::{
+            FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET,
+            FIL_PAGE_SPACE_ID,
+        },
+        fsp::fsp0fsp::*,
+        fut::fut0lst::*,
+        innodb::innodb0types::{RawPage, UNIV_PAGE_SIZE},
     };
-    use crate::fsp::fsp0fsp::*;
-    use crate::fut::fut0lst::*;
-    use crate::innodb::innodb0types::{RawPage, UNIV_PAGE_SIZE};
 
     #[test]
     fn test_init_file_page_low_zero_and_headers() {

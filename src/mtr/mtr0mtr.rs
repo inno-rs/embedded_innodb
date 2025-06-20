@@ -1,11 +1,13 @@
-use crate::buf::buf0types::BufBlock;
-pub(crate) use crate::mtr::mtr0log::MLog;
-use crate::mtr::mtr0types::OtherResource;
-pub(crate) use crate::mtr::mtr0types::{
-    LatchHandle, LockMode, MemoSlot, MtrLogMode, MtrState, Savepoint,
+pub(crate) use crate::mtr::{
+    mtr0log::MLog,
+    mtr0types::{
+        LatchHandle, LockMode, MemoSlot, MtrLogMode, MtrState, Savepoint,
+    },
 };
-use crate::ut::ut0dbg::ut_ad;
-use crate::ut_panic;
+use crate::{
+    buf::buf0types::BufBlock, mtr::mtr0types::OtherResource,
+    ut::ut0dbg::ut_ad, ut_panic,
+};
 
 pub const MTR_MAGIC_N: u32 = 54551;
 pub struct Mtr {
@@ -17,7 +19,6 @@ pub struct Mtr {
     log_buffer: MLog,
     savepoints: Vec<Savepoint>,
     pub(crate) dblwr_create_in_progress: bool,
-    dblwr_create_in_progress: bool,
     magic_n: u32,
 }
 

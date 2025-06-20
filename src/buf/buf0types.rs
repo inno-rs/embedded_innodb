@@ -1,23 +1,24 @@
-use std::cell::RefCell;
-use std::cmp::PartialEq;
-use std::rc::Rc;
-use std::sync::RwLock;
-use std::sync::{Arc, Weak};
+use std::{
+    cell::RefCell,
+    cmp::PartialEq,
+    rc::Rc,
+    sync::{Arc, RwLock, Weak},
+};
 
 use intrusive_collections::{LinkedListLink, UnsafeRef, intrusive_adapter};
-use parking_lot::RwLock as ParkingLotRwLock;
-use parking_lot::lock_api::RawRwLock;
+use parking_lot::{RwLock as ParkingLotRwLock, lock_api::RawRwLock};
 use strum_macros::Display;
 
-use crate::buf::buf0flu::BufFlushType;
-use crate::buf::buf0types::BufIoFix::BufIoNone;
-use crate::innodb::innodb0types::{
-    Lsn, PageFrame, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
+use crate::{
+    buf::{buf0flu::BufFlushType, buf0types::BufIoFix::BufIoNone},
+    innodb::innodb0types::{
+        Lsn, PageFrame, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
+    },
+    mtr::mtr0mtr::Mtr,
+    page::page0page::Page,
+    sync::sync0rw::ReadWriteLatch,
+    ut::ut0dbg::ut_ad,
 };
-use crate::mtr::mtr0mtr::Mtr;
-use crate::page::page0page::Page;
-use crate::sync::sync0rw::ReadWriteLatch;
-use crate::ut::ut0dbg::ut_ad;
 /// Magic number used to identify buffer pool pages that do not have a checksum.
 pub const BUF_NO_CHECKSUM_MAGIC: usize = 0xDEADBEEF;
 

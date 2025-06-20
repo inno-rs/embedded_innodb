@@ -2,11 +2,12 @@ use std::sync::{Arc, Mutex};
 
 use derive_builder::Builder;
 
-use crate::fil::fil0fil::Fil;
-use crate::fil::fil0types::FilType::FilLog;
-use crate::innodb::innodb0types::SpaceId;
-use crate::log::log0log::LOG_SPACE_FIRST_ID;
-use crate::ut::ut0dbg::ut_ad;
+use crate::{
+    fil::{fil0fil::Fil, fil0types::FilType::FilLog},
+    innodb::innodb0types::SpaceId,
+    log::log0log::LOG_SPACE_FIRST_ID,
+    ut::ut0dbg::ut_ad,
+};
 
 pub struct Config {
     /// Path to the data directory.

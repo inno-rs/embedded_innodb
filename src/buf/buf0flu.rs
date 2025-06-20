@@ -1,29 +1,39 @@
-use std::cell::RefCell;
-use std::cmp::PartialEq;
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::RefCell,
+    cmp::PartialEq,
+    sync::{Arc, Mutex},
+};
 
 use intrusive_collections::LinkedList;
 
-use crate::buf::buf0dblwr::DoubleWriteBuffer;
-use crate::buf::buf0flu::BufFlushType::{BufFlushList, BufFlushLru};
-use crate::buf::buf0types::{
-    BUF_NO_CHECKSUM_MAGIC, BufBlock, BufIoFix, BufPageState, FlushListAdapter,
+use crate::{
+    buf::{
+        buf0dblwr::DoubleWriteBuffer,
+        buf0flu::BufFlushType::{BufFlushList, BufFlushLru},
+        buf0types::{
+            BUF_NO_CHECKSUM_MAGIC, BufBlock, BufIoFix, BufPageState,
+            FlushListAdapter,
+        },
+    },
+    fil::{
+        fil0fil::Fil,
+        fil0types::{
+            FIL_PAGE_END_LSN_CHKSUM_RANGE, FIL_PAGE_LSN_RANGE,
+            FIL_PAGE_SPACE_OR_CHKSUM_RANGE,
+        },
+    },
+    fsp::fsp0types::SYS_TABLESPACE,
+    innodb::innodb0types::{
+        Lsn, PageFrame, PageId, RawPage, SpaceId, UNIV_PAGE_SIZE,
+    },
+    log::log0log::{Log, LogWaitMode},
+    os::os0file::IORequest,
+    page::page0page::Page,
+    some_or_panic,
+    trx::trx0sys::TRX_SYS_SPACE,
+    ut::ut0dbg::{ut_a, ut_ad},
+    ut_panic,
 };
-use crate::fil::fil0fil::Fil;
-use crate::fil::fil0types::{
-    FIL_PAGE_END_LSN_CHKSUM_RANGE, FIL_PAGE_LSN_RANGE,
-    FIL_PAGE_SPACE_OR_CHKSUM_RANGE,
-};
-use crate::fsp::fsp0types::SYS_TABLESPACE;
-use crate::innodb::innodb0types::{
-    Lsn, PageFrame, PageId, RawPage, SpaceId, UNIV_PAGE_SIZE,
-};
-use crate::log::log0log::{Log, LogWaitMode};
-use crate::os::os0file::IORequest;
-use crate::page::page0page::Page;
-use crate::trx::trx0sys::TRX_SYS_SPACE;
-use crate::ut::ut0dbg::{ut_a, ut_ad};
-use crate::{some_or_panic, ut_panic};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BufFlushType {

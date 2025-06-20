@@ -2,8 +2,10 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use intrusive_collections::{LinkedListLink, intrusive_adapter};
 
-use crate::dict::dict0types::{Index, Table};
-use crate::innodb::innodb0types::PageId;
+use crate::{
+    dict::dict0types::{Index, Table},
+    innodb::innodb0types::PageId,
+};
 
 /// Lock types
 pub type LockType = u16;

@@ -4,16 +4,17 @@ mod tests {
 
     use rstest::{fixture, rstest};
 
-    use crate::fil::fil0fil::Fil;
-    use crate::innodb::innodb0types::{
-        IB_FILE_BLOCK_SIZE, Lsn, UNIV_PAGE_SIZE,
+    use crate::{
+        fil::fil0fil::Fil,
+        innodb::innodb0types::{IB_FILE_BLOCK_SIZE, Lsn, UNIV_PAGE_SIZE},
+        log::{
+            log0log::Log,
+            log0types::{
+                LOG_BLOCK_HDR_SIZE, LOG_BLOCK_TRL_SIZE, LOG_START_LSN,
+            },
+        },
+        os::{os0io::OsIo, os0runtime::create_runtime},
     };
-    use crate::log::log0log::Log;
-    use crate::log::log0types::{
-        LOG_BLOCK_HDR_SIZE, LOG_BLOCK_TRL_SIZE, LOG_START_LSN,
-    };
-    use crate::os::os0io::OsIo;
-    use crate::os::os0runtime::create_runtime;
 
     #[fixture]
     fn log() -> Log {

@@ -1,25 +1,29 @@
-use std::ptr::slice_from_raw_parts_mut;
+use std::{
+    ptr::slice_from_raw_parts_mut,
+    sync::{Arc, Mutex, RwLock},
+};
 
 use tracing::{info, warn};
 
-use crate::buf::buf0types::BufBlock;
-use crate::data::data0types::{
-    DATA_ENGLISH, DATA_NOT_NULL, DATA_VARCHAR, DTuple,
+use crate::{
+    buf::buf0types::BufBlock,
+    data::data0types::{DATA_ENGLISH, DATA_NOT_NULL, DATA_VARCHAR, DTuple},
+    dict::dict0types::Index,
+    fil::fil0types::{
+        FIL_PAGE_DATA, FIL_PAGE_DATA_END, FIL_PAGE_NEXT, FIL_PAGE_OFFSET,
+        FIL_PAGE_PREV, FIL_PAGE_SPACE_ID, FSEG_PAGE_DATA,
+    },
+    innodb::innodb0types::{PageFrame, PageNo, SpaceId, UNIV_PAGE_SIZE},
+    mtr::mtr0mtr::Mtr,
+    page::page0cur::PageCur,
+    rem::rem0rec::{
+        REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM, Record,
+    },
+    some_or_panic,
+    ut::ut0dbg::{ut_a, ut_ad},
+    ut_panic,
+    utils::TxnId,
 };
-use crate::dict::dict0types::Index;
-use crate::fil::fil0types::{
-    FIL_PAGE_DATA, FIL_PAGE_DATA_END, FIL_PAGE_NEXT, FIL_PAGE_OFFSET,
-    FIL_PAGE_PREV, FIL_PAGE_SPACE_ID, FSEG_PAGE_DATA,
-};
-use crate::innodb::innodb0types::{
-    PageFrame, PageNo, SpaceId, UNIV_PAGE_SIZE,
-};
-use crate::mtr::mtr0mtr::Mtr;
-use crate::rem::rem0rec::{
-    REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM, Record,
-};
-use crate::ut::ut0dbg::{ut_a, ut_ad};
-use crate::utils::TxnId;
 
 pub type SlotId = usize;
 
@@ -242,7 +246,7 @@ impl Page {
         slice_from_raw_parts_mut(self.ptr, UNIV_PAGE_SIZE)
     }
 
-    pub fn to_page_frame(&self) -> PageFrame {
+    pub fn to_page_frame(&self) -> PageFrame<'_> {
         unsafe {
             let array_ptr = self.ptr as *mut [u8; UNIV_PAGE_SIZE];
             PageFrame(&mut *array_ptr)
@@ -258,9 +262,7 @@ impl Page {
             "Page::from_buffer requires exactly {} bytes",
             UNIV_PAGE_SIZE
         );
-        Page {
-            ptr: buf.as_mut_ptr(),
-        }
+        Page { ptr: buf.as_mut_ptr() }
     }
 
     /// Set the max transaction id on the page.
@@ -273,7 +275,11 @@ impl Page {
     /// # Returns
     ///
     /// * `()`: This function does not return a value.
-    pub fn set_max_trx_id(&self, max_trx_id: TxnId, mtr: Option<Mtr>) {
+    pub fn page_set_max_trx_id(
+        &self,
+        max_trx_id: TxnId,
+        mtr: Option<&mut Mtr>,
+    ) {
         let page = self.ptr;
         /* It is not necessary to write this change to the redo log as
         during the database recovery we assume that the max transaction id
@@ -288,7 +294,7 @@ impl Page {
             },
             Some(_) => {
                 warn!("don't know how to handle Mtr");
-                panic!("don't know how to handle Mtr");
+                ut_panic!("don't know how to handle Mtr");
             }
         }
     }
@@ -296,7 +302,7 @@ impl Page {
     /// Retrieves the maximum transaction ID stored in the page.
     /// # Returns
     /// The maximum transaction ID (`TxnId`) stored in the page.
-    pub fn get_max_trx_id(&self) -> TxnId {
+    pub fn page_get_max_trx_id(&self) -> TxnId {
         unsafe {
             let page_ptr =
                 self.ptr.add(PAGE_HEADER + PAGE_MAX_TRX_ID) as *const TxnId;
@@ -819,7 +825,7 @@ impl Page {
         page.page_header_set_field(PAGE_DIRECTION, PAGE_NO_DIRECTION);
         page.page_header_set_field(PAGE_N_DIRECTION, 0);
         page.page_header_set_field(PAGE_N_RECS, 0);
-        page.set_max_trx_id(0, None);
+        page.page_set_max_trx_id(0, None);
 
         // // Do I need to perform memset here?
 
@@ -1130,6 +1136,141 @@ impl Page {
         crc32fast::hash(
             &page_frame.0[FIL_PAGE_OFFSET..UNIV_PAGE_SIZE - FIL_PAGE_DATA],
         )
+    }
+
+    // Copies records from the src page to the destination page.
+    // Infimum and Supremum records are not copied.
+    // The records are copied from the start to the given record excluding the record.
+    pub fn page_copy_rec_list_start(
+        &self,
+        dest: Arc<RwLock<BufBlock>>,
+        src: Arc<RwLock<BufBlock>>,
+        rec: Record,
+        index: Arc<Mutex<Index>>,
+        mtr: &mut Mtr,
+    ) {
+        let dest_page = dest.write().unwrap().get_page();
+        let src_page = src.write().unwrap().get_page();
+
+        ut_ad!(dest_page.page_is_leaf() == src_page.page_is_leaf());
+
+        if dest_page.page_dir_get_n_heap() == PAGE_HEAP_NO_USER_LOW {
+            dest_page.page_copy_rec_list_start_to_created_page(
+                dest_page,
+                rec,
+                index.clone(),
+                dest,
+                mtr,
+            );
+        }
+
+        if index.lock().unwrap().is_clustered() && src_page.page_is_leaf() {
+            dest_page.page_update_max_trx_id(self.page_get_max_trx_id(), mtr);
+        }
+    }
+
+    /// Copies records from src page to the destination page. Infimum and Supremum records are not copied.
+    /// The records are copied to the start of the record list on the page.
+    pub fn page_copy_rec_list_end(
+        &self,
+        dest: Arc<RwLock<BufBlock>>,
+        src: Arc<RwLock<BufBlock>>,
+        rec: Record,
+        index: Arc<Mutex<Index>>,
+        mtr: &mut Mtr,
+    ) {
+        let dest_page = dest.write().unwrap().get_page();
+        let src_page = src.write().unwrap().get_page();
+
+        ut_ad!(dest_page.page_is_leaf() == src_page.page_is_leaf());
+
+        if dest_page.page_dir_get_n_heap() == PAGE_HEAP_NO_USER_LOW {
+            dest_page.page_copy_rec_list_end_to_created_page(
+                dest_page,
+                rec,
+                index.clone(),
+                dest,
+                mtr,
+            );
+        }
+
+        if index.lock().unwrap().is_clustered() && src_page.page_is_leaf() {
+            dest_page.page_update_max_trx_id(self.page_get_max_trx_id(), mtr);
+        }
+    }
+
+    /// Set the max transaction id to the new value if it exceeds the previous value.
+    ///
+    pub fn page_update_max_trx_id(&self, txn_id: TxnId, mtr: &mut Mtr) {
+        ut_ad!(self.page_is_leaf());
+
+        let mut mtr = mtr;
+
+        if self.page_get_max_trx_id() < txn_id {
+            self.page_set_max_trx_id(txn_id, Some(&mut mtr));
+        }
+    }
+
+    /// Copies records from the start to the given record (exclusive).
+    pub fn page_copy_rec_list_start_to_created_page(
+        &self,
+        dest_page: Page,
+        rec: Record,
+        index: Arc<Mutex<Index>>,
+        buf_block: Arc<RwLock<BufBlock>>,
+        mtr: &mut Mtr,
+    ) {
+        ut_ad!(dest_page.page_dir_get_n_heap() == PAGE_HEAP_NO_USER_LOW);
+
+        // If the given record is infimum, we don't have to copy anything.
+        if self.page_rec_is_infimum(rec) {
+            return;
+        }
+
+        let mut cur_rec = if self.page_rec_is_infimum(rec) {
+            some_or_panic!(rec.rec_get_next())
+        } else {
+            rec
+        };
+
+        // Uncomment
+        // page_copy_rec_list_to_created_page_write_log
+
+        let dest_page_cur = PageCur::new(index, None, buf_block, dest_page);
+        while cur_rec != rec {
+            dest_page_cur.page_cur_insert_rec_low(cur_rec, mtr);
+            cur_rec = some_or_panic!(cur_rec.rec_get_next());
+        }
+    }
+
+    pub fn page_copy_rec_list_end_to_created_page(
+        &self,
+        dest_page: Page,
+        rec: Record,
+        index: Arc<Mutex<Index>>,
+        buf_block: Arc<RwLock<BufBlock>>,
+        mtr: &mut Mtr,
+    ) {
+        ut_ad!(dest_page.page_dir_get_n_heap() == PAGE_HEAP_NO_USER_LOW);
+
+        let mut rec = if self.page_rec_is_infimum(rec) {
+            some_or_panic!(rec.rec_get_next())
+        } else {
+            rec
+        };
+
+        if self.page_rec_is_supremum(rec) {
+            return;
+        }
+
+        // Uncomment
+        // page_copy_rec_list_to_created_page_write_log
+
+        let dest_page_cur = PageCur::new(index, None, buf_block, dest_page);
+        while self.page_rec_is_supremum(rec) == false {
+            dest_page_cur.page_cur_insert_rec_low(rec, mtr);
+            rec = some_or_panic!(rec.rec_get_next());
+        }
     }
 
     /// Get the page header output string for debugging purposes.

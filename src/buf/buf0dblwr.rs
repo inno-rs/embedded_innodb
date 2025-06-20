@@ -1,14 +1,19 @@
-use std::ops::DerefMut;
-use std::sync::{Arc, Mutex};
+use std::{
+    ops::DerefMut,
+    sync::{Arc, Mutex},
+};
 
-use crate::buf::buf0types::BufBlock;
-use crate::fil::fil0fil::Fil;
-use crate::innodb::innodb0types::{PageId, PageNo, SpaceId, UNIV_PAGE_SIZE};
-use crate::mtr::mtr0mtr::Mtr;
-use crate::os::os0file::IORequest;
-use crate::trx::trx0sys::TRX_SYS_SPACE;
-use crate::ut::ut0dbg::{ut_a, ut_ad};
-use crate::{some_or_panic, ut_panic};
+use crate::{
+    buf::buf0types::BufBlock,
+    fil::fil0fil::Fil,
+    innodb::innodb0types::{PageId, PageNo, SpaceId, UNIV_PAGE_SIZE},
+    mtr::mtr0mtr::Mtr,
+    os::os0file::IORequest,
+    some_or_panic,
+    trx::trx0sys::TRX_SYS_SPACE,
+    ut::ut0dbg::{ut_a, ut_ad},
+    ut_panic,
+};
 
 /// Size of the double write buffer.
 /// The formula is 1 + 2 * 128 * UNIV_PAGE_SIZE, which allocates enough space

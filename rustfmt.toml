@@ -1,4 +1,5 @@
-max_width = 79
-use_small_heuristics = "Max"
-reorder_imports = true
 group_imports = "StdExternalCrate"
+max_width = 79
+imports_granularity = "Crate"
+reorder_imports = true
+use_small_heuristics = "Max"

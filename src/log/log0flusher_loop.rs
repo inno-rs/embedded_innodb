@@ -1,16 +1,26 @@
-use std::ops::Add;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    ops::Add,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use strum_macros::Display;
-use tokio::sync::mpsc::Receiver;
-use tokio::time::{Instant, timeout_at};
+use tokio::{
+    sync::mpsc::Receiver,
+    time::{Instant, timeout_at},
+};
 use tracing::{error, info};
 
-use crate::innodb::innodb0types::Lsn;
-use crate::log::log0flusher_loop::LogFlushNotification::PoisonPillReceived;
-use crate::log::log0log::Log;
+use crate::{
+    innodb::innodb0types::Lsn,
+    log::{
+        log0flusher_loop::LogFlushNotification::PoisonPillReceived,
+        log0log::Log,
+    },
+};
 
 /// A trait for receiving notifications about log flush progress or errors.
 ///
@@ -164,23 +174,28 @@ impl LogFlusherLoop {
 
 #[cfg(test)]
 mod tests {
-    use std::cmp::max;
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
+    use std::{
+        cmp::max,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     use tokio::sync::mpsc;
 
-    use crate::fil::fil0fil::Fil;
-    use crate::innodb::innodb0types::{Lsn, UNIV_PAGE_SIZE};
-    use crate::log::log0flusher_loop::{
-        LogFlushNotification, LogFlushNotifier, LogFlushTrigger,
-        LogFlusherLoop,
+    use crate::{
+        fil::fil0fil::Fil,
+        innodb::innodb0types::{Lsn, UNIV_PAGE_SIZE},
+        log::{
+            log0flusher_loop::{
+                LogFlushNotification, LogFlushNotifier, LogFlushTrigger,
+                LogFlusherLoop,
+            },
+            log0log::Log,
+            log0types::LOG_START_LSN,
+        },
+        os::{os0io::OsIo, os0runtime::create_runtime},
+        ut::ut0ut::GLOBAL_RUNTIME,
     };
-    use crate::log::log0log::Log;
-    use crate::log::log0types::LOG_START_LSN;
-    use crate::os::os0io::OsIo;
-    use crate::os::os0runtime::create_runtime;
-    use crate::ut::ut0ut::GLOBAL_RUNTIME;
 
     struct MockLogFlushNotifier {
         err: usize,

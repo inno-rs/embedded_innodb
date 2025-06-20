@@ -1,12 +1,14 @@
 use tracing::{error, info};
 
-use crate::data::data0types::{
-    BigRec, DATA_CHAR, DATA_CLIENT, DATA_INT, DATA_VARCHAR, DField, DTuple,
-    DType,
+use crate::{
+    data::data0types::{
+        BigRec, DATA_CHAR, DATA_CLIENT, DATA_INT, DATA_VARCHAR, DField,
+        DTuple, DType,
+    },
+    innodb::innodb0types::UNIV_SQL_NULL,
+    ut::ut0dbg::{ut_a, ut_ad},
+    ut_panic,
 };
-use crate::innodb::innodb0types::UNIV_SQL_NULL;
-use crate::ut::ut0dbg::{ut_a, ut_ad};
-use crate::ut_panic;
 
 impl DTuple {
     /// Creates a new tuple with the specified number of fields.

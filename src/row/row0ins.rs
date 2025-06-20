@@ -1,10 +1,11 @@
 use std::sync::{Arc, Mutex};
 
-use crate::data::data0types::DTuple;
-use crate::dict::dict0dict::Dict;
-use crate::dict::dict0types::Index;
-use crate::innodb::innodb0types::DbErr;
-use crate::lock::lock0lock::LockSys;
+use crate::{
+    data::data0types::DTuple,
+    dict::{dict0dict::Dict, dict0types::Index},
+    innodb::innodb0types::DbErr,
+    lock::lock0lock::LockSys,
+};
 
 pub struct RowInsert {
     /// Reference to data dictionary.

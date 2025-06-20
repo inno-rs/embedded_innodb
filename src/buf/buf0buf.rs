@@ -1,31 +1,35 @@
-use std::alloc::{Layout, alloc_zeroed};
-use std::cell::RefCell;
-use std::cmp::min;
-use std::collections::HashMap;
-use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
-use std::sync::{Arc, Mutex, RwLock};
+use std::{
+    alloc::{Layout, alloc_zeroed},
+    cell::RefCell,
+    cmp::min,
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+    sync::{Arc, Mutex, RwLock},
+};
 
 use intrusive_collections::{LinkedList, UnsafeRef};
 use tracing::info;
 
-use crate::buf::buf0lru::BufLRU;
-use crate::buf::buf0rea::BufRea;
-use crate::buf::buf0types::BufIoFix::BufIoRead;
-use crate::buf::buf0types::{
-    BUF_GET_ALWAYS, BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH, BufBlock, BufChunk,
-    BufPage, BufPageState, BufPoolStats, FlushListAdapter, Request,
+use crate::{
+    buf::{
+        buf0lru::BufLRU,
+        buf0rea::BufRea,
+        buf0types::{
+            BUF_GET_ALWAYS, BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH, BufBlock,
+            BufChunk, BufIoFix::BufIoRead, BufPage, BufPageState,
+            BufPoolStats, FlushListAdapter, Request,
+        },
+    },
+    fil::fil0fil::Fil,
+    innodb::innodb0types::{DbErr, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE},
+    mtr::{mtr0mtr::Mtr, mtr0types::MtrState},
+    os::os0file::IORequest,
+    some_or_panic,
+    sync::sync0rw::ReadWriteLatch,
+    ut::ut0dbg::ut_ad,
+    ut_2_power_up, ut_panic,
 };
-use crate::fil::fil0fil::Fil;
-use crate::innodb::innodb0types::{
-    DbErr, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
-};
-use crate::mtr::mtr0mtr::Mtr;
-use crate::mtr::mtr0types::MtrState;
-use crate::os::os0file::IORequest;
-use crate::sync::sync0rw::ReadWriteLatch;
-use crate::ut::ut0dbg::ut_ad;
-use crate::{some_or_panic, ut_2_power_up, ut_panic};
 
 /// Buffer Pool manages the caching of database pages in memory.
 ///

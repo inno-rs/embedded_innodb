@@ -5,7 +5,7 @@ mod tests {
     use crate::mtr::mtr0log::MLog;
     use crate::page::page0page::Page;
     use crate::innodb::innodb0types::{PageFrame, UNIV_PAGE_SIZE};
-    
+
     use crate::mtr::mtr0mtr::Mtr;
     use crate::mtr::mtr0types::MlogType;
     /// Helper to create a Page backed by a Vec<u8>.

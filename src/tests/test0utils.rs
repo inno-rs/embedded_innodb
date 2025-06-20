@@ -1,22 +1,25 @@
-use std::alloc::{Layout, alloc_zeroed};
-use std::cell::RefCell;
-use std::ops::Deref;
-use std::rc::Rc;
-use std::sync::{Arc, Mutex, RwLock};
-
-use crate::buf::buf0types::{BufBlock, BufPage};
-use crate::data::data0types::{
-    DATA_NOT_NULL, DField, DFieldBuilder, DTYPE_DECIMAL, DTYPE_DOUBLE,
-    DTYPE_FLOAT, DTYPE_INT, DTYPE_INT_UNSIGNED, DTYPE_VARCHAR, DTuple,
-    DTupleBuilder, DType,
+use std::{
+    alloc::{Layout, alloc_zeroed},
+    cell::RefCell,
+    ops::Deref,
+    rc::Rc,
+    sync::{Arc, Mutex, RwLock},
 };
-use crate::dict::dict0types::{Column, Field, Index};
-use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE, UNIV_SQL_NULL};
-use crate::mtr::mtr0mtr::Mtr;
-use crate::page::page0cur::PageCur;
-use crate::page::page0page::Page;
-use crate::rem::rem0rec::Record;
-use crate::some_or_panic;
+
+use crate::{
+    buf::buf0types::{BufBlock, BufPage},
+    data::data0types::{
+        DATA_NOT_NULL, DField, DFieldBuilder, DTYPE_DECIMAL, DTYPE_DOUBLE,
+        DTYPE_FLOAT, DTYPE_INT, DTYPE_INT_UNSIGNED, DTYPE_VARCHAR, DTuple,
+        DTupleBuilder, DType,
+    },
+    dict::dict0types::{Column, Field, Index},
+    innodb::innodb0types::{PageId, UNIV_PAGE_SIZE, UNIV_SQL_NULL},
+    mtr::mtr0mtr::Mtr,
+    page::{page0cur::PageCur, page0page::Page},
+    rem::rem0rec::Record,
+    some_or_panic,
+};
 
 /// A structure that owns both the page memory and the Page object that references it.
 ///
