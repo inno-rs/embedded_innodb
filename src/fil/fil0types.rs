@@ -1,14 +1,13 @@
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::ops::Range;
-use std::rc::Rc;
+use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 
 use intrusive_collections::{
     LinkedList, LinkedListLink, UnsafeRef, intrusive_adapter,
 };
 
-use crate::innodb::innodb0types::{SpaceId, UNIV_PAGE_SIZE};
-use crate::os::os0file::OsFile;
+use crate::{
+    innodb::innodb0types::{SpaceId, UNIV_PAGE_SIZE},
+    os::os0file::OsFile,
+};
 
 /// Initial size of the file in pages.
 pub const FIL_IBD_FILE_INITIAL_SIZE: usize = 4;

@@ -5,12 +5,14 @@ mod tests {
     use rstest::rstest;
     use tracing::info;
 
-    use crate::dict::dict0types::Index;
-    use crate::innodb::innodb0types::PageId;
-    use crate::rem::rem0cmp::{cmp_dtuple_rec_with_match, cmp_rec_rec};
-    use crate::tests::test0utils::{
-        FieldType, create_dtuples, create_new_fields, create_records,
-        get_user_records,
+    use crate::{
+        dict::dict0types::Index,
+        innodb::innodb0types::PageId,
+        rem::rem0cmp::{cmp_dtuple_rec_with_match, cmp_rec_rec},
+        tests::test0utils::{
+            FieldType, create_dtuples, create_new_fields, create_records,
+            get_user_records,
+        },
     };
 
     #[rstest]

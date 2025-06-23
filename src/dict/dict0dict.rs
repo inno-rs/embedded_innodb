@@ -1,9 +1,10 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
-use crate::btr::btr0btr::BTree;
-use crate::fsp::fsp0fsp::Fsp;
+use crate::{btr::btr0btr::BTree, fsp::fsp0fsp::Fsp};
 
 pub struct Dict {
     /// Reference to Fsp.

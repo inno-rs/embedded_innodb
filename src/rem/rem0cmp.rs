@@ -1,11 +1,14 @@
 use std::cmp::Ordering;
 
-use crate::data::data0types::{DATA_FLOAT, DTuple};
-use crate::dict::dict0types::Index;
-use crate::innodb::innodb0types::UNIV_SQL_NULL;
-use crate::rem::rem0rec::{REC_INFO_MIN_REC_FLAG, Record};
-use crate::ut::ut0dbg::ut_ad;
-use crate::{some_or_panic, ut_panic};
+use crate::{
+    data::data0types::{DATA_FLOAT, DTuple},
+    dict::dict0types::Index,
+    innodb::innodb0types::UNIV_SQL_NULL,
+    rem::rem0rec::{REC_INFO_MIN_REC_FLAG, Record},
+    some_or_panic,
+    ut::ut0dbg::ut_ad,
+    ut_panic,
+};
 
 /// Compare two data fields for which the data types are such that we must compare whole fields.
 ///
@@ -337,8 +340,10 @@ pub fn cmp_dtuple_rec_with_match(
 mod tests {
     use std::cmp::Ordering;
 
-    use crate::data::data0types::{DATA_DOUBLE, DATA_FLOAT};
-    use crate::rem::rem0cmp::cmp_whole_field;
+    use crate::{
+        data::data0types::{DATA_DOUBLE, DATA_FLOAT},
+        rem::rem0cmp::cmp_whole_field,
+    };
 
     #[test]
     fn test_cmp_whole_field_float32() {

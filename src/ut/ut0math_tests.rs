@@ -1,8 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use crate::innodb::innodb0types::IB_FILE_BLOCK_SIZE;
-    use crate::ut::ut0math::{ut_align_down, ut_is_2pow};
-    use crate::ut_2_power_up;
+    use crate::{
+        innodb::innodb0types::IB_FILE_BLOCK_SIZE,
+        ut::ut0math::{ut_align_down, ut_is_2pow},
+        ut_2_power_up,
+    };
 
     #[test]
     fn test_ut_2_power_up() {

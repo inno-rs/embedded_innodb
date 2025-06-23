@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::mtr::mtr0mtr::Mtr;
-    use crate::mtr::mtr0types::{
-        MemoSlot, MtrLogMode, MtrState, OtherResource,
+    use crate::mtr::{
+        mtr0mtr::Mtr,
+        mtr0types::{MemoSlot, MtrLogMode, MtrState, OtherResource},
     };
 
     #[test]

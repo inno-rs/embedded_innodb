@@ -1,22 +1,26 @@
 #[cfg(test)]
 pub(super) mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-    use std::sync::{Arc, Mutex};
+    use std::{
+        cell::RefCell,
+        rc::Rc,
+        sync::{Arc, Mutex},
+    };
 
     use rstest::{fixture, rstest};
 
-    use crate::buf::buf0buf::BufPool;
-    use crate::buf::buf0lru::BufLRU;
-    use crate::buf::buf0rea::BufRea;
-    use crate::buf::buf0types::{BUF_GET_IF_IN_POOL, Request};
-    use crate::fil::fil0fil::Fil;
-    use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
-    use crate::mtr::mtr0mtr::Mtr;
-    use crate::mtr::mtr0mtr::MtrState::MtrActive;
-    use crate::os::os0io::OsIo;
-    use crate::os::os0runtime::create_runtime;
-    use crate::sync::sync0rw::ReadWriteLatch;
+    use crate::{
+        buf::{
+            buf0buf::BufPool,
+            buf0lru::BufLRU,
+            buf0rea::BufRea,
+            buf0types::{BUF_GET_IF_IN_POOL, Request},
+        },
+        fil::fil0fil::Fil,
+        innodb::innodb0types::{PageId, UNIV_PAGE_SIZE},
+        mtr::mtr0mtr::{Mtr, MtrState::MtrActive},
+        os::{os0io::OsIo, os0runtime::create_runtime},
+        sync::sync0rw::ReadWriteLatch,
+    };
 
     pub struct BufPoolFixture {
         buf_lru: Arc<RefCell<BufLRU>>,

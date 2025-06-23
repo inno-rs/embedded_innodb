@@ -2,10 +2,8 @@ use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use innodb::ut::ut0rnd::ut_fold_string;
-use rand::Rng;
-use rand::distr::Alphanumeric;
-use rand_chacha::ChaCha8Rng;
-use rand_chacha::rand_core::SeedableRng;
+use rand::{Rng, distr::Alphanumeric};
+use rand_chacha::{ChaCha8Rng, rand_core::SeedableRng};
 
 /// Generate 100,000 random strings of given length.
 /// The strings are generated deterministically. So they are always the same.

@@ -5,15 +5,14 @@ mod tests {
     use rstest::{fixture, rstest};
     use tokio::runtime::Runtime;
 
-    use crate::buf::buf0dblwr::{
-        DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer, WriteBuffer,
+    use crate::{
+        buf::buf0dblwr::{
+            DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer, WriteBuffer,
+        },
+        fil::{fil0fil::Fil, fil0types::FilType},
+        innodb::innodb0types::{PageId, UNIV_PAGE_SIZE},
+        os::{os0file::IORequest, os0io::OsIo, os0runtime::create_runtime},
     };
-    use crate::fil::fil0fil::Fil;
-    use crate::fil::fil0types::FilType;
-    use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
-    use crate::os::os0file::IORequest;
-    use crate::os::os0io::OsIo;
-    use crate::os::os0runtime::create_runtime;
 
     struct DblWrBufferFixture {
         fil: Arc<Mutex<Fil>>,

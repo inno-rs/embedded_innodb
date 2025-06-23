@@ -72,6 +72,21 @@ macro_rules! some_or_panic {
     };
 }
 
+/// Asserts that a boolean expression is `true` at compile-time.
+///
+/// Rust provides [`const` blocks], which can be used flexibly within methods, but cannot be used
+/// directly at the top level. This macro serves as a helper to perform compile-time assertions
+/// outside of methods.
+///
+/// [`const` blocks]: https://doc.rust-lang.org/reference/expressions/block-expr.html#const-blocks
+//
+// TODO: Introduce `const_assert_eq!()` once `assert_eq!()` can be used in the `const` context.
+#[macro_export]
+macro_rules! const_assert {
+    ($cond:expr $(,)?) => { const _: () = assert!($cond); };
+    ($cond:expr, $($arg:tt)+) => { const _: () = assert!($cond, $($arg)*); };
+}
+
 /// Static guard to ensure tracing is initialized only once.
 ///
 /// This uses the `Once` type from the standard library to ensure that the tracing

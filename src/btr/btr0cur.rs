@@ -1,25 +1,34 @@
-use std::ops::Deref;
-use std::ptr::null_mut;
-use std::sync::RwLock;
-use std::sync::{Arc, Mutex};
+use std::{
+    ops::Deref,
+    ptr::null_mut,
+    sync::{Arc, Mutex, RwLock},
+};
 
-use crate::btr::btr0btr::BTree;
-use crate::btr::btr0types::BTR_ESTIMATE;
-use crate::buf::buf0buf::BufPool;
-use crate::buf::buf0types::{BufBlock, Request};
-use crate::data::data0types::DTuple;
-use crate::dict::dict0types::Index;
-use crate::fsp::fsp0fsp::Fsp;
-use crate::innodb::innodb0types::DbErr::{DbFail, DbSuccess, DbTooBigRecord};
-use crate::innodb::innodb0types::{DbErr, PageId};
-use crate::lock::lock0lock::LockSys;
-use crate::mtr::mtr0mtr::Mtr;
-use crate::page::page0cur::{MatchCache, PageCur};
-use crate::page::page0page::Page;
-use crate::rem::rem0rec::Record;
-use crate::some_or_panic;
-use crate::sync::sync0rw::ReadWriteLatch;
-use crate::ut::ut0dbg::ut_ad;
+use crate::{
+    btr::{btr0btr::BTree, btr0types::BTR_ESTIMATE},
+    buf::{
+        buf0buf::BufPool,
+        buf0types::{BufBlock, Request},
+    },
+    data::data0types::DTuple,
+    dict::dict0types::Index,
+    fsp::fsp0fsp::Fsp,
+    innodb::innodb0types::{
+        DbErr,
+        DbErr::{DbFail, DbSuccess, DbTooBigRecord},
+        PageId,
+    },
+    lock::lock0lock::LockSys,
+    mtr::mtr0mtr::Mtr,
+    page::{
+        page0cur::{MatchCache, PageCur},
+        page0page::Page,
+    },
+    rem::rem0rec::Record,
+    some_or_panic,
+    sync::sync0rw::ReadWriteLatch,
+    ut::ut0dbg::ut_ad,
+};
 
 /// Flag indicating that undo logging should be skipped for this operation.
 pub const BTR_NO_UNDO_LOG: usize = 1;

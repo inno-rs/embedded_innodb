@@ -1,23 +1,26 @@
 #[cfg(test)]
 mod tests {
-    use std::alloc::{Layout, alloc_zeroed};
-    use std::cell::RefCell;
-    use std::ops::Deref;
-    use std::rc::Rc;
-    use std::sync::{Arc, Mutex, RwLock};
+    use std::{
+        alloc::{Layout, alloc_zeroed},
+        cell::RefCell,
+        ops::Deref,
+        rc::Rc,
+        sync::{Arc, Mutex, RwLock},
+    };
 
     use rstest::{fixture, rstest};
     use tracing::info;
 
-    use crate::buf::buf0types::{BufBlock, BufPage, Frame};
-    use crate::dict::dict0types::Index;
-    use crate::innodb::innodb0types::{PageId, UNIV_PAGE_SIZE};
-    use crate::mtr::mtr0mtr::Mtr;
-    use crate::page::page0cur::PageCur;
-    use crate::page::page0page::Page;
-    use crate::rem::rem0rec::{OrphanRecord, Record};
-    use crate::tests::test0utils::{
-        FieldType, create_dtuples, create_records, get_user_records,
+    use crate::{
+        buf::buf0types::{BufBlock, BufPage, Frame},
+        dict::dict0types::Index,
+        innodb::innodb0types::{PageId, UNIV_PAGE_SIZE},
+        mtr::mtr0mtr::Mtr,
+        page::{page0cur::PageCur, page0page::Page},
+        rem::rem0rec::{OrphanRecord, Record},
+        tests::test0utils::{
+            FieldType, create_dtuples, create_records, get_user_records,
+        },
     };
 
     fn get_raw_block() -> Frame {

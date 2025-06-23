@@ -39,22 +39,31 @@
 //!
 //!
 
-use std::ops::Range;
-use std::sync::{Arc, RwLock};
-
-use crate::buf::buf0buf::BufPool;
-use crate::buf::buf0types::{BUF_GET_ALWAYS, BufBlock, Request};
-use crate::fil::fil0types::{
-    FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
+use std::{
+    ops::Range,
+    sync::{Arc, RwLock},
 };
-use crate::fut::fut0lst::{FilAddr, flst_init};
-use crate::innodb::innodb0types::PageFrame as InnoPageFrame;
-use crate::innodb::innodb0types::{PageId, SpaceId, UNIV_PAGE_SIZE};
-use crate::mtr::mtr0mtr::Mtr;
-use crate::page::page0page::Page;
-use crate::sync::sync0rw::ReadWriteLatch;
-use crate::ut::ut0dbg::ut_ad;
-use crate::{mach_read_from_4, some_or_panic};
+
+use crate::{
+    buf::{
+        buf0buf::BufPool,
+        buf0types::{BUF_GET_ALWAYS, BufBlock, Request},
+    },
+    fil::fil0types::{
+        FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET,
+        FIL_PAGE_SPACE_ID,
+    },
+    fut::fut0lst::{FilAddr, flst_init},
+    innodb::innodb0types::{
+        PageFrame as InnoPageFrame, PageId, SpaceId, UNIV_PAGE_SIZE,
+    },
+    mach_read_from_4,
+    mtr::mtr0mtr::Mtr,
+    page::page0page::Page,
+    some_or_panic,
+    sync::sync0rw::ReadWriteLatch,
+    ut::ut0dbg::ut_ad,
+};
 
 /// Offset of the page data area inside a raw page
 pub const FIL_PAGE_DATA: usize = 38;

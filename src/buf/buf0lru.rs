@@ -1,25 +1,30 @@
-use std::cell::RefCell;
-use std::cmp::min;
-use std::ops::{Deref, DerefMut};
-use std::rc::{Rc, Weak};
-use std::sync::{Arc, RwLock};
+use std::{
+    cell::RefCell,
+    cmp::min,
+    ops::{Deref, DerefMut},
+    rc::{Rc, Weak},
+    sync::{Arc, RwLock},
+};
 
 use intrusive_collections::{LinkedList, UnsafeRef};
 use tracing::info;
 
-use crate::buf::buf0buf::BufPool;
-use crate::buf::buf0types::BufPageState::{
-    BufBlockNotUsed, BufBlockReadyForUse,
+use crate::{
+    buf::{
+        buf0buf::BufPool,
+        buf0types::{
+            BufBlock, BufIoFix, BufPage, BufPageState,
+            BufPageState::{BufBlockNotUsed, BufBlockReadyForUse},
+            FreeListAdapter, LruAdapter, Request,
+        },
+    },
+    innodb::innodb0types::PageId,
+    mtr::mtr0mtr::Mtr,
+    some_or_panic,
+    sync::sync0rw::ReadWriteLatch,
+    ut::ut0dbg::{ut_a, ut_ad},
+    ut_panic,
 };
-use crate::buf::buf0types::{
-    BufBlock, BufIoFix, BufPage, BufPageState, FreeListAdapter, LruAdapter,
-    Request,
-};
-use crate::innodb::innodb0types::PageId;
-use crate::mtr::mtr0mtr::Mtr;
-use crate::sync::sync0rw::ReadWriteLatch;
-use crate::ut::ut0dbg::{ut_a, ut_ad};
-use crate::{some_or_panic, ut_panic};
 
 /// The denominator of lru_old_ratio.
 pub const OLD_RATIO_DIV: usize = 1024;
