@@ -1,8 +1,6 @@
 use std::{
-    cell::RefCell,
     cmp::PartialEq,
-    rc::Rc,
-    sync::{Arc, RwLock, Weak},
+    sync::{Arc, RwLock, Weak, atomic::AtomicU64},
 };
 
 use intrusive_collections::{LinkedListLink, UnsafeRef, intrusive_adapter};
@@ -43,34 +41,34 @@ pub const BUF_GET_NO_LATCH: usize = 14;
 
 pub struct BufPoolStats {
     /// Number of gets performed.
-    pub n_pages_get: u64,
+    pub n_pages_get: AtomicU64,
     /// Number of read operations performed.
-    pub n_pages_read: u64,
+    pub n_pages_read: AtomicU64,
     /// Number of write operations performed.
-    pub n_pages_written: u64,
+    pub n_pages_written: AtomicU64,
     /// Number of pages created in the pool with no read.
-    pub n_pages_created: u64,
+    pub n_pages_created: AtomicU64,
     /// Number of pages read as part of read ahead.
-    pub n_ra_pages_read: u64,
+    pub n_ra_pages_read: AtomicU64,
     /// Number of read ahead pages that were evicted without being read.
-    pub n_ra_pages_evicted: u64,
+    pub n_ra_pages_evicted: AtomicU64,
     /// Number of pages made young.
-    pub n_pages_made_young: u64,
+    pub n_pages_made_young: AtomicU64,
     /// The Number of pages isn't made young because the first access was not long enough.
-    pub n_pages_not_made_young: u64,
+    pub n_pages_not_made_young: AtomicU64,
 }
 
 impl BufPoolStats {
     pub fn new() -> Self {
         Self {
-            n_pages_get: 0,
-            n_pages_read: 0,
-            n_pages_written: 0,
-            n_pages_created: 0,
-            n_ra_pages_read: 0,
-            n_ra_pages_evicted: 0,
-            n_pages_made_young: 0,
-            n_pages_not_made_young: 0,
+            n_pages_get: AtomicU64::new(0),
+            n_pages_read: AtomicU64::new(0),
+            n_pages_written: AtomicU64::new(0),
+            n_pages_created: AtomicU64::new(0),
+            n_ra_pages_read: AtomicU64::new(0),
+            n_ra_pages_evicted: AtomicU64::new(0),
+            n_pages_made_young: AtomicU64::new(0),
+            n_pages_not_made_young: AtomicU64::new(0),
         }
     }
 }
@@ -480,7 +478,7 @@ pub struct BufBlock {
     /// Incremented each time the block is removed from the hash table.
     modify_clock: usize,
     /// Metadata about the page stored in this buffer block
-    pub(crate) buf_page: RefCell<Rc<RefCell<BufPage>>>,
+    buf_page: BufPage,
     /// Pointer to the actual page data in memory
     frame: Frame,
     /// Lock for concurrency control when accessing this buffer block
@@ -496,7 +494,7 @@ impl BufBlock {
     ///
     /// # Returns
     /// A new BufBlock instance
-    pub fn new(buf_page: RefCell<Rc<RefCell<BufPage>>>, frame: Frame) -> Self {
+    pub fn new(buf_page: BufPage, frame: Frame) -> Self {
         BufBlock {
             modify_clock: 0,
             buf_page,
@@ -550,7 +548,7 @@ impl BufBlock {
     /// # Returns
     /// The current state of the buffer page
     pub fn buf_block_get_state(&self) -> BufPageState {
-        self.buf_page.borrow().borrow().state.clone()
+        self.buf_page.state.clone()
     }
 
     /// Sets the state of the buffer page.
@@ -566,26 +564,23 @@ impl BufBlock {
     /// # Note
     /// This method is currently a placeholder and needs to be implemented.
     pub fn buf_block_set_state(&mut self, state: BufPageState) {
-        self.buf_page.borrow_mut().borrow_mut().state = state;
+        self.buf_page.state = state;
     }
 
     /// Gets the buffer page metadata for this buffer block.
     ///
     /// # Returns
     /// A clone of the buffer page metadata
-    pub fn buf_block_get_page(&self) -> Rc<RefCell<BufPage>> {
-        self.buf_page.borrow().clone()
+    pub fn buf_block_get_page(&self) -> &BufPage {
+        &self.buf_page
     }
 
-    /// Gets a mutable reference to the buffer page metadata for this buffer block.
-    ///
-    /// This method is similar to `buf_block_get_page` but is intended to be used
-    /// when modifications to the buffer page are needed.
+    /// Gets the buffer page metadata for this buffer block.
     ///
     /// # Returns
-    /// * `Rc<RefCell<BufPage>>` - A reference to the buffer page that can be mutated
-    pub fn buf_block_get_page_mut(&mut self) -> Rc<RefCell<BufPage>> {
-        self.buf_page.borrow().clone()
+    /// A clone of the buffer page metadata
+    pub fn buf_block_get_page_mut(&mut self) -> &mut BufPage {
+        &mut self.buf_page
     }
 
     /// Increments the modification clock of this buffer block.
@@ -612,12 +607,14 @@ impl BufBlock {
         page_frame
     }
     /// Grab the block’s write‐lock, then decrement its buf_fix_count.
-    pub fn fix_dec(&self) {
+    pub fn fix_dec(&mut self) {
         // Mutate the inner BufPage’s fix count
-        let page_rc = self.buf_page.borrow().clone();
-        let mut page = page_rc.borrow_mut();
-        page.buf_fix_count =
-            page.buf_fix_count.checked_sub(1).expect("unbalanced fix_dec");
+        let count = self
+            .buf_page
+            .buf_fix_count
+            .checked_sub(1)
+            .expect("unbalanced fix_dec");
+        self.buf_page.buf_fix_count = count;
         // guard drops here, releasing the lock
     }
 }

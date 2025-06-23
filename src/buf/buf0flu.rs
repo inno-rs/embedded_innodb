@@ -1,5 +1,4 @@
 use std::{
-    cell::RefCell,
     cmp::PartialEq,
     sync::{Arc, Mutex},
 };
@@ -52,7 +51,7 @@ pub struct BufFlush {
     /// Double write buffer.
     dblwr: Arc<Mutex<DoubleWriteBuffer>>,
     /// List of buffer blocks to flush.
-    flush_list: Arc<RefCell<LinkedList<FlushListAdapter>>>,
+    flush_list: LinkedList<FlushListAdapter>,
     /// File interface for I/O operations.
     fil: Arc<Mutex<Fil>>,
     /// Redo Log
@@ -82,7 +81,7 @@ impl BufFlush {
     /// # Returns
     /// The count of pages currently in the flush list
     pub fn get_flush_list_size(&self) -> usize {
-        self.flush_list.borrow().iter().count()
+        self.flush_list.iter().count()
     }
 
     /// Flushes a buffer block to disk according to the specified flush type.
@@ -109,13 +108,12 @@ impl BufFlush {
         ut_ad!(flush_type == BufFlushLru || flush_type == BufFlushList);
 
         {
-            let buf_page = buf_block.buf_block_get_page();
-            let mut buf_page_ref = buf_page.borrow_mut();
+            let buf_page = buf_block.buf_block_get_page_mut();
 
-            ut_ad!(buf_page_ref.in_file());
+            ut_ad!(buf_page.in_file());
 
-            buf_page_ref.buf_page_set_io_fix(BufIoFix::BufIoWrite);
-            buf_page_ref.buf_page_set_flush_type(flush_type);
+            buf_page.buf_page_set_io_fix(BufIoFix::BufIoWrite);
+            buf_page.buf_page_set_flush_type(flush_type);
         }
 
         match flush_type {
@@ -167,8 +165,7 @@ impl BufFlush {
             let page_id = Option::<PageId>::None;
 
             if flush_type == BufFlushList {
-                let mut flush_list_ref = self.flush_list.borrow_mut();
-                let cursor = flush_list_ref.back_mut();
+                let cursor = self.flush_list.back_mut();
             }
         }
 
@@ -201,8 +198,7 @@ impl BufFlush {
         buf_block: &BufBlock,
         flush_type: BufFlushType,
     ) -> bool {
-        let buf_page = buf_block.buf_block_get_page();
-        let buf_page_ref = buf_page.borrow();
+        let buf_page_ref = buf_block.buf_block_get_page();
         ut_ad!(buf_page_ref.in_file());
         ut_ad!(flush_type == BufFlushList || flush_type == BufFlushLru);
 
@@ -238,8 +234,7 @@ impl BufFlush {
     /// - The buffer page has no modifications (oldest or newest modification LSN is 0)
     /// - The buffer page is not in the BufBlockFilePage state
     fn write_block_low(&mut self, buf_block: &mut BufBlock) {
-        let buf_page = buf_block.buf_block_get_page();
-        let buf_page_ref = buf_page.borrow_mut();
+        let buf_page_ref = buf_block.buf_block_get_page_mut();
 
         ut_ad!(buf_page_ref.in_file());
         ut_ad!(buf_page_ref.buf_page_get_io_fix() == BufIoFix::BufIoWrite);
@@ -317,8 +312,7 @@ impl BufFlush {
     pub fn post_to_double_write_buf(&mut self, buf_block: &mut BufBlock) {
         let mut continue_writing = true;
         while continue_writing {
-            let buf_page = buf_block.buf_block_get_page();
-            let buf_page_ref = buf_page.borrow_mut();
+            let buf_page_ref = buf_block.buf_block_get_page_mut();
             ut_a!(buf_page_ref.get_state() == BufPageState::BufBlockFilePage);
 
             let mut dblwr = self.dblwr.lock().unwrap();

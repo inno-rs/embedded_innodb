@@ -2,9 +2,7 @@
 mod tests {
     use std::{
         alloc::{Layout, alloc_zeroed},
-        cell::RefCell,
         ops::Deref,
-        rc::Rc,
         sync::{Arc, Mutex, RwLock},
     };
 
@@ -44,8 +42,7 @@ mod tests {
     impl PageCurFixture {
         fn new() -> PageCurFixture {
             let frame = get_raw_block();
-            let buf_page =
-                RefCell::new(Rc::new(RefCell::new(BufPage::dummy())));
+            let buf_page = BufPage::dummy();
             let buf_block =
                 Arc::new(RwLock::new(BufBlock::new(buf_page, frame)));
             let index = Index::new(PageId::dummy());

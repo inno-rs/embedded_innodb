@@ -208,7 +208,7 @@ impl DoubleWriteBuffer {
     /// - The page cannot be retrieved from the buffer
     pub fn append(&mut self, buf_block: &mut BufBlock) -> Result<(), String> {
         let page_frame = buf_block.get_page_frame();
-        let page_id = buf_block.buf_block_get_page().borrow().get_page_id();
+        let page_id = buf_block.buf_block_get_page().get_page_id();
         self.append_low(page_id, page_frame.0)
     }
 
