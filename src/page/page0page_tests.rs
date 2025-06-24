@@ -1,10 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use std::{
-        alloc::{Layout, alloc_zeroed},
-        cell::RefCell,
-        rc::Rc,
-    };
+    use std::alloc::{Layout, alloc_zeroed};
 
     use rstest::{fixture, rstest};
     use tracing::info;
@@ -32,8 +28,7 @@ mod tests {
         fn new() -> PageFixture {
             let index = Index::new(PageId { space_id: 0, page_no: 0 });
             let frame = get_raw_block();
-            let buf_page =
-                RefCell::new(Rc::new(RefCell::new(BufPage::dummy())));
+            let buf_page = BufPage::dummy();
             let buf_block = BufBlock::new(buf_page, frame);
             let mtr = None;
             let page = Page::page_create(&index, &buf_block, mtr);

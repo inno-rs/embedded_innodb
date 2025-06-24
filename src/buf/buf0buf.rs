@@ -1,11 +1,9 @@
 use std::{
     alloc::{Layout, alloc_zeroed},
-    cell::RefCell,
     cmp::min,
     collections::HashMap,
-    ops::{Deref, DerefMut},
-    rc::Rc,
-    sync::{Arc, Mutex, RwLock},
+    ops::DerefMut,
+    sync::{Arc, Mutex, RwLock, atomic::Ordering::Relaxed},
 };
 
 use intrusive_collections::{LinkedList, UnsafeRef};
@@ -49,13 +47,13 @@ pub struct BufPool {
     /// File system interface for I/O operations
     fil: Arc<Mutex<Fil>>,
     /// reference to BufLru.
-    buf_lru: Arc<RefCell<BufLRU>>,
+    buf_lru: Arc<Mutex<BufLRU>>,
     /// List of memory chunks allocated for the buffer pool
     chunks: Vec<Arc<RwLock<BufChunk>>>,
     /// Statistics about the buffer pool
-    stat: RefCell<BufPoolStats>,
+    stat: Arc<BufPoolStats>,
     /// Reference to the buffer read manager for handling page reads.
-    buf_rea: Arc<RefCell<BufRea>>,
+    buf_rea: Arc<Mutex<BufRea>>,
 }
 impl BufPool {
     /// Creates a new Buffer Pool instance.
@@ -67,8 +65,8 @@ impl BufPool {
     /// A new BufPool instance with initialized data structures
     pub fn new(
         fil: Arc<Mutex<Fil>>,
-        buf_lru: Arc<RefCell<BufLRU>>,
-        buf_rea: Arc<RefCell<BufRea>>,
+        buf_lru: Arc<Mutex<BufLRU>>,
+        buf_rea: Arc<Mutex<BufRea>>,
     ) -> Self {
         BufPool {
             freed_page_clock: 0,
@@ -78,7 +76,7 @@ impl BufPool {
             fil,
             buf_lru,
             chunks: vec![],
-            stat: RefCell::new(BufPoolStats::new()),
+            stat: Arc::new(BufPoolStats::new()),
             buf_rea,
         }
     }
@@ -102,7 +100,7 @@ impl BufPool {
     /// * `Some(BufBlock)` - A free buffer block if available
     /// * `None` - If no free blocks are available
     pub fn get_free_block(&mut self) -> Option<Arc<RwLock<BufBlock>>> {
-        if let Some(r) = self.buf_lru.borrow_mut().get_free_block() {
+        if let Some(r) = self.buf_lru.lock().unwrap().get_free_block() {
             info!("free block found");
             Some(r)
         } else {
@@ -140,7 +138,7 @@ impl BufPool {
                 || request.mode == BUF_GET_NO_LATCH
         );
 
-        self.stat.borrow_mut().n_pages_get += 1;
+        self.stat.n_pages_get.fetch_add(1, Relaxed);
         let mut n_retries = 0u32;
 
         // TODO(Rahul): Understand the logic of `guess`.
@@ -192,7 +190,7 @@ impl BufPool {
                 let buf_block =
                     some_or_panic!(b, "failed to initialize page for read");
 
-                let buf_rea = self.buf_rea.borrow_mut();
+                let buf_rea = self.buf_rea.lock().unwrap();
                 if buf_rea.buf_read_page(
                     IORequest::SyncRead,
                     request.page_id.space_id,
@@ -200,10 +198,9 @@ impl BufPool {
                     buf_block.clone(),
                 ) {
                     // Successfully read the page.
-                    let buf_block = buf_block.read().unwrap();
-                    let buf_page = buf_block.buf_block_get_page();
-                    let mut buf_page_ref = buf_page.borrow_mut();
-                    self.io_complete(buf_page_ref.deref_mut());
+                    let mut buf_block = buf_block.write().unwrap();
+                    let buf_page_ref = buf_block.buf_block_get_page_mut();
+                    self.io_complete(buf_page_ref);
 
                     n_retries += 1;
                 }
@@ -217,7 +214,7 @@ impl BufPool {
             let block_ref = block.read().unwrap();
             // The page is being read.
             let page_read_io =
-                block_ref.buf_block_get_page().borrow().buf_page_get_io_fix()
+                block_ref.buf_block_get_page().buf_page_get_io_fix()
                     == BufIoRead;
 
             if page_read_io && request.mode == BUF_GET_IF_IN_POOL {
@@ -242,10 +239,9 @@ impl BufPool {
 
         ut_ad!(state == BufPageState::BufBlockFilePage);
         // Increment the buffix count for the page.
-        block_ref.buf_block_get_page().borrow_mut().buf_page_io_fix_count();
+        block_ref.buf_block_get_page().buf_page_io_fix_count();
         let buf_page = block_ref.buf_block_get_page();
-        let access_time =
-            self.buf_page_accessed_time(buf_page.borrow_mut().deref());
+        let access_time = self.buf_page_accessed_time(buf_page);
 
         self.set_accessed_make_young(block_ref, access_time);
 
@@ -321,9 +317,9 @@ impl BufPool {
     ) -> bool {
         let page_id = PageId { space_id, page_no };
         if let Some(block) = self.page_hash.remove(&page_id) {
-            let block_ref = block.write().unwrap();
-            let buf_page = block_ref.buf_block_get_page();
-            buf_page.borrow_mut().set_is_in_hash_map(false);
+            let mut block_ref = block.write().unwrap();
+            let buf_page = block_ref.buf_block_get_page_mut();
+            buf_page.set_is_in_hash_map(false);
             return true;
         }
         false
@@ -401,11 +397,10 @@ impl BufPool {
         /* 3. Allocate a new buffer block for the page. */
         let block = some_or_panic!(block, "buf_block should be present");
         {
-            let block_ref = block.write().unwrap();
+            let mut block_ref = block.write().unwrap();
 
-            let buf_page = block_ref.buf_block_get_page();
-            let mut buf_page_ref = buf_page.borrow_mut();
-            self.buf_lru.borrow_mut().add_block(&mut buf_page_ref, false);
+            let mut buf_page_ref = block_ref.buf_block_get_page_mut();
+            self.buf_lru.lock().unwrap().add_block(&mut buf_page_ref, false);
         }
 
         self.page_init(space_id, page_no, block.clone());
@@ -486,7 +481,7 @@ impl BufPool {
     /// # Parameters
     /// * `buf_block` - The buffer block to free
     pub fn block_free(&mut self, buf_block: &mut BufBlock) {
-        self.buf_lru.borrow_mut().block_free_non_file_page(buf_block);
+        self.buf_lru.lock().unwrap().block_free_non_file_page(buf_block);
     }
 
     /// Creates a new page in the buffer pool.
@@ -520,7 +515,7 @@ impl BufPool {
                 let mut buf_block = block.write().unwrap();
                 let buf_block_ref = buf_block.deref_mut();
 
-                if buf_block_ref.buf_block_get_page().borrow().in_file() {
+                if buf_block_ref.buf_block_get_page().in_file() {
                     self.block_free(buf_block_ref);
 
                     // return using the Get methods.
@@ -543,7 +538,7 @@ impl BufPool {
     /// # Returns
     /// * `usize` - The number of blocks in the free list
     pub fn get_free_list_size(&self) -> usize {
-        self.buf_lru.borrow().get_free_list_size()
+        self.buf_lru.lock().unwrap().get_free_list_size()
     }
 
     /// Initializes a chunk of memory for the buffer pool.
@@ -576,29 +571,22 @@ impl BufPool {
 
         let mut buf_frame_ptr = mem_ptr;
         for index in 0..no_of_pages {
-            let buf_page = RefCell::new(Rc::new(RefCell::new(BufPage::new(
-                index as SpaceId,
-                index as PageNo,
-            ))));
-            let buf_block = Arc::new(RwLock::new(BufBlock::new(
-                buf_page.clone(),
-                buf_frame_ptr,
-            )));
+            let buf_page = BufPage::new(index as SpaceId, index as PageNo);
+            let buf_block =
+                Arc::new(RwLock::new(BufBlock::new(buf_page, buf_frame_ptr)));
 
-            let buf_page_ref = buf_page.borrow();
+            let mut buf_block_guard = buf_block.write().unwrap();
+            let buf_page_ref = buf_block_guard.buf_block_get_page_mut();
 
-            self.buf_lru
-                .borrow_mut()
-                .add_to_free_list(buf_page_ref.borrow_mut().deref_mut());
+            self.buf_lru.lock().unwrap().add_to_free_list(buf_page_ref);
 
             let buf_block_weak = Arc::downgrade(&buf_block);
 
-            buf_page
-                .borrow()
-                .borrow_mut()
+            buf_block_guard
+                .buf_block_get_page_mut()
                 .set_buf_block_ref(buf_block_weak.clone());
 
-            buf_pages.push(buf_block);
+            buf_pages.push(buf_block.clone());
 
             unsafe {
                 buf_frame_ptr = buf_frame_ptr.add(UNIV_PAGE_SIZE);

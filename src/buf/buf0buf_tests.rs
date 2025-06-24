@@ -1,10 +1,6 @@
 #[cfg(test)]
 pub(super) mod tests {
-    use std::{
-        cell::RefCell,
-        rc::Rc,
-        sync::{Arc, Mutex},
-    };
+    use std::sync::{Arc, Mutex};
 
     use rstest::{fixture, rstest};
 
@@ -23,8 +19,7 @@ pub(super) mod tests {
     };
 
     pub struct BufPoolFixture {
-        buf_lru: Arc<RefCell<BufLRU>>,
-        buf_pool: Rc<RefCell<BufPool>>,
+        buf_pool: Arc<Mutex<BufPool>>,
     }
 
     impl BufPoolFixture {
@@ -32,16 +27,16 @@ pub(super) mod tests {
             let runtime = create_runtime(1);
             let os_io = Arc::new(Mutex::new(OsIo::new(runtime.clone())));
             let fil = Arc::new(Mutex::new(Fil::new(1, os_io, runtime)));
-            let buf_rea = Arc::new(RefCell::new(BufRea::new(fil.clone())));
-            let buf_lru = Arc::new(RefCell::new(BufLRU::new()));
-            let buf_pool_rc = Rc::new(RefCell::new(BufPool::new(
+            let buf_rea = Arc::new(Mutex::new(BufRea::new(fil.clone())));
+            let buf_lru = Arc::new(Mutex::new(BufLRU::new()));
+            let buf_pool = Arc::new(Mutex::new(BufPool::new(
                 fil,
                 buf_lru.clone(),
                 buf_rea,
             )));
-            buf_lru.borrow_mut().init(Rc::downgrade(&buf_pool_rc));
+            buf_lru.lock().unwrap().init(Arc::downgrade(&buf_pool));
 
-            BufPoolFixture { buf_lru, buf_pool: buf_pool_rc }
+            BufPoolFixture { buf_pool }
         }
     }
 
@@ -52,7 +47,7 @@ pub(super) mod tests {
 
     #[rstest]
     fn create_buf_pool(buf_pool_fixture: BufPoolFixture) {
-        let buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
+        let buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
 
         let page = buf_pool.hash_get_page(0, 0);
 
@@ -62,7 +57,7 @@ pub(super) mod tests {
 
     #[rstest]
     fn test_free_list_returns_none(buf_pool_fixture: BufPoolFixture) {
-        let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
+        let mut buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
 
         let r = buf_pool.get_free_block();
         assert!(r.is_none());
@@ -70,7 +65,7 @@ pub(super) mod tests {
 
     #[rstest]
     fn test_free_list_returns_some(buf_pool_fixture: BufPoolFixture) {
-        let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
+        let mut buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
 
         let result = buf_pool.chunk_init(10 * UNIV_PAGE_SIZE);
 
@@ -80,7 +75,8 @@ pub(super) mod tests {
 
     #[rstest]
     fn test_create_space(buf_pool_fixture: BufPoolFixture) {
-        let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
+        let mut buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
+
         let mut mtr = Mtr::new();
         mtr.set_mtr_state(MtrActive);
 
@@ -109,7 +105,8 @@ pub(super) mod tests {
 
     #[rstest]
     fn test_buf_pool_get_page(buf_pool_fixture: BufPoolFixture) {
-        let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
+        let mut buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
+
         let mut mtr = Mtr::new();
         mtr.set_mtr_state(MtrActive);
 
@@ -132,7 +129,8 @@ pub(super) mod tests {
 
     #[rstest]
     fn test_buf_pool_get_multiple(buf_pool_fixture: BufPoolFixture) {
-        let mut buf_pool = buf_pool_fixture.buf_pool.borrow_mut();
+        let mut buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
+
         let mut mtr = Mtr::new();
         mtr.set_mtr_state(MtrActive);
 

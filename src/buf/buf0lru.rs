@@ -1,9 +1,7 @@
 use std::{
-    cell::RefCell,
     cmp::min,
-    ops::{Deref, DerefMut},
-    rc::{Rc, Weak},
-    sync::{Arc, RwLock},
+    ops::Deref,
+    sync::{Arc, Mutex, RwLock, Weak},
 };
 
 use intrusive_collections::{LinkedList, UnsafeRef};
@@ -64,17 +62,17 @@ pub enum BlockStatus {
 /// is full.
 pub struct BufLRU {
     /// Reference to the buffer pool that this LRU manager operates on
-    buf_pool: Weak<RefCell<BufPool>>,
+    buf_pool: Weak<Mutex<BufPool>>,
     /// Reserve old_ratio/OLD_RATIO_DIV for old blocks.
     old_ratio: usize,
     /// List of buffer blocks ordered by least recently used algorithm
-    lru_list: Arc<RefCell<LinkedList<LruAdapter>>>,
+    lru_list: LinkedList<LruAdapter>,
     /// Pointer to old_ratio/buf_lru_ratio_div. None if LRU length less than BUF_LRU_MIN_LEN.
     lru_old_head: Option<UnsafeRef<BufPage>>,
     /// Length of the Lru list from the node pointed to by the lru_old_head to the end. This section consists of old blocks.
     lru_old_len: usize,
     /// List of free buffer blocks available for allocation
-    free_list: Arc<RefCell<LinkedList<FreeListAdapter>>>,
+    free_list: LinkedList<FreeListAdapter>,
 }
 
 impl BufLRU {
@@ -103,11 +101,8 @@ impl BufLRU {
     ///
     /// # Parameters
     /// * `buf_pool` - A weak reference to the buffer pool to manage
-    pub fn init(&mut self, buf_pool: Weak<RefCell<BufPool>>) {
-        let buf_pool_ref = buf_pool.upgrade();
-        if let Some(buf_pool) = buf_pool_ref {
-            self.buf_pool = Rc::downgrade(&buf_pool);
-        }
+    pub fn init(&mut self, buf_pool: Weak<Mutex<BufPool>>) {
+        self.buf_pool = buf_pool;
     }
 
     /// Tries to remove LRU flushed blocks from the end of the LRU list and put them to the free list.
@@ -179,7 +174,7 @@ impl BufLRU {
     /// # Parameters
     /// * `buf_page` - The buffer page to remove from the LRU list
     fn remove_block(&mut self, buf_page: &mut BufPage) {
-        let mut lru_ref = self.lru_list.borrow_mut();
+        let lru_ref = &mut self.lru_list;
         unsafe {
             let mut cursor = lru_ref.cursor_mut_from_ptr(buf_page);
             cursor.remove();
@@ -217,13 +212,13 @@ impl BufLRU {
     /// * `buf_page` - The buffer page to add to the LRU list
     /// * `old` - Whether to add the page to the old section of the LRU list
     fn add_block_low(&mut self, buf_page: &mut BufPage, old: bool) {
-        let length = self.lru_list.borrow().iter().count();
+        let length = self.lru_list.iter().count();
         if old == false || length < OLD_MIN_LENGTH {
             let page = unsafe { UnsafeRef::from_raw(buf_page) };
-            let mut lru_list = self.lru_list.borrow_mut();
-            lru_list.push_front(page);
+
+            self.lru_list.push_front(page);
         } else {
-            let mut lru_list_ref = self.lru_list.borrow_mut();
+            let lru_list_ref = &mut self.lru_list;
             unsafe {
                 let mut cursor = lru_list_ref.cursor_mut_from_ptr(buf_page);
                 cursor.insert_after(UnsafeRef::from_raw(buf_page));
@@ -279,7 +274,7 @@ impl BufLRU {
 
         let mut changes: Vec<PageStateChange> = vec![];
         {
-            let lru_length = self.lru_list.borrow().iter().count();
+            let lru_length = self.lru_list.iter().count();
             let new_length = min(
                 lru_length * self.old_ratio / OLD_RATIO_DIV,
                 lru_length - OLD_TOLERANCE - NON_MIN_LENGTH,
@@ -287,7 +282,7 @@ impl BufLRU {
 
             let mut lru_old_length = self.lru_old_len;
             let buf_page = self.lru_old_head.take().unwrap();
-            let lru_list = self.lru_list.borrow_mut();
+            let lru_list = &mut self.lru_list;
 
             // move the pointer pointing to lru_old_head to increase the old section
             while new_length > lru_old_length + OLD_TOLERANCE {
@@ -330,7 +325,7 @@ impl BufLRU {
         let mut mtr = Mtr::new();
         let buf_pool =
             some_or_panic!(self.buf_pool.upgrade(), "buf_pool is empty");
-        let mut buf_pool_ref = buf_pool.borrow_mut();
+        let mut buf_pool_ref = buf_pool.lock().unwrap();
         changes.iter().for_each(|change| {
             buf_pool_ref.get(Request {
                 rw_latch: ReadWriteLatch::NoLatch,
@@ -373,7 +368,7 @@ impl BufLRU {
     /// * `Some(BufBlock)` - A free buffer block if available on the free list
     /// * `None` - If the free list is empty
     pub fn get_free_only(&mut self) -> Option<Arc<RwLock<BufBlock>>> {
-        let buf_page = self.free_list.borrow_mut().pop_front();
+        let buf_page = self.free_list.pop_front();
 
         if let Some(buf_page) = buf_page {
             let buf_block = buf_page.buf_page_get_buf_block();
@@ -381,8 +376,7 @@ impl BufLRU {
                 let mut block_ref = block.write().unwrap();
 
                 {
-                    let buf_page = block_ref.buf_block_get_page();
-                    let mut buf_page_ref = buf_page.borrow_mut();
+                    let buf_page_ref = block_ref.buf_block_get_page_mut();
 
                     ut_ad!(buf_page_ref.is_in_free_list());
                     ut_ad!(buf_page_ref.is_in_lru_list() == false);
@@ -449,19 +443,18 @@ impl BufLRU {
             }
         }
 
-        let buf_page = block.buf_block_get_page();
-        let page_ref = buf_page.borrow();
+        let page_ref = block.buf_block_get_page();
         ut_ad!(page_ref.is_in_free_list() == false);
         ut_ad!(page_ref.is_in_flush_list() == false);
         ut_ad!(page_ref.is_in_lru_list() == false);
 
         block.buf_block_set_state(BufBlockNotUsed);
 
-        let page = block.buf_block_get_page();
+        let page = block.buf_block_get_page_mut();
 
-        self.add_to_free_list(page.borrow_mut().deref_mut());
+        self.add_to_free_list(page);
 
-        ut_a!(page.borrow().is_in_lru_list())
+        ut_a!(page.is_in_lru_list())
     }
 
     /// Adds a buffer page to the free list.
@@ -473,7 +466,7 @@ impl BufLRU {
     /// * `buf_page` - The buffer page to add to the free list
     pub fn add_to_free_list(&mut self, buf_page: &mut BufPage) {
         ut_ad!(buf_page.is_in_free_list() == false);
-        let mut free_list_ref = self.free_list.borrow_mut();
+        let free_list_ref = &mut self.free_list;
         unsafe {
             free_list_ref.push_back(UnsafeRef::from_raw(buf_page));
         }
@@ -499,7 +492,7 @@ impl BufLRU {
     /// # Returns
     /// * `usize` - The number of blocks in the free list
     pub fn get_free_list_size(&self) -> usize {
-        self.free_list.borrow().iter().count()
+        self.free_list.iter().count()
     }
 
     /// Attempts to free a buffer block from the LRU list.
@@ -561,7 +554,7 @@ impl BufLRU {
         self.remove_block(buf_page);
 
         if let Some(buf_pool) = self.buf_pool.upgrade() {
-            buf_pool.borrow_mut().incr_freed_page_count();
+            buf_pool.lock().unwrap().incr_freed_page_count();
         } else {
             ut_panic!("buf_pool reference not found");
         }
@@ -590,7 +583,8 @@ impl BufLRU {
 
         // Get the page from the buffer pool hashmap.
         let buf_pool = self.buf_pool.upgrade().unwrap();
-        buf_pool.borrow_mut().hash_remove_page(space_id, page_no);
+        let mut buf_pool_ref = buf_pool.lock().unwrap();
+        buf_pool_ref.hash_remove_page(space_id, page_no);
 
         match buf_page.get_state() {
             BufPageState::BufBlockFilePage => {}

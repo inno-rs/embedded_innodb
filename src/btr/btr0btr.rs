@@ -29,6 +29,7 @@ use crate::{
     rem::rem0rec::Record,
     sync::sync0rw::ReadWriteLatch,
     ut::ut0dbg::ut_ad,
+    ut_panic,
 };
 
 /// BTree represents a B-tree data structure used for efficient data storage and retrieval.
@@ -110,7 +111,7 @@ impl BTree {
 
             match buf_block {
                 None => {
-                    panic!("should not happen");
+                    ut_panic!("should not happen")
                 }
                 Some(buf) => {
                     let prev_page = buf.read().unwrap().get_page();
@@ -325,7 +326,7 @@ impl BTree {
         let page_no = page_no;
 
         ut_ad!(mtr.memo_contains(&MemoSlot::PageFix {
-            page: PageId { space_id, page_no },
+            page_id: PageId { space_id, page_no },
             mode: FixMode::Exclusive,
         }));
 

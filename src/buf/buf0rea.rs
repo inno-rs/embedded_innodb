@@ -97,8 +97,7 @@ impl BufRea {
 
         let (space_id, page_no) = {
             let buf_block = buf_block.read().unwrap();
-            let page_id =
-                buf_block.buf_block_get_page().borrow().get_page_id();
+            let page_id = buf_block.buf_block_get_page().get_page_id();
 
             (page_id.space_id, page_id.page_no)
         };

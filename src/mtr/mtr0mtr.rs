@@ -110,7 +110,7 @@ impl Mtr {
             let slot = self.memo.remove(pos);
             // release slot exactly as in rollback_to_savepoint:
             match slot {
-                MemoSlot::PageFix { page, mode } => {
+                MemoSlot::PageFix { page_id: page, mode } => {
                     /* buf_pool.unfix(page, mode) */
                 }
                 MemoSlot::PageDirty(page) => { /* clear dirty flag? */ }
@@ -151,7 +151,7 @@ impl Mtr {
             MemoSlot::Other(OtherResource { id: 0, flags: 0 }),
         );
         match owned {
-            MemoSlot::PageFix { page, mode } => {
+            MemoSlot::PageFix { page_id: page, mode } => {
                 // TODO: call buffer-pool release: srv_buf_pool.release(page, mode, self)
             }
             MemoSlot::PageDirty(page) => {
@@ -217,7 +217,7 @@ impl Mtr {
         while self.memo.len() > savepoint {
             let slot = self.memo.pop().unwrap();
             match slot {
-                MemoSlot::PageFix { page, mode } => {
+                MemoSlot::PageFix { page_id: page, mode } => {
                     // e.g. buf_pool.unfix(page, mode);
                 }
                 MemoSlot::PageDirty(page) => {
@@ -322,7 +322,7 @@ impl Mtr {
     pub fn release_block_at_savepoint(
         &mut self,
         savepoint: Savepoint,
-        block: &BufBlock,
+        block: &mut BufBlock,
     ) {
         ut_ad!(self.is_active(), "release only in ACTIVE state");
         #[cfg(debug_assertions)]
@@ -337,14 +337,10 @@ impl Mtr {
             MemoSlot::Other(OtherResource { id: 0, flags: 0 }),
         );
         match slot_ref {
-            MemoSlot::PageFix { page, .. } | MemoSlot::PageDirty(page) => {
+            MemoSlot::PageFix { page_id, .. }
+            | MemoSlot::PageDirty(page_id) => {
                 // In debug: check page ID matches block
-                #[cfg(debug_assertions)]
-                {
-                    let page_id =
-                        block.buf_page.borrow().borrow().get_page_id();
-                    ut_ad!(page_id == page);
-                }
+                ut_ad!(block.buf_block_get_page().get_page_id() == page_id);
             }
             _ => ut_panic!("slot at {} is not a page slot", savepoint),
         }

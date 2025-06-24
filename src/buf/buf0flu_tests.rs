@@ -1,21 +1,15 @@
 #[cfg(test)]
 mod tests {
-    use std::{
-        cell::RefCell,
-        sync::{Arc, Mutex, RwLock},
-    };
+    use std::sync::{Arc, Mutex};
 
     use rstest::{fixture, rstest};
 
     use crate::{
         buf::{
-            buf0buf::BufPool,
             buf0dblwr::{
                 DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer, WriteBuffer,
             },
             buf0flu::BufFlush,
-            buf0lru::BufLRU,
-            buf0rea::BufRea,
         },
         fil::fil0fil::Fil,
         innodb::innodb0types::UNIV_PAGE_SIZE,
@@ -38,10 +32,6 @@ mod tests {
             let os_io = Arc::new(Mutex::new(OsIo::new(runtime.clone())));
             let fil =
                 Arc::new(Mutex::new(Fil::new(100, os_io.clone(), runtime)));
-            let rea = Arc::new(RefCell::new(BufRea::new(fil.clone())));
-            let buf_lru = Arc::new(RefCell::new(BufLRU::new()));
-            let buf_pool =
-                Arc::new(RwLock::new(BufPool::new(fil.clone(), buf_lru, rea)));
             let block = Box::new(WriteBuffer([0u8; DOUBLE_WRITE_BUFFER_SIZE]));
             let dblwr_buf = Arc::new(Mutex::new(DoubleWriteBuffer::new(
                 block,

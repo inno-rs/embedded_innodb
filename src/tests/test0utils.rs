@@ -1,8 +1,6 @@
 use std::{
     alloc::{Layout, alloc_zeroed},
-    cell::RefCell,
     ops::Deref,
-    rc::Rc,
     sync::{Arc, Mutex, RwLock},
 };
 
@@ -112,10 +110,8 @@ pub fn create_raw_page() -> OwningPage {
     let mem = unsafe { alloc_zeroed(layout) };
 
     let index = Index::new(PageId::dummy());
-    let buf_block = Arc::new(RwLock::new(BufBlock::new(
-        RefCell::new(Rc::new(RefCell::new(BufPage::dummy()))),
-        mem,
-    )));
+    let buf_block =
+        Arc::new(RwLock::new(BufBlock::new(BufPage::dummy(), mem)));
 
     let buf_block_clone = buf_block.clone();
     OwningPage {
