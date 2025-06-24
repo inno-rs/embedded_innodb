@@ -567,7 +567,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn test_extend_space_creates_new_extent() {
         let mut raw_page = RawPage::new();
         let frame = raw_page.as_page_frame().0;

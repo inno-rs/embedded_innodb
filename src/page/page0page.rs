@@ -190,6 +190,28 @@ impl Page {
         }
     }
 
+    /// Read the 4-byte `FIL_PAGE_SPACE_ID` field as a big-endian u32.
+    pub fn page_get_space_id_be(&self) -> SpaceId {
+        unsafe {
+            // Manually load the four bytes MSB→LSB
+            let b0 = *self.ptr.add(FIL_PAGE_SPACE_ID);
+            let b1 = *self.ptr.add(FIL_PAGE_SPACE_ID + 1);
+            let b2 = *self.ptr.add(FIL_PAGE_SPACE_ID + 2);
+            let b3 = *self.ptr.add(FIL_PAGE_SPACE_ID + 3);
+            u32::from_be_bytes([b0, b1, b2, b3]) as SpaceId
+        }
+    }
+
+    /// Write a new 4-byte `FIL_PAGE_SPACE_ID` field in big-endian order.
+    pub fn page_set_space_id_be(&mut self, new_space: SpaceId) {
+        let v: u32 = new_space as u32;
+        let be = v.to_be_bytes();
+        unsafe {
+            let dst = self.ptr.add(FIL_PAGE_SPACE_ID);
+            dst.copy_from_nonoverlapping(be.as_ptr(), 4);
+        }
+    }
+
     /// Copy the page to a destination buffer.
     pub fn copy_to(&self, buffer: &mut [u8; UNIV_PAGE_SIZE]) {
         let src = self.page_get_as_mut_slice();
@@ -234,6 +256,29 @@ impl Page {
         unsafe {
             let dst = self.ptr.add(FIL_PAGE_OFFSET);
             dst.copy_from_nonoverlapping(le.as_ptr(), 4);
+        }
+    }
+
+    /// Read the 4-byte `FIL_PAGE_OFFSET` field as a big-endian u32.
+    pub fn page_get_fil_offset_be(&self) -> usize {
+        unsafe {
+            // Read the four bytes one at a time, MSB first
+            let b0 = *self.ptr.add(FIL_PAGE_OFFSET);
+            let b1 = *self.ptr.add(FIL_PAGE_OFFSET + 1);
+            let b2 = *self.ptr.add(FIL_PAGE_OFFSET + 2);
+            let b3 = *self.ptr.add(FIL_PAGE_OFFSET + 3);
+            u32::from_be_bytes([b0, b1, b2, b3]) as usize
+        }
+    }
+
+    /// Write a new 4-byte `FIL_PAGE_OFFSET` field in big-endian order.
+    pub fn page_set_fil_offset_be(&mut self, new_offset: usize) {
+        let v: u32 = new_offset as u32;
+        let be = v.to_be_bytes();
+        unsafe {
+            let dst = self.ptr.add(FIL_PAGE_OFFSET);
+            // copy MSB first
+            dst.copy_from_nonoverlapping(be.as_ptr(), 4);
         }
     }
 

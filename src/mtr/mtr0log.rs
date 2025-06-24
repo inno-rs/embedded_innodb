@@ -80,16 +80,16 @@ impl MLog {
             .mlog_write_initial_log_record_fast(page, mlog_type, start, mtr);
 
         // 5) Write the in-page offset (2-byte little-endian)
-        let off_bytes = (offset as u16).to_le_bytes();
+        let off_bytes = (offset as u16).to_be_bytes();
         self.buf[pos..pos + 2].copy_from_slice(&off_bytes);
         pos += 2;
 
         // 6) Write the 4-byte little-endian value
-        let val_bytes = val.to_le_bytes();
+        let val_bytes = val.to_be_bytes();
         self.buf[pos..pos + 4].copy_from_slice(&val_bytes);
         pos += 4;
+        self.buf.truncate(pos);
 
-        // done! (mlog_close is a no-op)
     }
 
     /// Write an 8-byte LE value at `offset` in `page` and log it exactly like
@@ -108,10 +108,12 @@ impl MLog {
         // 2) Apply the 8‐byte LE change into the frame
         mach_write_to_8(&mut frame.0[offset..offset + 8], val);
 
+
         // 3) If logging is off, bail out
         if mtr.get_log_mode() == MTR_LOG_NONE {
             return;
         }
+
 
         // 4) Reserve space for header + offset + compressed payload
         const HEADER_SZ: usize = 11; // max header (1 + 5 + 5)
@@ -130,17 +132,17 @@ impl MLog {
 
         // 6) Write the 2-byte page offset (little-endian)
         // This is a byte offset withing the page.
-        let off_bytes = (offset as u16).to_le_bytes();
+        let off_bytes = (offset as u16).to_be_bytes();
         self.buf[pos..pos + 2].copy_from_slice(&off_bytes);
         pos += 2;
 
         // 7) Write the compressed u64 (high varint + low 4 bytes)
         let written = mach_uint64_write_compressed(&mut self.buf[pos..], val);
         pos += written;
+        self.buf.truncate(pos);
+
     }
 
-    /// Copy `data` into `page` at `offset`, then emit a full
-    /// [header][offset][len][data] redo‐record for MLOG_WRITE_STRING.
     pub fn mlog_write_string(
         &mut self,
         page: &Page,
@@ -149,6 +151,7 @@ impl MLog {
         mtr: &mut Mtr,
     ) {
         // 1) In‐memory update
+
         let frame = page.to_page_frame();
         frame.0[offset..offset + data.len()].copy_from_slice(data);
 
@@ -170,14 +173,14 @@ impl MLog {
             start,
             mtr,
         );
-
-        // 5) Write 2-byte little-endian page‐offset
-        let off_bytes = (offset as u16).to_le_bytes();
+        
+        // 5) Write 2-byte **big-endian** page-offset
+        let off_bytes = (offset as u16).to_be_bytes();
         self.buf[pos..pos + 2].copy_from_slice(&off_bytes);
         pos += 2;
 
-        // 6) Write 2-byte little-endian length
-        let len_bytes = (data.len() as u16).to_le_bytes();
+        // 6) Write 2-byte **big-endian** length
+        let len_bytes = (data.len() as u16).to_be_bytes();
         self.buf[pos..pos + 2].copy_from_slice(&len_bytes);
         pos += 2;
 
@@ -231,14 +234,15 @@ impl MLog {
         log_pos += 1;
 
         // --- 2) COMPRESS & WRITE space_id ---
-        let space = page.page_get_space_id();
+
+        let space = page.page_get_space_id_be() ;
         let n_space = mach_write_compressed(&mut self.buf[log_pos..], space);
         log_pos += n_space;
 
         // --- 3) COMPRESS & WRITE page_no ---
-        let pageno = page.page_get_fil_offset();
-        let n_page =
-            mach_write_compressed(&mut self.buf[log_pos..], pageno as u32);
+        
+        let pageno = page.page_get_fil_offset_be();
+        let n_page = mach_write_compressed(&mut self.buf[log_pos..], pageno as u32);
         log_pos += n_page;
 
         // --- 4) BUMP RECORD COUNT ---
@@ -265,7 +269,7 @@ impl MLog {
         }
 
         // 3) If not in the dblwr‐create phase, emit the fast header
-        if !mtr.dblwr_create_in_progress {
+        if !mtr.get_dblwr_create_in_progress() {
             // Reserve space for the worst‐case 11‐byte header
             let start = self.buf.len();
             const MAX_HEADER: usize = 11;
@@ -299,10 +303,9 @@ impl MLog {
         if input.len() < 4 {
             return None;
         }
-
-        // 2) Read offset + length (little-endian)
-        let offset = u16::from_le_bytes([input[0], input[1]]) as usize;
-        let len = u16::from_le_bytes([input[2], input[3]]) as usize;
+        
+        let offset = u16::from_be_bytes([input[0], input[1]]) as usize;
+        let len    = u16::from_be_bytes([input[2], input[3]]) as usize;
         input = &input[4..];
 
         // 3) Bounds check against page size
@@ -341,41 +344,33 @@ impl MLog {
     ///
     pub fn mlog_open_and_write_index(
         &mut self,
+        page: &Page,
         mtr: &mut Mtr,
         mlog_type: MlogType,
         size: usize,
     ) -> Option<&mut [u8]> {
-        // Mirrors mlog_open(mtr, 11 + size):
-        // If no logging, bail out.
+        // 1) Bail out if logging is off
         if mtr.get_log_mode() == MTR_LOG_NONE {
             return None;
         }
 
-        // Reserve exactly 11 + size bytes in the buffer.
-        // We remember the starting offset so we can slice out the payload region.
+        // 2) Reserve exactly 11 + size bytes
         const HEADER_LEN: usize = 11;
         let start = self.buf.len();
         self.buf.resize(start + HEADER_LEN + size, 0);
 
-        // Emit the “fast” initial header at `start` (1 byte + compressed page info).
-        // Here we only push the record‐type byte and bump the log‐record count;
-        // your `mlog_write_initial_log_record_fast` may encode more meta.
-        mach_write_to_1(&mut self.buf[start..start + 1], mlog_type as u8);
-        mtr.inc_n_log_records();
+        // 3) Write the 11‐byte fast header (type + varints)
+        let after_header = self.mlog_write_initial_log_record_fast(
+            page,
+            mlog_type,
+            start,
+            mtr,
+        );
+        
 
-        // Compute where the caller’s payload begins:
-        let payload_start = start + HEADER_LEN;
-        let payload_end = payload_start + size;
-
-        // In C++ they do:
-        //   if size==0 close immediately; else if overflow reopen…
-        // You can mimic that logic here if needed.  For now we simply hand back
-        // the slice for writing, or `None` if size==0.
-        if size == 0 {
-            // no payload to fill, so treat like “closed”:
-            return None;
-        }
-
-        Some(&mut self.buf[payload_start..payload_end])
+        // 5) Return the slice for the caller to fill in its payload
+        let end = after_header + size;
+        self.buf.truncate(end);
+        Some(&mut self.buf[after_header..end])
     }
 }
