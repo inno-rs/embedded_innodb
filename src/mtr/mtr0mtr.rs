@@ -18,7 +18,7 @@ pub struct Mtr {
     memo: Vec<MemoSlot>,
     log_buffer: MLog,
     savepoints: Vec<Savepoint>,
-    pub(crate) dblwr_create_in_progress: bool,
+    dblwr_create_in_progress: bool,
     magic_n: u32,
 }
 
@@ -26,7 +26,7 @@ impl Mtr {
     pub fn new() -> Self {
         Self {
             mtr_state: MtrState::MtrUndefined,
-            log_mode: MtrLogMode::MTR_LOG_MODE_ALL,
+            log_mode: MtrLogMode::MTR_LOG_NONE,
             modifications: false,
             n_log_records: 0,
             memo: Vec::new(),
@@ -386,5 +386,9 @@ impl Mtr {
 
     pub fn magic_n(&self) -> u32 {
         self.magic_n
+    }
+
+    pub fn get_dblwr_create_in_progress(&self) -> bool {
+        self.dblwr_create_in_progress
     }
 }
