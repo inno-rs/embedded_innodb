@@ -1,14 +1,17 @@
 #[cfg(test)]
 mod tests {
 
-    use crate::mach::mach0data::mach_parse_compressed;
-    use crate::mtr::mtr0types::MlogType;
-    use crate::page::page0page::Page;
-
-    use crate::fil::fil0types::{FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID};
-    use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
-    use crate::mtr::mtr0log::MLog;
-    use crate::mtr::mtr0mtr::{Mtr, MtrLogMode};
+    use crate::{
+        fil::fil0types::{FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID},
+        innodb::innodb0types::UNIV_PAGE_SIZE,
+        mach::mach0data::mach_parse_compressed,
+        mtr::{
+            mtr0log::MLog,
+            mtr0mtr::{Mtr, MtrLogMode},
+            mtr0types::MlogType,
+        },
+        page::page0page::Page,
+    };
 
     fn make_page() -> (Vec<u8>, Page) {
         // allocate a fresh backing Vec
@@ -239,8 +242,8 @@ mod tests {
         );
         // type + two varints(0)
         assert_eq!(mlog.buf[0], MlogType::MLOG_4BYTES as u8);
-        assert_eq!(mlog.buf[1], 0);
-        assert_eq!(mlog.buf[2], 0);
+        assert_eq!(mach_parse_compressed(&mlog.buf[1..]).unwrap().0, 0);
+        assert_eq!(mach_parse_compressed(&mlog.buf[2..]).unwrap().0, 0);
         assert_eq!(after, 3);
     }
 

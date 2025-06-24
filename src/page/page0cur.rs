@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
 };
 
 use tracing::info;
@@ -87,7 +87,7 @@ impl Default for MatchCache {
 /// It maintains a reference to the current record, the page, and the index.
 pub struct PageCur {
     /// The index to which the cursor belongs
-    index: Arc<Mutex<Index>>,
+    index: Arc<Index>,
     /// The record to which the cursor points
     rec: Record,
     /// The buffer block containing the page
@@ -109,7 +109,7 @@ impl PageCur {
     ///
     /// * A new `PageCur` instance.
     pub fn new(
-        index: Arc<Mutex<Index>>,
+        index: Arc<Index>,
         rec: Option<Record>,
         block: Arc<RwLock<BufBlock>>,
         page: Page,
@@ -407,7 +407,27 @@ impl PageCur {
         insert_rec_opt
     }
 
-    /// Search the right position for the cursor.
+    /// Searches for a record matching the given data tuple and positions the cursor accordingly.
+    ///
+    /// This function performs a binary search followed by a linear search to find the
+    /// appropriate position for the cursor based on the provided data tuple and search mode.
+    /// It first searches through the page directory, then performs a linear search among
+    /// the records owned by the identified directory slots.
+    ///
+    /// The function updates the match cache with information about how many fields and bytes
+    /// matched during the comparison, which helps avoid redundant comparisons in subsequent operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `dtuple` - The data tuple to search for
+    /// * `mode` - The search mode (PAGE_CUR_L, PAGE_CUR_LE, PAGE_CUR_G, or PAGE_CUR_GE)
+    /// * `match_cache` - Cache for tracking matched fields and bytes during comparison
+    ///
+    /// # Returns
+    ///
+    /// This method doesn't return a value; it positions the cursor according to the search mode:
+    /// * For PAGE_CUR_G or PAGE_CUR_GE: positions at the first record greater than or equal to the tuple
+    /// * For PAGE_CUR_L or PAGE_CUR_LE: positions at the last record less than or equal to the tuple
     pub fn page_cur_search_with_match(
         &mut self,
         dtuple: &DTuple,
@@ -442,12 +462,15 @@ impl PageCur {
 
         let mut low = 0;
         let mut up = page.page_dir_get_n_slots() - 1;
+        info!("bin_search low={} up={}", low, up);
 
         // Perform binary search until the lower and upper limit directory slots come to a distance of 1 of each other.
         while up - low > 1 {
             let mid = (low + up) / 2;
 
             let slot_rec = page.page_dir_slot_get_rec(mid);
+            info!("bin_search mid_rec={}", slot_rec);
+            info!("bin_search dtuple={}", dtuple);
 
             let cmp = cmp_dtuple_rec_with_match(
                 dtuple,
@@ -491,6 +514,10 @@ impl PageCur {
         while low_rec.rec_get_next().unwrap() != up_rec {
             let mid_rec = low_rec.rec_get_next().unwrap();
 
+            info!("low_rec={}", low_rec);
+            info!("mid_rec={}", mid_rec);
+            info!("up_rec={}", up_rec);
+
             let cmp = cmp_dtuple_rec_with_match(
                 dtuple,
                 mid_rec,
@@ -500,15 +527,18 @@ impl PageCur {
 
             match cmp {
                 Ordering::Greater => {
+                    info!("Greater");
                     low_rec = mid_rec;
                     update_low_match(cur_matched_fields, cur_matched_bytes);
                 }
                 Ordering::Less => {
+                    info!("Less");
                     up_rec = mid_rec;
                     update_up_match(cur_matched_fields, cur_matched_bytes);
                 }
                 Ordering::Equal => {
-                    if mode == PAGE_CUR_G || mode == PAGE_CUR_LE {
+                    info!("Equal");
+                    if mode == PAGE_CUR_GE || mode == PAGE_CUR_L {
                         up_rec = mid_rec;
                         update_up_match(cur_matched_fields, cur_matched_bytes);
                     } else {
@@ -522,7 +552,10 @@ impl PageCur {
             }
         }
 
-        if mode == PAGE_CUR_GE {
+        info!("finished low_rec={}", low_rec);
+        info!("finished up_rec={}", up_rec);
+
+        if mode == PAGE_CUR_G || mode == PAGE_CUR_GE {
             self.page_cur_position(up_rec);
         } else {
             self.page_cur_position(low_rec);
@@ -531,10 +564,15 @@ impl PageCur {
 
     /// Position the cursor to the given record.
     ///
+    /// This method updates the cursor's position to point to the specified record.
+    /// It's a fundamental operation used in various cursor navigation and record
+    /// manipulation operations.
+    ///
     /// # Arguments
+    /// * `rec` - The record to position the cursor at
     ///
-    /// `rec`: The record to place the cursor to.
-    ///
+    /// # Returns
+    /// This method doesn't return a value; it modifies the cursor's state directly.
     pub fn page_cur_position(&mut self, rec: Record) {
         self.rec = rec;
     }

@@ -1,7 +1,4 @@
-use std::{
-    ptr::slice_from_raw_parts_mut,
-    sync::{Arc, Mutex, RwLock},
-};
+use std::sync::{Arc, RwLock};
 
 use tracing::{info, warn};
 
@@ -214,11 +211,10 @@ impl Page {
 
     /// Copy the page to a destination buffer.
     pub fn copy_to(&self, buffer: &mut [u8; UNIV_PAGE_SIZE]) {
-        let src = self.page_get_as_mut_slice();
-        ut_a!(src.len() == buffer.len());
+        let src = self.to_page_frame();
+        ut_a!(src.0.len() == buffer.len());
 
-        let src_slice = unsafe { &*src };
-        buffer.copy_from_slice(src_slice);
+        buffer.copy_from_slice(src.0);
     }
 
     /// Set the tablespace identifier of the page.
@@ -282,32 +278,11 @@ impl Page {
         }
     }
 
-    /// Get the page data as a mutable vector.
-    ///
-    /// # Returns
-    ///
-    /// * A mutable reference to the page data as a `Vec<u8>`.
-    pub fn page_get_as_mut_slice(&self) -> *mut [u8] {
-        slice_from_raw_parts_mut(self.ptr, UNIV_PAGE_SIZE)
-    }
-
     pub fn to_page_frame(&self) -> PageFrame<'_> {
         unsafe {
             let array_ptr = self.ptr as *mut [u8; UNIV_PAGE_SIZE];
             PageFrame(&mut *array_ptr)
         }
-    }
-
-    /// Wraps a mutable page‐sized buffer as a Page.
-    /// NOTE: Currently it is only used for unit tests.
-    pub fn from_buffer(buf: &mut [u8]) -> Self {
-        assert_eq!(
-            buf.len(),
-            UNIV_PAGE_SIZE,
-            "Page::from_buffer requires exactly {} bytes",
-            UNIV_PAGE_SIZE
-        );
-        Page { ptr: buf.as_mut_ptr() }
     }
 
     /// Set the max transaction id on the page.
@@ -375,8 +350,13 @@ impl Page {
     ///
     pub fn page_get_infimum_rec(&self) -> Record {
         let ptr = unsafe { self.ptr.add(PAGE_INFIMUM) };
-        info!("ptr: {}", ptr as usize);
         Record::new(ptr)
+    }
+
+    /// Checks if the given record belongs to the page.
+    #[cfg(debug_assertions)]
+    pub fn is_page_record(&self, record: Record) -> bool {
+        record.page_align() == self.ptr
     }
 
     /// Retrieves the supremum record from the page.
@@ -784,20 +764,31 @@ impl Page {
 
     /// Create a B-tree index page.
     ///
+    /// This method initializes a new page for use in a B-tree index structure. It performs
+    /// several key operations:
+    /// 1. Creates and initializes the page header
+    /// 2. Creates infimum and supremum records that serve as boundaries for the page
+    /// 3. Sets up the page directory with initial slots
+    /// 4. Establishes the record linkage between infimum and supremum
+    /// 5. Logs the page creation operation if a mini-transaction is provided
+    ///
+    /// The created page is empty except for the system records (infimum and supremum)
+    /// and is ready to have user records inserted into it.
+    ///
     /// # Parameters
     ///
-    /// - `index`: The index to which the page belongs.
-    /// - `buf`: The buffer block associated with the page.
-    /// - `mtr`: The transaction object.
+    /// * `index` - The index to which the page belongs
+    /// * `buf` - The buffer block where the page will be created
+    /// * `mtr` - Optional mini-transaction for logging the operation
     ///
     /// # Returns
     ///
-    /// - A `Page` object representing the created page.
+    /// * A `Page` object representing the newly created page
     ///
     pub fn page_create(
         index: &Index,
         buf: &BufBlock,
-        mtr: Option<Mtr>,
+        mtr: Option<&mut Mtr>,
     ) -> Page {
         let ptr = buf.get_frame();
         let page = Page::new(ptr);
@@ -1005,8 +996,8 @@ impl Page {
     /// # Returns
     ///
     /// * `()`: This function does not return a value.
-    pub fn page_create_write_log(&self, buf: &BufBlock, mtr: Mtr) {
-        unimplemented!()
+    pub fn page_create_write_log(&self, buf: &BufBlock, mtr: &mut Mtr) {
+        // todo
     }
 
     /// Sets the pointer to the next record on the page.
@@ -1191,7 +1182,7 @@ impl Page {
         dest: Arc<RwLock<BufBlock>>,
         src: Arc<RwLock<BufBlock>>,
         rec: Record,
-        index: Arc<Mutex<Index>>,
+        index: Arc<Index>,
         mtr: &mut Mtr,
     ) {
         let dest_page = dest.write().unwrap().get_page();
@@ -1209,7 +1200,7 @@ impl Page {
             );
         }
 
-        if index.lock().unwrap().is_clustered() && src_page.page_is_leaf() {
+        if index.is_clustered() && src_page.page_is_leaf() {
             dest_page.page_update_max_trx_id(self.page_get_max_trx_id(), mtr);
         }
     }
@@ -1221,7 +1212,7 @@ impl Page {
         dest: Arc<RwLock<BufBlock>>,
         src: Arc<RwLock<BufBlock>>,
         rec: Record,
-        index: Arc<Mutex<Index>>,
+        index: Arc<Index>,
         mtr: &mut Mtr,
     ) {
         let dest_page = dest.write().unwrap().get_page();
@@ -1239,7 +1230,7 @@ impl Page {
             );
         }
 
-        if index.lock().unwrap().is_clustered() && src_page.page_is_leaf() {
+        if index.is_clustered() && src_page.page_is_leaf() {
             dest_page.page_update_max_trx_id(self.page_get_max_trx_id(), mtr);
         }
     }
@@ -1261,7 +1252,7 @@ impl Page {
         &self,
         dest_page: Page,
         rec: Record,
-        index: Arc<Mutex<Index>>,
+        index: Arc<Index>,
         buf_block: Arc<RwLock<BufBlock>>,
         mtr: &mut Mtr,
     ) {
@@ -1292,7 +1283,7 @@ impl Page {
         &self,
         dest_page: Page,
         rec: Record,
-        index: Arc<Mutex<Index>>,
+        index: Arc<Index>,
         buf_block: Arc<RwLock<BufBlock>>,
         mtr: &mut Mtr,
     ) {
@@ -1316,6 +1307,77 @@ impl Page {
             dest_page_cur.page_cur_insert_rec_low(rec, mtr);
             rec = some_or_panic!(rec.rec_get_next());
         }
+    }
+
+    /// Returns the sum of records in the record list excluding the infimum and supremum records.
+    ///
+    /// This function calculates the total size of user data stored in the page by subtracting
+    /// the space used by system records (infimum and supremum) and garbage from the total
+    /// heap space used.
+    ///
+    /// # Returns
+    ///
+    /// The total size (in bytes) of user data in the page
+    pub fn page_get_data_size(&self) -> usize {
+        let ret = self.page_header_get_field(PAGE_HEAP_TOP)
+            - PAGE_SUPREMUM_END
+            - self.page_header_get_field(PAGE_GARBAGE);
+
+        ut_ad!(ret < UNIV_PAGE_SIZE);
+
+        ret
+    }
+
+    /// Get all the user records on the page.
+    ///
+    /// # Arguments
+    ///
+    /// `page`: Page containing the records.
+    ///
+    /// # Returns
+    ///
+    /// `Vec<Record>` A vector of user records (excluding infimum and supremum).
+    pub fn get_user_records(&self) -> Vec<Record> {
+        let mut result = Vec::<Record>::new();
+        let mut cur_rec = Some(self.page_get_infimum_rec());
+        while cur_rec.is_some() {
+            let rec = some_or_panic!(cur_rec);
+            if self.page_rec_is_user_rec(rec) {
+                result.push(rec);
+            }
+
+            cur_rec = cur_rec.unwrap().rec_get_next();
+        }
+
+        result
+    }
+
+    /// Returns the maximum combined size of records that can be inserted on top of the record heap if the page is first reorganized.
+    ///
+    /// This function calculates how much space would be available for new records if the page
+    /// were reorganized. It takes into account the current data size, the space needed for
+    /// directory slots, and the total free space available in an empty page.
+    ///
+    /// # Arguments
+    ///
+    /// * `n_recs` - The number of records to be inserted
+    ///
+    /// # Returns
+    ///
+    /// The maximum size (in bytes) available for new records after reorganization,
+    /// or 0 if the page would be full
+    pub fn page_get_max_insert_size_after_reorganize(
+        &self,
+        n_recs: usize,
+    ) -> usize {
+        let occupied = self.page_get_data_size()
+            + Self::page_dir_calc_reserved_space(
+                n_recs + self.page_get_n_recs(),
+            );
+
+        let free_space = Self::page_get_free_space_of_empty();
+
+        if occupied > free_space { 0 } else { free_space - occupied }
     }
 
     /// Get the page header output string for debugging purposes.

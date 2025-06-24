@@ -9,7 +9,7 @@ mod tests {
         page::page0page::Page,
         rem::rem0rec::*,
         some_or_panic,
-        tests::test0utils::{FieldType, create_records, get_user_records},
+        tests::test0utils::{FieldType, create_records},
     };
 
     fn get_new_rec() -> (Record, Layout, *mut u8) {
@@ -220,7 +220,7 @@ mod tests {
         );
         let page = owning_page.page;
 
-        for rec in get_user_records(page) {
+        for rec in page.get_user_records() {
             if page.page_rec_is_user_rec(rec) {
                 assert!(rec.rec_get_1byte_offs_flag());
             }
@@ -239,7 +239,7 @@ mod tests {
         );
         let page = owning_page.page;
 
-        for rec in get_user_records(page) {
+        for rec in page.get_user_records() {
             if page.page_rec_is_user_rec(rec) {
                 let n_fields = rec.rec_get_n_fields();
                 for i in 0..n_fields {
@@ -270,10 +270,10 @@ mod tests {
                     FieldType::String(Some("Mushroom".to_string())),
                 ],
             );
-            let rec = get_user_records(owning_page.page)[0];
+            let rec = owning_page.page.get_user_records()[0];
 
             assert_eq!(
-                rec.rec_to_string(),
+                format!("{}", rec),
                 "PHYSICAL RECORD: n_fields 3; 1-byte offsets; info bits 0; n owned 0; fields  0:  Hello World; len: 11  1:  Mario; len: 5  2:  Mushroom; len: 8 "
             );
         }
@@ -287,10 +287,10 @@ mod tests {
                     // FieldType::Double(Some(234.29)),
                 ],
             );
-            let rec = get_user_records(owning_page.page)[0];
+            let rec = owning_page.page.get_user_records()[0];
 
             assert_eq!(
-                rec.rec_to_string(),
+                format!("{}", rec),
                 "PHYSICAL RECORD: n_fields 2; 1-byte offsets; info bits 0; n owned 0; fields  0:  Hello World; len: 11  1:  \u{15}N\0\0\0\0\0\0; len: 8 "
             );
         }

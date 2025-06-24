@@ -3,7 +3,7 @@ mod tests {
     use std::{
         alloc::{Layout, alloc_zeroed},
         ops::Deref,
-        sync::{Arc, Mutex, RwLock},
+        sync::{Arc, RwLock},
     };
 
     use rstest::{fixture, rstest};
@@ -16,9 +16,7 @@ mod tests {
         mtr::mtr0mtr::Mtr,
         page::{page0cur::PageCur, page0page::Page},
         rem::rem0rec::{OrphanRecord, Record},
-        tests::test0utils::{
-            FieldType, create_dtuples, create_records, get_user_records,
-        },
+        tests::test0utils::{FieldType, create_dtuples, create_records},
     };
 
     fn get_raw_block() -> Frame {
@@ -55,7 +53,7 @@ mod tests {
             PageCurFixture {
                 ptr: frame,
                 page_cur: PageCur::new(
-                    Arc::new(Mutex::new(Index::new(PageId::dummy()))),
+                    Arc::new(Index::new(PageId::dummy())),
                     Some(infimum_rec),
                     buf_block,
                     page,
@@ -128,7 +126,7 @@ mod tests {
         assert_eq!(page_cur_fixture.page.page_n_get_recs(), 0);
 
         let mut n_recs = 0;
-        for rec in get_user_records(owing_page.page) {
+        for rec in owing_page.page.get_user_records() {
             n_recs += 1;
             let new_rec = page_cur_fixture
                 .page_cur
@@ -140,7 +138,7 @@ mod tests {
 
             let new_rec = new_rec.unwrap();
             assert_eq!(new_rec.rec_get_n_fields(), 1);
-            info!("rec={}", new_rec.rec_to_string());
+            info!("rec={}", new_rec);
         }
     }
 }

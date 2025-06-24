@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex, RwLock};
+use std::{
+    ops::Deref,
+    sync::{Arc, Mutex, RwLock},
+};
 
 use crate::{
     btr::{
@@ -38,11 +41,13 @@ use crate::{
 /// searches, sequential access, insertions, and deletions in logarithmic time.
 pub struct BTree {
     /// BufferPool manager for handling page caching and I/O operations.
-    buf_pool: Arc<RwLock<BufPool>>,
+    buf_pool: Arc<Mutex<BufPool>>,
     /// File segment manager for handling file space allocation.
     fsp: Arc<Mutex<Fsp>>,
     /// Lock Management system.
     lock_sys: Arc<Mutex<LockSys>>,
+    /// Reference to index.
+    index: Arc<Index>,
 }
 
 impl BTree {
@@ -55,11 +60,12 @@ impl BTree {
     /// # Returns
     /// A new BTree instance initialized with the provided buffer pool and file space manager
     pub fn new(
-        buf_pool: Arc<RwLock<BufPool>>,
+        buf_pool: Arc<Mutex<BufPool>>,
         fsp: Arc<Mutex<Fsp>>,
         lock_sys: Arc<Mutex<LockSys>>,
+        index: Arc<Index>,
     ) -> Self {
-        BTree { buf_pool, fsp, lock_sys }
+        BTree { buf_pool, fsp, lock_sys, index }
     }
 
     /// Retrieves the previous user record in the B-tree.
@@ -98,7 +104,7 @@ impl BTree {
         let mut mtr = mtr.unwrap();
         if prev_page_no != FILL_NULL {
             // Fetch the page from buffer_pool
-            let mut pool = self.buf_pool.write().unwrap();
+            let mut pool = self.buf_pool.lock().unwrap();
             let buf_block = pool.get(Request {
                 rw_latch: ReadWriteLatch::SLatch,
                 page_id: PageId {
@@ -145,19 +151,19 @@ impl BTree {
     pub fn insert_on_non_leaf_level(
         &mut self,
         level: usize,
-        index: Arc<Mutex<Index>>,
+        index: Arc<Index>,
         dtuple: &mut DTuple,
         mtr: &mut Mtr,
     ) {
         ut_ad!(level > 0);
 
         let mut btr_cursor = BTreeCursor::new(
-            index,
-            self.fsp.clone(),
-            self.lock_sys.clone(),
             self,
+            self.index.clone(),
             self.buf_pool.clone(),
+            self.lock_sys.clone(),
         );
+
         btr_cursor.search_to_nth_level(
             vec![],
             level,
@@ -209,7 +215,7 @@ impl BTree {
         let mut mtr = mtr.unwrap();
         if next_page_no != FILL_NULL {
             // Fetch the page from buffer_pool
-            let mut pool = self.buf_pool.write().unwrap();
+            let mut pool = self.buf_pool.lock().unwrap();
             let buf_block = pool.get(Request {
                 rw_latch: ReadWriteLatch::SLatch,
                 page_id: PageId {
@@ -244,6 +250,25 @@ impl BTree {
         usize::from_le_bytes(bytes.try_into().unwrap())
     }
 
+    /// Sets the index ID for a page.
+    ///
+    /// This method updates the index ID field in the page header. The index ID
+    /// is used to identify which index the page belongs to. This operation should
+    /// be logged in the mini-transaction (mtr) for recovery purposes.
+    ///
+    /// # Arguments
+    ///
+    /// * `page` - The page whose index ID will be set
+    /// * `level` - The level of the page in the B-tree
+    /// * `mtr` - The mini-transaction that logs this operation
+    ///
+    /// # Note
+    ///
+    /// This method is currently not implemented (marked as todo).
+    pub fn page_set_index_id(page: &mut Page, level: usize, mtr: &mut Mtr) {
+        // todo
+    }
+
     /// Get the node level field in an index page.
     pub fn page_get_level(page: &Page) -> usize {
         let page_frame = page.to_page_frame();
@@ -251,6 +276,32 @@ impl BTree {
         let bytes = &page_frame.0[offset..offset + 2];
 
         u16::from_le_bytes(bytes.try_into().unwrap()) as usize
+    }
+
+    /// Sets the level of a page in the B-tree.
+    ///
+    /// This method updates the level field in the page header. The level indicates
+    /// the page's position in the B-tree hierarchy (0 for leaf pages, higher values
+    /// for non-leaf pages). This operation should be logged in the mini-transaction (mtr)
+    /// for recovery purposes.
+    ///
+    /// # Arguments
+    ///
+    /// * `page` - The page whose level will be set
+    /// * `level` - The level value to set (0 for leaf pages)
+    /// * `mtr` - The mini-transaction that logs this operation
+    ///
+    /// # Note
+    ///
+    /// This method is currently commented out and not fully implemented.
+    pub fn page_set_level(page: &mut Page, level: usize, mtr: &mut Mtr) {
+        // mtr.log_buffer().mlog_write_u32(
+        //     &page,
+        //     PAGE_HEADER + PAGE_LEVEL,
+        //     level as u32,
+        //     MlogType::MLOG_2BYTES,
+        //     mtr,
+        // );
     }
 
     /// Gets the child page number from a node pointer record.
@@ -294,9 +345,9 @@ impl BTree {
     /// * `mtr` - The mini-transaction that logs this operation
     pub fn page_set_next(page: &Page, next: PageNo, mtr: &mut Mtr) {
         // mtr.mlog().mlog_write_u32(
-        //     page.to_page_frame().0,
+        //     page,
         //     FIL_PAGE_NEXT,
-        //     next as usize,
+        //     next as u32,
         //     MlogType::MLOG_4BYTES,
         //     mtr,
         // );
@@ -325,18 +376,49 @@ impl BTree {
         let space_id = root.page_get_space_id();
         let page_no = page_no;
 
-        ut_ad!(mtr.memo_contains(&MemoSlot::PageFix {
-            page_id: PageId { space_id, page_no },
-            mode: FixMode::Exclusive,
-        }));
+        ut_ad!(mtr.memo_contains(&MemoSlot::PageFix(
+            PageId { space_id, page_no },
+            FixMode::Exclusive,
+        )));
 
-        ut_ad!(mtr.memo_contains(&MemoSlot::Latch {
-            handle: LatchHandle(),
-            mode: LockMode::Exclusive,
-        }));
+        ut_ad!(mtr.memo_contains(&MemoSlot::Latch(
+            LatchHandle(),
+            LockMode::Exclusive,
+        )));
 
         let level = Self::page_get_level(root);
 
         let new_block = Self::page_alloc(level, mtr);
+    }
+
+    /// Creates and initializes a B-tree page.
+    ///
+    /// This function creates a new page for use in a B-tree structure. It initializes
+    /// the page with the appropriate index ID and level information. The operation is
+    /// logged in the mini-transaction (mtr).
+    ///
+    /// # Arguments
+    /// * `buf_block` - The buffer block where the page will be created
+    /// * `index` - The index to which this page belongs
+    /// * `level` - The level in the B-tree where the page will be used
+    /// * `mtr` - The mini-transaction that logs this operation
+    pub fn page_create(
+        buf_block: Arc<RwLock<BufBlock>>,
+        index: Arc<Index>,
+        level: usize,
+        mtr: &mut Mtr,
+    ) {
+        let buf_block = buf_block.read().unwrap();
+
+        ut_ad!(mtr.memo_contains(&MemoSlot::PageFix(
+            buf_block.get_page_id(),
+            FixMode::Exclusive
+        )));
+
+        let mut page =
+            Page::page_create(index.deref(), buf_block.deref(), Some(mtr));
+
+        BTree::page_set_level(&mut page, level, mtr);
+        BTree::page_set_index_id(&mut page, index.get_index_id(), mtr);
     }
 }

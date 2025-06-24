@@ -17,6 +17,7 @@ use crate::{
     sync::sync0rw::ReadWriteLatch,
     ut::ut0dbg::ut_ad,
 };
+
 /// Magic number used to identify buffer pool pages that do not have a checksum.
 pub const BUF_NO_CHECKSUM_MAGIC: usize = 0xDEADBEEF;
 
@@ -575,6 +576,17 @@ impl BufBlock {
         &self.buf_page
     }
 
+    /// Gets the page identifier for this buffer block.
+    ///
+    /// This method provides a convenient way to access the page ID (space ID and page number)
+    /// of the page stored in this buffer block.
+    ///
+    /// # Returns
+    /// The page identifier (PageId) of the page in this buffer block
+    pub fn get_page_id(&self) -> PageId {
+        self.buf_block_get_page().get_page_id()
+    }
+
     /// Gets the buffer page metadata for this buffer block.
     ///
     /// # Returns
@@ -600,6 +612,18 @@ impl BufBlock {
         Page::new(self.frame)
     }
 
+    /// Gets a PageFrame object that provides low-level access to the page data.
+    ///
+    /// This method creates a PageFrame wrapper around the raw memory buffer of the page.
+    /// It allows for direct manipulation of the page's memory layout.
+    ///
+    /// # Returns
+    /// A PageFrame object that provides access to the raw page data
+    ///
+    /// # Safety
+    /// This method uses unsafe code to create a mutable reference to the page's memory.
+    /// The caller must ensure that no other references to this memory exist while the
+    /// PageFrame is in use.
     pub fn get_page_frame(&self) -> PageFrame {
         let page_frame = unsafe {
             PageFrame(&mut *(self.frame as *mut [u8; UNIV_PAGE_SIZE]))

@@ -1,3 +1,5 @@
+use std::fmt;
+
 use tracing::{error, info};
 
 use crate::{
@@ -9,6 +11,83 @@ use crate::{
     ut::ut0dbg::{ut_a, ut_ad},
     ut_panic,
 };
+
+/// Implements the Display trait for DTuple.
+/// This allows DTuple instances to be formatted as strings using the `{}` format specifier.
+/// The formatted output includes the number of fields and the string representation of each field.
+/// ```
+impl fmt::Display for DTuple {
+    /// Formats the DTuple for display.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A mutable reference to the formatter.
+    ///
+    /// # Returns
+    ///
+    /// * A Result indicating whether the formatting was successful.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let n_fields = self.dtuple_get_n_fields();
+
+        write!(f, "DATA TUPLE: n_fields {}; ", n_fields)?;
+
+        for i in 0..n_fields {
+            write!(f, "{} ", i)?;
+
+            let dfield = self.dtuple_get_nth_field(i);
+
+            write!(f, "{} ", dfield)?;
+
+            write!(f, "; ")?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Implements the Display trait for DField.
+/// This allows DField instances to be formatted as strings using the `{}` format specifier.
+/// The formatted output depends on the field's type and content:
+/// - NULL fields are displayed as "NULL"
+/// - Character and varchar fields are displayed as their string representation
+/// - Integer fields are displayed as their raw byte representation
+/// - External fields have "external" appended to their representation
+/// ```
+impl fmt::Display for DField {
+    /// Formats the DField for display.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A mutable reference to the formatter.
+    ///
+    /// # Returns
+    ///
+    /// * A Result indicating whether the formatting was successful.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.dfield_is_null() {
+            return write!(f, "NULL");
+        }
+
+        let data = self.dfield_get_data();
+
+        match self.dfield_get_type().m_type as usize {
+            n if n == DATA_CHAR || n == DATA_VARCHAR => {
+                write!(f, "{:?}", std::str::from_utf8(&data).unwrap())?;
+
+                if self.dfield_is_ext() {
+                    write!(f, "{}", "external")?;
+                }
+            }
+            n if n == DATA_INT => {
+                ut_a!(data.len() == 4);
+                write!(f, "{:?}", data)?;
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+}
 
 impl DTuple {
     /// Creates a new tuple with the specified number of fields.
@@ -281,34 +360,6 @@ impl DField {
     /// * `true` if the field is stored externally, `false` otherwise.
     pub fn dfield_is_ext(&self) -> bool {
         self.ext
-    }
-
-    pub fn dfield_print(&self) {
-        if self.dfield_is_null() {
-            info!("NULL");
-            return;
-        }
-
-        let data = self.dfield_get_data();
-
-        let mut output: String = String::new();
-
-        match self.dfield_get_type().m_type as usize {
-            n if n == DATA_CHAR || n == DATA_VARCHAR => {
-                output.push_str(format!("{:?}", data).as_str());
-
-                if self.dfield_is_ext() {
-                    output.push_str(format!("{}", "external").as_str());
-                }
-            }
-            n if n == DATA_INT => {
-                ut_a!(data.len() == 4);
-                output.push_str(format!("{:?}", data).as_str());
-            }
-            _ => {}
-        }
-
-        info!("{:?}", output);
     }
 
     /// Checks if the data in the tuple is typed.

@@ -1,12 +1,15 @@
-use crate::mtr::mtr0log::MLog;
-use crate::mtr::mtr0types::MlogType;
 pub(crate) use crate::mtr::mtr0types::{
     LatchHandle, LockMode, MemoSlot, MtrLogMode, MtrState, Savepoint,
 };
-use crate::page::page0page::Page;
 use crate::{
-    buf::buf0types::BufBlock, mtr::mtr0types::OtherResource,
-    ut::ut0dbg::ut_ad, ut_panic,
+    buf::buf0types::BufBlock,
+    mtr::{
+        mtr0log::MLog,
+        mtr0types::{MlogType, OtherResource},
+    },
+    page::page0page::Page,
+    ut::ut0dbg::ut_ad,
+    ut_panic,
 };
 
 pub const MTR_MAGIC_N: u32 = 54551;
@@ -110,13 +113,11 @@ impl Mtr {
             let slot = self.memo.remove(pos);
             // release slot exactly as in rollback_to_savepoint:
             match slot {
-                MemoSlot::PageFix { page_id: page, mode } => {
+                MemoSlot::PageFix(page, mode) => {
                     /* buf_pool.unfix(page, mode) */
                 }
                 MemoSlot::PageDirty(page) => { /* clear dirty flag? */ }
-                MemoSlot::Latch { handle, mode } => {
-                    /* handle.release(mode) */
-                }
+                MemoSlot::Latch(handle, mode) => { /* handle.release(mode) */ }
                 MemoSlot::Other(res) => { /* custom cleanup */ }
             }
         } else {
@@ -151,13 +152,13 @@ impl Mtr {
             MemoSlot::Other(OtherResource { id: 0, flags: 0 }),
         );
         match owned {
-            MemoSlot::PageFix { page_id: page, mode } => {
+            MemoSlot::PageFix(page_id, mode) => {
                 // TODO: call buffer-pool release: srv_buf_pool.release(page, mode, self)
             }
             MemoSlot::PageDirty(page) => {
                 // TODO: release dirty page: srv_buf_pool.release(page, /* buf_fix type */, self)
             }
-            MemoSlot::Latch { handle, mode } => {
+            MemoSlot::Latch(handle, mode) => {
                 match mode {
                     LockMode::Shared => {
                         // TODO: rw_lock_s_unlock(handle)
@@ -217,13 +218,13 @@ impl Mtr {
         while self.memo.len() > savepoint {
             let slot = self.memo.pop().unwrap();
             match slot {
-                MemoSlot::PageFix { page_id: page, mode } => {
+                MemoSlot::PageFix(page_id, mode) => {
                     // e.g. buf_pool.unfix(page, mode);
                 }
                 MemoSlot::PageDirty(page) => {
                     // maybe clear dirty flag or no-op
                 }
-                MemoSlot::Latch { handle, mode } => {
+                MemoSlot::Latch(handle, mode) => {
                     // e.g. handle.release(mode);
                 }
                 MemoSlot::Other(res) => {
@@ -298,19 +299,13 @@ impl Mtr {
     /// Acquire a shared latch and record it.
     pub fn s_lock(&mut self, handle: &mut LatchHandle) {
         // handle.lock_shared();
-        self.memo_push(MemoSlot::Latch {
-            handle: *handle,
-            mode: LockMode::Shared,
-        });
+        self.memo_push(MemoSlot::Latch(*handle, LockMode::Shared));
     }
 
     /// Acquire an exclusive latch and record it.
     pub fn x_lock(&mut self, handle: &mut LatchHandle) {
         // handle.lock_exclusive();
-        self.memo_push(MemoSlot::Latch {
-            handle: *handle,
-            mode: LockMode::Exclusive,
-        });
+        self.memo_push(MemoSlot::Latch(*handle, LockMode::Exclusive));
     }
 
     /// Is this mini-transaction active?
@@ -337,8 +332,7 @@ impl Mtr {
             MemoSlot::Other(OtherResource { id: 0, flags: 0 }),
         );
         match slot_ref {
-            MemoSlot::PageFix { page_id, .. }
-            | MemoSlot::PageDirty(page_id) => {
+            MemoSlot::PageFix(page_id, ..) | MemoSlot::PageDirty(page_id) => {
                 // In debug: check page ID matches block
                 ut_ad!(block.buf_block_get_page().get_page_id() == page_id);
             }

@@ -41,7 +41,7 @@
 
 use std::{
     ops::Range,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use crate::{
@@ -161,14 +161,14 @@ const FSP_SPACE_FLAGS_RANGE: Range<usize> = FSP_HEADER_OFFSET + FSP_SPACE_FLAGS
 /// including operations for allocating and deallocating pages and extents.
 pub struct Fsp {
     /// The buffer pool used for managing page buffers.
-    buf_pool: Arc<RwLock<BufPool>>,
+    buf_pool: Arc<Mutex<BufPool>>,
 }
 
 impl Fsp {
     /// Creates a new file space manager instance.
     ///
     /// Returns an empty `Fsp` struct that can be used to manage tablespace operations.
-    pub fn new(buf_pool: Arc<RwLock<BufPool>>) -> Fsp {
+    pub fn new(buf_pool: Arc<Mutex<BufPool>>) -> Fsp {
         Fsp { buf_pool }
     }
 
@@ -206,7 +206,7 @@ impl Fsp {
         space_id: SpaceId,
         mtr: &mut Mtr,
     ) -> Arc<RwLock<BufBlock>> {
-        let buf_block = self.buf_pool.write().unwrap().get(Request {
+        let buf_block = self.buf_pool.lock().unwrap().get(Request {
             rw_latch: ReadWriteLatch::XLatch,
             page_id: PageId { space_id, page_no: 0 },
             mode: BUF_GET_ALWAYS,

@@ -165,13 +165,13 @@ pub struct OtherResource {
 #[derive(PartialEq, Copy, Clone)]
 pub enum MemoSlot {
     /// A page “fix” (latch) in shared or exclusive mode.
-    PageFix { page_id: PageId, mode: FixMode },
+    PageFix(PageId, FixMode),
 
     /// You marked this page dirty.
     PageDirty(PageId),
 
     /// You acquired a shared or exclusive latch.
-    Latch { handle: LatchHandle, mode: LockMode },
+    Latch(LatchHandle, LockMode),
 
     /// Some other resource, with its own metadata.
     Other(OtherResource),
