@@ -89,7 +89,6 @@ impl MLog {
         self.buf[pos..pos + 4].copy_from_slice(&val_bytes);
         pos += 4;
         self.buf.truncate(pos);
-
     }
 
     /// Write an 8-byte LE value at `offset` in `page` and log it exactly like
@@ -108,12 +107,10 @@ impl MLog {
         // 2) Apply the 8‐byte LE change into the frame
         mach_write_to_8(&mut frame.0[offset..offset + 8], val);
 
-
         // 3) If logging is off, bail out
         if mtr.get_log_mode() == MTR_LOG_NONE {
             return;
         }
-
 
         // 4) Reserve space for header + offset + compressed payload
         const HEADER_SZ: usize = 11; // max header (1 + 5 + 5)
@@ -140,7 +137,6 @@ impl MLog {
         let written = mach_uint64_write_compressed(&mut self.buf[pos..], val);
         pos += written;
         self.buf.truncate(pos);
-
     }
 
     pub fn mlog_write_string(
@@ -173,7 +169,7 @@ impl MLog {
             start,
             mtr,
         );
-        
+
         // 5) Write 2-byte **big-endian** page-offset
         let off_bytes = (offset as u16).to_be_bytes();
         self.buf[pos..pos + 2].copy_from_slice(&off_bytes);
@@ -235,14 +231,15 @@ impl MLog {
 
         // --- 2) COMPRESS & WRITE space_id ---
 
-        let space = page.page_get_space_id_be() ;
+        let space = page.page_get_space_id();
         let n_space = mach_write_compressed(&mut self.buf[log_pos..], space);
         log_pos += n_space;
 
         // --- 3) COMPRESS & WRITE page_no ---
-        
-        let pageno = page.page_get_fil_offset_be();
-        let n_page = mach_write_compressed(&mut self.buf[log_pos..], pageno as u32);
+
+        let pageno = page.page_get_fil_offset();
+        let n_page =
+            mach_write_compressed(&mut self.buf[log_pos..], pageno as u32);
         log_pos += n_page;
 
         // --- 4) BUMP RECORD COUNT ---
@@ -303,9 +300,9 @@ impl MLog {
         if input.len() < 4 {
             return None;
         }
-        
+
         let offset = u16::from_be_bytes([input[0], input[1]]) as usize;
-        let len    = u16::from_be_bytes([input[2], input[3]]) as usize;
+        let len = u16::from_be_bytes([input[2], input[3]]) as usize;
         input = &input[4..];
 
         // 3) Bounds check against page size
@@ -360,13 +357,8 @@ impl MLog {
         self.buf.resize(start + HEADER_LEN + size, 0);
 
         // 3) Write the 11‐byte fast header (type + varints)
-        let after_header = self.mlog_write_initial_log_record_fast(
-            page,
-            mlog_type,
-            start,
-            mtr,
-        );
-        
+        let after_header = self
+            .mlog_write_initial_log_record_fast(page, mlog_type, start, mtr);
 
         // 5) Return the slice for the caller to fill in its payload
         let end = after_header + size;

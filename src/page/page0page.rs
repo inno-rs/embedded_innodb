@@ -14,6 +14,10 @@ use crate::{
         FIL_PAGE_PREV, FIL_PAGE_SPACE_ID, FSEG_PAGE_DATA,
     },
     innodb::innodb0types::{PageFrame, PageNo, SpaceId, UNIV_PAGE_SIZE},
+    mach::mach0data::{
+        mach_read_from_2, mach_read_from_4, mach_read_from_8, mach_write_to_2,
+        mach_write_to_4, mach_write_to_8,
+    },
     mtr::mtr0mtr::Mtr,
     page::page0cur::PageCur,
     rem::rem0rec::{
@@ -184,32 +188,8 @@ impl Page {
     ///
     /// * The tablespace identifier as a `SpaceId`.
     pub fn page_get_space_id(&self) -> SpaceId {
-        unsafe {
-            let ptr = self.ptr.add(FIL_PAGE_SPACE_ID) as *const u32;
-            ptr.read_unaligned() as SpaceId
-        }
-    }
-
-    /// Read the 4-byte `FIL_PAGE_SPACE_ID` field as a big-endian u32.
-    pub fn page_get_space_id_be(&self) -> SpaceId {
-        unsafe {
-            // Manually load the four bytes MSB→LSB
-            let b0 = *self.ptr.add(FIL_PAGE_SPACE_ID);
-            let b1 = *self.ptr.add(FIL_PAGE_SPACE_ID + 1);
-            let b2 = *self.ptr.add(FIL_PAGE_SPACE_ID + 2);
-            let b3 = *self.ptr.add(FIL_PAGE_SPACE_ID + 3);
-            u32::from_be_bytes([b0, b1, b2, b3]) as SpaceId
-        }
-    }
-
-    /// Write a new 4-byte `FIL_PAGE_SPACE_ID` field in big-endian order.
-    pub fn page_set_space_id_be(&mut self, new_space: SpaceId) {
-        let v: u32 = new_space as u32;
-        let be = v.to_be_bytes();
-        unsafe {
-            let dst = self.ptr.add(FIL_PAGE_SPACE_ID);
-            dst.copy_from_nonoverlapping(be.as_ptr(), 4);
-        }
+        let frame = self.to_page_frame();
+        mach_read_from_4(&frame.0[FIL_PAGE_SPACE_ID..])
     }
 
     /// Copy the page to a destination buffer.
@@ -231,10 +211,8 @@ impl Page {
     ///
     /// * `()`: This function does not return a value.
     pub fn page_set_space_id(&self, space_id: SpaceId) {
-        unsafe {
-            let ptr = self.ptr.add(FIL_PAGE_SPACE_ID) as *mut u32;
-            ptr.write_unaligned(space_id as u32);
-        }
+        let frame = self.to_page_frame();
+        mach_write_to_4(&mut frame.0[FIL_PAGE_SPACE_ID..], space_id)
     }
 
     /// Get the file page offset of the page.
@@ -243,43 +221,14 @@ impl Page {
     ///
     /// * The file page offset as a `usize`.
     pub fn page_get_fil_offset(&self) -> usize {
-        unsafe {
-            let ptr = self.ptr.add(FIL_PAGE_OFFSET) as *const u32;
-            ptr.read_unaligned() as usize
-        }
+        let frame = self.to_page_frame();
+        mach_read_from_4(&frame.0[FIL_PAGE_OFFSET..]) as usize
     }
 
     /// Write a new 4-byte page-offset field (little-endian).
     pub fn page_set_fil_offset(&mut self, new_offset: usize) {
-        let v: u32 = new_offset as u32;
-        let le = v.to_le_bytes();
-        unsafe {
-            let dst = self.ptr.add(FIL_PAGE_OFFSET);
-            dst.copy_from_nonoverlapping(le.as_ptr(), 4);
-        }
-    }
-
-    /// Read the 4-byte `FIL_PAGE_OFFSET` field as a big-endian u32.
-    pub fn page_get_fil_offset_be(&self) -> usize {
-        unsafe {
-            // Read the four bytes one at a time, MSB first
-            let b0 = *self.ptr.add(FIL_PAGE_OFFSET);
-            let b1 = *self.ptr.add(FIL_PAGE_OFFSET + 1);
-            let b2 = *self.ptr.add(FIL_PAGE_OFFSET + 2);
-            let b3 = *self.ptr.add(FIL_PAGE_OFFSET + 3);
-            u32::from_be_bytes([b0, b1, b2, b3]) as usize
-        }
-    }
-
-    /// Write a new 4-byte `FIL_PAGE_OFFSET` field in big-endian order.
-    pub fn page_set_fil_offset_be(&mut self, new_offset: usize) {
-        let v: u32 = new_offset as u32;
-        let be = v.to_be_bytes();
-        unsafe {
-            let dst = self.ptr.add(FIL_PAGE_OFFSET);
-            // copy MSB first
-            dst.copy_from_nonoverlapping(be.as_ptr(), 4);
-        }
+        let frame = self.to_page_frame();
+        mach_write_to_4(&mut frame.0[FIL_PAGE_OFFSET..], new_offset as u32);
     }
 
     /// Get the page data as a mutable vector.
@@ -331,12 +280,13 @@ impl Page {
         of every pae is the maximum transaction id assigned before the crash.
         */
         match mtr {
-            None => unsafe {
-                let loc =
-                    page.add(PAGE_HEADER + PAGE_MAX_TRX_ID) as *mut TxnId;
-
-                loc.write_unaligned(max_trx_id);
-            },
+            None => {
+                let frame = self.to_page_frame();
+                mach_write_to_8(
+                    &mut frame.0[PAGE_HEADER + PAGE_MAX_TRX_ID..],
+                    max_trx_id,
+                );
+            }
             Some(_) => {
                 warn!("don't know how to handle Mtr");
                 ut_panic!("don't know how to handle Mtr");
@@ -348,11 +298,8 @@ impl Page {
     /// # Returns
     /// The maximum transaction ID (`TxnId`) stored in the page.
     pub fn page_get_max_trx_id(&self) -> TxnId {
-        unsafe {
-            let page_ptr =
-                self.ptr.add(PAGE_HEADER + PAGE_MAX_TRX_ID) as *const TxnId;
-            page_ptr.read_unaligned()
-        }
+        let frame = self.to_page_frame();
+        mach_read_from_8(&frame.0[PAGE_HEADER + PAGE_MAX_TRX_ID..])
     }
 
     /// Calculates the free space available in an empty page.
@@ -398,10 +345,8 @@ impl Page {
     /// # Returns
     /// - None
     pub fn page_header_set_field(&self, field: usize, value: usize) {
-        unsafe {
-            let ptr = self.ptr.add(PAGE_HEADER + field) as *mut u16;
-            ptr.write_unaligned(value as u16);
-        }
+        let frame = self.to_page_frame();
+        mach_write_to_2(&mut frame.0[PAGE_HEADER + field..], value as u16);
     }
 
     /// Retrieves the value of a given field from the page header.
@@ -412,10 +357,8 @@ impl Page {
     /// # Returns
     /// - Returns the value of the field as a `usize`.
     pub fn page_header_get_field(&self, field: usize) -> usize {
-        unsafe {
-            let ptr = self.ptr.add(PAGE_HEADER + field) as *const u16;
-            ptr.read_unaligned() as usize
-        }
+        let frame = self.to_page_frame();
+        mach_read_from_2(&frame.0[PAGE_HEADER + field..]) as usize
     }
 
     pub unsafe fn page_header_get_ptr(&self, field: usize) -> *mut u8 {
@@ -433,10 +376,11 @@ impl Page {
     /// * `()`: This function does not return a value.
     pub fn page_header_set_page_free(&self, record: Record) {
         let offset = self.page_offset(record);
-        unsafe {
-            let ptr = self.ptr.add(PAGE_HEADER + PAGE_FREE) as *mut u16;
-            ptr.write_unaligned(offset as u16)
-        }
+        let frame = self.to_page_frame();
+        mach_write_to_2(
+            &mut frame.0[PAGE_HEADER + PAGE_FREE..],
+            offset as u16,
+        );
     }
 
     /// Get the head of the free list.
@@ -1122,10 +1066,8 @@ impl Page {
     /// # Returns
     /// * The page number of the previous page as a `PageNo`
     pub fn get_prev_page(&self) -> PageNo {
-        unsafe {
-            let ptr = self.ptr.add(FIL_PAGE_PREV) as *const u32;
-            ptr.read_unaligned()
-        }
+        let frame = self.to_page_frame();
+        mach_read_from_4(&frame.0[FIL_PAGE_PREV..])
     }
 
     /// Gets the page number of the next page in the linked list of pages.
@@ -1136,10 +1078,8 @@ impl Page {
     /// # Returns
     /// * The page number of the next page as a `PageNo`
     pub fn get_next_page(&self) -> PageNo {
-        unsafe {
-            let ptr = self.ptr.add(FIL_PAGE_NEXT) as *const u32;
-            ptr.read_unaligned()
-        }
+        let frame = self.to_page_frame();
+        mach_read_from_4(&frame.0[FIL_PAGE_NEXT..])
     }
 
     /// Checks if a record needs to be stored externally due to its size.

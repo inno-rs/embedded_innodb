@@ -1,15 +1,13 @@
 #[cfg(test)]
 mod tests {
 
-    
-    use crate::mach::mach0data::mach_parse_compressed;
-    use crate::mtr::mtr0types::MlogType;
-    use crate::page::page0page::Page;
-
-    use crate::fil::fil0types::{FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID};
-    use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
-    use crate::mtr::mtr0log::MLog;
-    use crate::mtr::mtr0mtr::Mtr;
+    use crate::{
+        fil::fil0types::{FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID},
+        innodb::innodb0types::UNIV_PAGE_SIZE,
+        mach::mach0data::mach_parse_compressed,
+        mtr::{mtr0log::MLog, mtr0mtr::Mtr, mtr0types::MlogType},
+        page::page0page::Page,
+    };
 
     fn make_page() -> (Vec<u8>, Page) {
         // allocate a fresh backing Vec
@@ -114,8 +112,10 @@ mod tests {
             assert_eq!(pageno, 0);
 
             let pos = 1 + n1 + n2;
-            let got_off = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
-            let got_val = u32::from_be_bytes(buf[pos + 2..pos + 6].try_into().unwrap());
+            let got_off =
+                u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
+            let got_val =
+                u32::from_be_bytes(buf[pos + 2..pos + 6].try_into().unwrap());
             assert_eq!(got_off, offset);
             assert_eq!(got_val, val);
         }
@@ -160,7 +160,7 @@ mod tests {
     fn test_mlog_write_and_parse_string_roundtrip() {
         let (mut mlog, backing, page, mut mtr) = setup();
         let offset = 13;
-        let data   = b"InnoDB";
+        let data = b"InnoDB";
 
         // write + log
         mlog.mlog_write_string(&page, offset, data, &mut mtr);
@@ -168,7 +168,7 @@ mod tests {
 
         // grab a copy of the bytes we need
         let full = mlog.buf.clone();
-        let (space, n1)  = mach_parse_compressed(&full[1..]).unwrap();
+        let (space, n1) = mach_parse_compressed(&full[1..]).unwrap();
         let (pageno, n2) = mach_parse_compressed(&full[1 + n1..]).unwrap();
         let pos = 1 + n1 + n2;
         let slice_len = 4 + data.len();
@@ -187,7 +187,12 @@ mod tests {
         // request 5‐byte payload
         let size = 5;
         let payload = mlog
-            .mlog_open_and_write_index(&page, &mut mtr, MlogType::MLOG_WRITE_STRING, size)
+            .mlog_open_and_write_index(
+                &page,
+                &mut mtr,
+                MlogType::MLOG_WRITE_STRING,
+                size,
+            )
             .expect("should get a payload slice");
         assert_eq!(payload.len(), size);
 
@@ -202,7 +207,7 @@ mod tests {
         assert_eq!(buf[0], MlogType::MLOG_WRITE_STRING as u8);
 
         // skip two varints: space_id + page_no
-        let (space, n1)  = mach_parse_compressed(&buf[1..]).unwrap();
+        let (space, n1) = mach_parse_compressed(&buf[1..]).unwrap();
         let (pageno, n2) = mach_parse_compressed(&buf[1 + n1..]).unwrap();
         assert_eq!(space, 0);
         assert_eq!(pageno, 0);
@@ -214,7 +219,7 @@ mod tests {
         // exactly one record counted
         assert_eq!(mtr.get_n_log_records(), 1);
     }
-    
+
     #[test]
     fn test_initial_fast_header() {
         let (mut mlog, _, page, mut mtr) = setup();
@@ -264,4 +269,3 @@ mod tests {
         assert_eq!(mlog.buf, vec![20u8, 30, 40, 30, 40]);
     }
 }
-
