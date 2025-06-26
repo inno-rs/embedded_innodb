@@ -1,31 +1,29 @@
+use crate::mtr::mtr0mtr::MtrLogMode;
 use crate::{
     innodb::innodb0types::{PageFrame, UNIV_PAGE_SIZE},
     mach::mach0data::{
         mach_uint64_write_compressed, mach_write_compressed, mach_write_to_1,
         mach_write_to_2, mach_write_to_4, mach_write_to_8,
     },
-    mtr::{
-        mtr0mtr::Mtr,
-        mtr0types::{MlogType, MtrLogMode::MTR_LOG_NONE},
-    },
+    mtr::mtr0types::{MlogType, MtrLogMode::MTR_LOG_NONE},
     page::page0page::Page,
     ut::ut0dbg::ut_ad,
     ut_panic,
 };
 
-pub struct MLog {
+pub(in crate::mtr) struct MLog {
     pub buf: Vec<u8>,
 }
 
 impl MLog {
-    pub fn new() -> Self {
+    pub(in crate::mtr) fn new() -> Self {
         MLog { buf: Vec::new() }
     }
 
-    pub fn clear(&mut self) {
+    pub(in crate::mtr) fn clear(&mut self) {
         self.buf.clear();
     }
-    pub fn append(&mut self, bytes: &[u8]) {
+    pub(in crate::mtr) fn append(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
     }
 
@@ -40,13 +38,13 @@ impl MLog {
     ///
     /// Write 1/2/4 bytes into the page at `offset`, and emit a complete
     /// redo-log record: [header][offset][value].
-    pub fn mlog_write_u32(
+    pub(in crate::mtr) fn mlog_write_u32(
         &mut self,
         page: &Page,
         offset: usize,
         val: u32,
         mlog_type: MlogType,
-        mtr: &mut Mtr,
+        log_mode: MtrLogMode,
     ) {
         // 1) In-memory update
         let frame = page.to_page_frame();
@@ -64,7 +62,7 @@ impl MLog {
         }
 
         // 2) Bail if logging disabled
-        if mtr.get_log_mode() == MTR_LOG_NONE {
+        if log_mode == MTR_LOG_NONE {
             return;
         }
 
@@ -76,8 +74,8 @@ impl MLog {
         self.buf.resize(start + HEADER_SZ + OFF_SZ + VAL_SZ, 0);
 
         // 4) Write the initial header: type + varints(space, page)
-        let mut pos = self
-            .mlog_write_initial_log_record_fast(page, mlog_type, start, mtr);
+        let mut pos =
+            self.mlog_write_initial_log_record_fast(page, mlog_type, start);
 
         // 5) Write the in-page offset (2-byte little-endian)
         let off_bytes = (offset as u16).to_be_bytes();
@@ -89,18 +87,17 @@ impl MLog {
         self.buf[pos..pos + 4].copy_from_slice(&val_bytes);
         pos += 4;
         self.buf.truncate(pos);
-
     }
 
     /// Write an 8-byte LE value at `offset` in `page` and log it exactly like
     /// C++ `mlog_write_uint64` does in this fork.
     /// Exactly like C++ `mlog_write_uint64`, but using your PageFrame API
-    pub fn mlog_write_uint64(
+    pub(in crate::mtr) fn mlog_write_uint64(
         &mut self,
         page: &Page,
         offset: usize,
         val: u64,
-        mtr: &mut Mtr,
+        log_mode: MtrLogMode,
     ) {
         // 1) Get a safe mutable view of the page bytes
         let frame: PageFrame = page.to_page_frame();
@@ -108,12 +105,10 @@ impl MLog {
         // 2) Apply the 8‐byte LE change into the frame
         mach_write_to_8(&mut frame.0[offset..offset + 8], val);
 
-
         // 3) If logging is off, bail out
-        if mtr.get_log_mode() == MTR_LOG_NONE {
+        if log_mode == MTR_LOG_NONE {
             return;
         }
-
 
         // 4) Reserve space for header + offset + compressed payload
         const HEADER_SZ: usize = 11; // max header (1 + 5 + 5)
@@ -127,7 +122,6 @@ impl MLog {
             page,
             MlogType::MLOG_8BYTES,
             start,
-            mtr,
         );
 
         // 6) Write the 2-byte page offset (little-endian)
@@ -140,15 +134,14 @@ impl MLog {
         let written = mach_uint64_write_compressed(&mut self.buf[pos..], val);
         pos += written;
         self.buf.truncate(pos);
-
     }
 
-    pub fn mlog_write_string(
+    pub(in crate::mtr) fn mlog_write_string(
         &mut self,
         page: &Page,
         offset: usize,
         data: &[u8],
-        mtr: &mut Mtr,
+        log_mode: MtrLogMode,
     ) {
         // 1) In‐memory update
 
@@ -156,7 +149,7 @@ impl MLog {
         frame.0[offset..offset + data.len()].copy_from_slice(data);
 
         // 2) Bail if logging is disabled
-        if mtr.get_log_mode() == MTR_LOG_NONE {
+        if log_mode == MTR_LOG_NONE {
             return;
         }
 
@@ -171,9 +164,8 @@ impl MLog {
             page,
             MlogType::MLOG_WRITE_STRING,
             start,
-            mtr,
         );
-        
+
         // 5) Write 2-byte **big-endian** page-offset
         let off_bytes = (offset as u16).to_be_bytes();
         self.buf[pos..pos + 2].copy_from_slice(&off_bytes);
@@ -189,21 +181,20 @@ impl MLog {
     }
 
     /// Emit the end-of-sequence marker for multi-record writes.
-    pub fn mlog_multi_rec_end(&mut self, mtr: &mut Mtr) {
+    pub(in crate::mtr) fn mlog_multi_rec_end(&mut self) {
         self.buf.push(MlogType::MLOG_MULTI_REC_END as u8);
-        mtr.inc_n_log_records();
     }
 
     /// Append (concatenate) a string into the MTR log, if logging is enabled.
-    pub fn mlog_catenate_string(
+    pub(in crate::mtr) fn mlog_catenate_string(
         &mut self,
         page: &[u8],
         offset: usize,
         len: usize,
-        mtr: &Mtr,
+        log_mode: MtrLogMode,
     ) {
         // 1) If logging is disabled, do nothing
-        if mtr.get_log_mode() == MTR_LOG_NONE {
+        if log_mode == MTR_LOG_NONE {
             return;
         }
         // 2) Append exactly those bytes
@@ -212,12 +203,11 @@ impl MLog {
     /// Write the “fast” redo-record header:
     /// [1B type][varint space_id][varint page_no]
     /// Returns the buffer index immediately after the header.
-    pub fn mlog_write_initial_log_record_fast(
+    pub(in crate::mtr) fn mlog_write_initial_log_record_fast(
         &mut self,
         page: &Page,
         mlog_type: MlogType,
         mut log_pos: usize,
-        mtr: &mut Mtr,
     ) -> usize {
         // --- PREPARE SPACE UP FRONT ---
         // Worst-case header length = 1 + 5 + 5 = 11 bytes
@@ -235,28 +225,27 @@ impl MLog {
 
         // --- 2) COMPRESS & WRITE space_id ---
 
-        let space = page.page_get_space_id_be() ;
+        let space = page.page_get_space_id_be();
         let n_space = mach_write_compressed(&mut self.buf[log_pos..], space);
         log_pos += n_space;
 
         // --- 3) COMPRESS & WRITE page_no ---
-        
-        let pageno = page.page_get_fil_offset_be();
-        let n_page = mach_write_compressed(&mut self.buf[log_pos..], pageno as u32);
-        log_pos += n_page;
 
-        // --- 4) BUMP RECORD COUNT ---
-        mtr.inc_n_log_records();
+        let pageno = page.page_get_fil_offset_be();
+        let n_page =
+            mach_write_compressed(&mut self.buf[log_pos..], pageno as u32);
+        log_pos += n_page;
 
         // Return where the caller can append payload
         log_pos
     }
 
-    pub fn mlog_write_initial_log_record(
+    pub(in crate::mtr) fn mlog_write_initial_log_record(
         &mut self,
         page: &Page,
         mlog_type: MlogType,
-        mtr: &mut Mtr,
+        log_mode: MtrLogMode,
+        dblwr_create_in_progress: bool,
     ) {
         // 1) Sanity checks: type in (8‐byte, BIGGEST] range
         let t = mlog_type as u8;
@@ -264,12 +253,12 @@ impl MLog {
         ut_ad!(t > MlogType::MLOG_8BYTES as u8);
 
         // 2) “mlog_open(mtr, 11)” → skip entirely if logging‐mode is NONE
-        if mtr.get_log_mode() == MTR_LOG_NONE {
+        if log_mode == MTR_LOG_NONE {
             return;
         }
 
         // 3) If not in the dblwr‐create phase, emit the fast header
-        if !mtr.get_dblwr_create_in_progress() {
+        if !dblwr_create_in_progress {
             // Reserve space for the worst‐case 11‐byte header
             let start = self.buf.len();
             const MAX_HEADER: usize = 11;
@@ -277,9 +266,8 @@ impl MLog {
                 self.buf.resize(start + MAX_HEADER, 0);
             }
             // Write it (advancing past those bytes)
-            let _after = self.mlog_write_initial_log_record_fast(
-                page, mlog_type, start, mtr,
-            );
+            let _after = self
+                .mlog_write_initial_log_record_fast(page, mlog_type, start);
         }
     }
 
@@ -294,7 +282,7 @@ impl MLog {
     ///
     /// Returns `Some(remaining)` on success, where `remaining` is the slice after
     /// consuming the 4 + len bytes. Returns `None` on any underflow or bounds failure.
-    pub fn mlog_parse_string<'a>(
+    pub(in crate::mtr) fn mlog_parse_string<'a>(
         &mut self,
         mut input: &'a [u8],
         page: Option<&mut [u8]>,
@@ -303,9 +291,9 @@ impl MLog {
         if input.len() < 4 {
             return None;
         }
-        
+
         let offset = u16::from_be_bytes([input[0], input[1]]) as usize;
-        let len    = u16::from_be_bytes([input[2], input[3]]) as usize;
+        let len = u16::from_be_bytes([input[2], input[3]]) as usize;
         input = &input[4..];
 
         // 3) Bounds check against page size
@@ -342,15 +330,15 @@ impl MLog {
     /// 3.	Fill in the 16-byte payload at the returned pointer.
     ///
     ///
-    pub fn mlog_open_and_write_index(
+    pub(in crate::mtr) fn mlog_open_and_write_index(
         &mut self,
         page: &Page,
-        mtr: &mut Mtr,
         mlog_type: MlogType,
         size: usize,
+        mtr_log_mode: MtrLogMode,
     ) -> Option<&mut [u8]> {
         // 1) Bail out if logging is off
-        if mtr.get_log_mode() == MTR_LOG_NONE {
+        if mtr_log_mode == MTR_LOG_NONE {
             return None;
         }
 
@@ -360,13 +348,8 @@ impl MLog {
         self.buf.resize(start + HEADER_LEN + size, 0);
 
         // 3) Write the 11‐byte fast header (type + varints)
-        let after_header = self.mlog_write_initial_log_record_fast(
-            page,
-            mlog_type,
-            start,
-            mtr,
-        );
-        
+        let after_header =
+            self.mlog_write_initial_log_record_fast(page, mlog_type, start);
 
         // 5) Return the slice for the caller to fill in its payload
         let end = after_header + size;

@@ -3,8 +3,8 @@ mod tests {
     use crate::mach::mach0data::{
         mach_parse_compressed, mach_read_from_1, mach_read_from_2,
         mach_read_from_3, mach_read_from_4, mach_read_from_8,
-        mach_uint64_parse_compressed, mach_write_compressed,
-        mach_write_to_1, mach_write_to_2, mach_write_to_3, mach_write_to_4, mach_write_to_8
+        mach_uint64_parse_compressed, mach_write_compressed, mach_write_to_1,
+        mach_write_to_2, mach_write_to_3, mach_write_to_4, mach_write_to_8,
     };
 
     #[test]
