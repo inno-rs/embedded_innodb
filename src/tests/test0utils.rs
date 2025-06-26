@@ -1,22 +1,26 @@
 use std::{
     alloc::{Layout, alloc_zeroed},
+    mem::discriminant,
     ops::Deref,
     sync::{Arc, Mutex, RwLock},
 };
 
 use crate::{
-    buf::buf0types::{BufBlock, BufPage},
+    buf::{
+        buf0buf::BufPool,
+        buf0types::{BUF_GET_IF_IN_POOL, BufBlock, BufPage, Request},
+    },
     data::data0types::{
         DATA_NOT_NULL, DField, DFieldBuilder, DTYPE_DECIMAL, DTYPE_DOUBLE,
         DTYPE_FLOAT, DTYPE_INT, DTYPE_INT_UNSIGNED, DTYPE_VARCHAR, DTuple,
         DTupleBuilder, DType,
     },
     dict::dict0types::{Column, Field, Index},
-    innodb::innodb0types::{PageId, UNIV_PAGE_SIZE, UNIV_SQL_NULL},
-    mtr::mtr0mtr::Mtr,
+    innodb::innodb0types::{PageId, SpaceId, UNIV_PAGE_SIZE, UNIV_SQL_NULL},
+    mtr::mtr0mtr::{Mtr, MtrState::MtrActive},
     page::{page0cur::PageCur, page0page::Page},
-    rem::rem0rec::Record,
-    some_or_panic,
+    sync::sync0rw::ReadWriteLatch,
+    ut::ut0dbg::{ut_a, ut_ad},
 };
 
 /// A structure that owns both the page memory and the Page object that references it.
@@ -74,16 +78,47 @@ pub enum FieldType {
 ///
 /// `OwningPage`: A page that contains the newly created records.
 pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
-    let dtuples = create_dtuples(n, fields);
-
     let owning_page = create_raw_page();
     let buf_block = owning_page.buf_block.clone();
 
-    let mut page_cur = PageCur::new(
-        Arc::new(Mutex::new(Index::new(PageId::dummy()))),
-        Some(owning_page.page.page_get_infimum_rec()),
+    create_records_in_page(
+        n,
+        fields,
+        &owning_page.page,
+        Arc::new(Index::new(PageId::dummy())),
         buf_block,
-        owning_page.page,
+    );
+
+    owning_page
+}
+
+/// Creates and inserts records into a page.
+///
+/// This function creates a specified number of data tuples with the given field types
+/// and inserts them into the provided page. It uses a page cursor to insert each tuple
+/// at the appropriate position in the page.
+///
+/// # Arguments
+///
+/// * `n` - The number of records to create and insert
+/// * `fields` - The field types for each record
+/// * `page` - The page to insert records into
+/// * `index` - The index associated with the page
+/// * `buf_block` - The buffer block containing the page
+pub fn create_records_in_page(
+    n: usize,
+    fields: Vec<FieldType>,
+    page: &Page,
+    index: Arc<Index>,
+    buf_block: Arc<RwLock<BufBlock>>,
+) {
+    let dtuples = create_dtuples(n, fields);
+
+    let mut page_cur = PageCur::new(
+        index,
+        Some(page.page_get_infimum_rec()),
+        buf_block,
+        page.clone(),
     );
 
     let mut mtr = Mtr::new();
@@ -92,8 +127,6 @@ pub fn create_records(n: usize, fields: Vec<FieldType>) -> OwningPage {
         page_cur.page_cur_tuple_insert(&dtuple, &index, 0, &mut mtr);
         page_cur.page_cur_move_to_next();
     }
-
-    owning_page
 }
 
 /// Creates a new empty page for testing purposes.
@@ -146,6 +179,54 @@ pub fn create_dtuples(n: usize, fields: Vec<FieldType>) -> Vec<DTuple> {
         .map(|_| -> DTuple {
             let dfields: Vec<DField> =
                 fields.iter().map(|f| create_dfield(f)).collect();
+
+            DTupleBuilder::default()
+                .info_bits(0)
+                .n_fields(dfields.len())
+                .n_fields_cmp(dfields.len())
+                .fields(dfields)
+                .build()
+                .unwrap()
+        })
+        .collect()
+}
+
+/// Creates data tuples from a chunk of input data.
+///
+/// This function takes a vector of arrays of field types and converts each array
+/// into a data tuple. It first validates that all fields in each row have the same type,
+/// then creates a data tuple for each row by mapping each field to a DField.
+///
+/// # Arguments
+///
+/// * `input_data` - A vector of arrays of field types, where each array represents a row
+///
+/// # Returns
+///
+/// A vector of data tuples created from the input data
+///
+/// # Panics
+///
+/// Panics if a row contains fields of different types
+pub fn create_dtuples_from_input_data_chunk<const N: usize>(
+    input_data: Vec<[FieldType; N]>,
+) -> Vec<DTuple> {
+    for (i, row) in input_data.iter().enumerate() {
+        let expected = discriminant(&row[0]);
+
+        for (j, field) in row.iter().enumerate() {
+            ut_a!(
+                discriminant(field) == expected,
+                "Row {i} has inconsistent field type at column {j}"
+            );
+        }
+    }
+
+    input_data
+        .iter()
+        .map(|input| {
+            let dfields: Vec<DField> =
+                input.iter().map(|f| create_dfield(f)).collect();
 
             DTupleBuilder::default()
                 .info_bits(0)
@@ -350,26 +431,44 @@ pub fn create_new_fields(n: usize) -> Vec<Field> {
     fields
 }
 
-/// Get all the user records on the page.
+/// Function to add some pages to the buffer pool.
+///
+/// This function initializes the buffer pool with a specified number of pages,
+/// creates pages with unique space and page IDs, and verifies that the pages
+/// can be retrieved from the buffer pool.
 ///
 /// # Arguments
 ///
-/// `page`: Page containing the records.
-///
-/// # Returns
-///
-/// `Vec<Record>` A vector of user records (excluding infimum and supremum).
-pub fn get_user_records(page: Page) -> Vec<Record> {
-    let mut result = Vec::<Record>::new();
-    let mut cur_rec = Some(page.page_get_infimum_rec());
-    while cur_rec.is_some() {
-        let rec = some_or_panic!(cur_rec);
-        if page.page_rec_is_user_rec(rec) {
-            result.push(rec);
-        }
+/// * `buf_pool` - The buffer pool to add blocks to
+/// * `count` - The number of blocks to add to the buffer pool
+pub fn create_blocks_in_buf_pool(buf_pool: Arc<Mutex<BufPool>>, count: usize) {
+    let mut buf_pool = buf_pool.lock().unwrap();
 
-        cur_rec = cur_rec.unwrap().rec_get_next();
+    let mut mtr = Mtr::new();
+    mtr.set_mtr_state(MtrActive);
+
+    // Add some pages, and then retry creating.
+    let _result = buf_pool.chunk_init(count * UNIV_PAGE_SIZE);
+    ut_ad!(buf_pool.get_free_list_size() == count);
+
+    for i in 0..count as SpaceId {
+        let resp = buf_pool.create(i, i, &mut mtr);
+        ut_ad!(resp.is_some());
     }
 
-    result
+    for i in 1..10 {
+        let page = buf_pool.get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: i, page_no: i },
+            mode: BUF_GET_IF_IN_POOL,
+            mtr: &mut mtr,
+        });
+
+        ut_ad!(
+            page.is_some(),
+            "Failed to get page for space_id: {}, page_no: {}",
+            i,
+            i
+        );
+    }
 }

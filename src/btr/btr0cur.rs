@@ -1,6 +1,5 @@
 use std::{
     ops::Deref,
-    ptr::null_mut,
     sync::{Arc, Mutex, RwLock},
 };
 
@@ -8,18 +7,20 @@ use crate::{
     btr::{btr0btr::BTree, btr0types::BTR_ESTIMATE},
     buf::{
         buf0buf::BufPool,
-        buf0types::{BufBlock, Request},
+        buf0types::{BUF_GET_ALWAYS, BufBlock, Request},
     },
     data::data0types::DTuple,
     dict::dict0types::Index,
-    fsp::fsp0fsp::Fsp,
     innodb::innodb0types::{
         DbErr,
         DbErr::{DbFail, DbSuccess, DbTooBigRecord},
         PageId,
     },
     lock::lock0lock::LockSys,
-    mtr::mtr0mtr::Mtr,
+    mtr::{
+        mtr0mtr::Mtr,
+        mtr0types::{FixMode, MemoSlot},
+    },
     page::{
         page0cur::{MatchCache, PageCur},
         page0page::Page,
@@ -58,20 +59,18 @@ pub struct Path {
 pub struct BTreeCursor<'a> {
     /// Height of the tree.
     tree_height: usize,
-    /// The index being accessed by this cursor.
-    index: Arc<Mutex<Index>>,
-    /// File segment manager for handling space allocation.
-    fsp: Arc<Mutex<Fsp>>,
-    /// Lock management system.
-    lock_sys: Arc<Mutex<LockSys>>,
     /// Reference to the B-tree being traversed.
     btree: &'a BTree,
     /// Current page cursor position.
     page_cur: Option<PageCur>,
     /// The current buffer block being accessed.
     buf_block: Option<Arc<RwLock<BufBlock>>>,
-    /// Reference to the BufferPool.
-    buf_pool: Arc<RwLock<BufPool>>,
+    /// Reference to the index,
+    index: Arc<Index>,
+    /// Reference to the buffer pool.
+    buf_pool: Arc<Mutex<BufPool>>,
+    /// Reference to LockSys.
+    lock_sys: Arc<Mutex<LockSys>>,
 }
 
 impl<'a> BTreeCursor<'a> {
@@ -85,21 +84,19 @@ impl<'a> BTreeCursor<'a> {
     /// # Returns
     /// A new BTreeCursor instance initialized with the provided references
     pub fn new(
-        index: Arc<Mutex<Index>>,
-        fsp: Arc<Mutex<Fsp>>,
-        lock_sys: Arc<Mutex<LockSys>>,
         btree: &'a BTree,
-        buf_pool: Arc<RwLock<BufPool>>,
+        index: Arc<Index>,
+        buf_pool: Arc<Mutex<BufPool>>,
+        lock_sys: Arc<Mutex<LockSys>>,
     ) -> Self {
         BTreeCursor {
             tree_height: 0,
-            index,
-            fsp,
-            lock_sys,
             btree,
             page_cur: None,
             buf_block: None,
+            index,
             buf_pool,
+            lock_sys,
         }
     }
 
@@ -140,9 +137,19 @@ impl<'a> BTreeCursor<'a> {
         dtuple: &mut DTuple,
         n_ext: usize,
         mtr: &mut Mtr,
-    ) -> Result<usize, DbErr> {
-        let page = Page::new(null_mut());
+    ) -> Result<(), DbErr> {
+        let buf_block = some_or_panic!(self.buf_block.clone());
 
+        let (page, page_id) = {
+            let buf_block_guard = buf_block.read().unwrap();
+            (buf_block_guard.get_page(), buf_block_guard.get_page_id())
+        };
+
+        ut_ad!(
+            mtr.memo_contains(&MemoSlot::PageFix(page_id, FixMode::Exclusive))
+        );
+
+        let max_size = page.page_get_max_insert_size_after_reorganize(1);
         let mut rec_size = dtuple.rec_get_converted_size();
 
         if Page::page_rec_needs_ext(rec_size) {
@@ -157,13 +164,14 @@ impl<'a> BTreeCursor<'a> {
             }
         }
 
-        let is_clustered = self.index.lock().unwrap().is_clustered();
+        let is_clustered = self.index.is_clustered();
 
         // If there have been many consecutive inserts on the page, and we are on the leaf, check if we have to split the page to reserve enough free space for future updates of records.
 
         if is_clustered
             && page.page_n_get_recs() >= 2
             && Self::page_is_leaf(page)
+            && page.page_get_max_insert_size(1) < rec_size
         {
             return Err(DbFail(
                 "Optimistic insert failed: too many records on the page"
@@ -180,7 +188,7 @@ impl<'a> BTreeCursor<'a> {
             Some(cur) => {
                 insert_rec = cur.page_cur_tuple_insert(
                     dtuple,
-                    self.index.lock().unwrap().deref(),
+                    self.index.deref(),
                     n_ext,
                     mtr,
                 );
@@ -190,11 +198,10 @@ impl<'a> BTreeCursor<'a> {
         let reorg = false;
 
         if insert_rec.is_none() && !reorg {
-            let success =
-                self.page_reorganize(self.index.lock().unwrap().deref(), mtr);
+            let success = self.page_reorganize(self.index.deref(), mtr);
         }
 
-        Ok(5)
+        Ok(())
     }
 
     /// Performs a pessimistic insert operation in the B-tree.
@@ -220,7 +227,7 @@ impl<'a> BTreeCursor<'a> {
         dtuple: &mut DTuple,
         n_ext: usize,
         mtr: &mut Mtr,
-    ) -> Result<usize, DbErr> {
+    ) -> Result<(), DbErr> {
         ut_ad!(dtuple.dtuple_type_checked());
 
         // 1. First, try an optimistic insert.
@@ -236,7 +243,7 @@ impl<'a> BTreeCursor<'a> {
 
         // 2. We were not able to insert. Try pessimistic insert.
 
-        Ok(5)
+        Ok(())
     }
 
     /// Retrieves the current record at the cursor position.
@@ -245,7 +252,7 @@ impl<'a> BTreeCursor<'a> {
     ///
     /// * `Some(Record)` - The record at the current cursor position
     /// * `None` - If the cursor is not positioned on any record
-    fn get_rec(&self) -> Option<Record> {
+    pub fn get_rec(&self) -> Option<Record> {
         match &self.page_cur {
             None => None,
             Some(cur) => Some(cur.page_cur_get_rec()),
@@ -284,7 +291,7 @@ impl<'a> BTreeCursor<'a> {
                 flags,
                 rec,
                 buf_block_ref.deref(),
-                self.index.lock().unwrap().deref(),
+                self.index.deref(),
                 mtr,
             );
 
@@ -339,7 +346,7 @@ impl<'a> BTreeCursor<'a> {
         mtr: &mut Mtr,
     ) {
         // Verify that the search tuple is valid for this index
-        ut_ad!(self.index.lock().unwrap().check_search_tuple(dtuple));
+        // ut_ad!(self.index.check_search_tuple(dtuple));
         ut_ad!(dtuple.dtuple_type_checked());
 
         // Track the height of the tree as we traverse it
@@ -352,22 +359,19 @@ impl<'a> BTreeCursor<'a> {
         let page_cursor = self.page_cur.as_mut().unwrap();
 
         // Get the root page ID from the index
-        let PageId { space_id, page_no } = {
-            let index = self.index.lock().unwrap();
-            index.get_page_id()
-        };
+        let PageId { space_id, page_no } = self.index.get_page_id();
 
         // Initialize a cache for matching records
         let mut match_cache: MatchCache = Default::default();
 
         // Search loop - continues until we find the target position
-        let found = false;
+        let mut found = false;
         while found == false {
             // Get the buffer block for the current page
-            let block = self.buf_pool.write().unwrap().get(Request {
-                rw_latch: ReadWriteLatch::SLatch,
+            let block = self.buf_pool.lock().unwrap().get(Request {
+                rw_latch: ReadWriteLatch::NoLatch,
                 page_id: PageId { space_id, page_no },
-                mode,
+                mode: BUF_GET_ALWAYS,
                 mtr,
             });
 
@@ -381,8 +385,7 @@ impl<'a> BTreeCursor<'a> {
 
             // Verify that the page belongs to the correct index
             ut_ad!(
-                BTree::page_get_index_id(&page)
-                    == self.index.lock().unwrap().get_index_id()
+                BTree::page_get_index_id(&page) == self.index.get_index_id()
             );
 
             if height.is_none() {
@@ -398,11 +401,13 @@ impl<'a> BTreeCursor<'a> {
                 if latch == ReadWriteLatch::NoLatch {
                     // Unlatch the page, and then return.
                 }
+
+                found = true;
             }
 
             // Create a page cursor for the current page
             let mut page_cur =
-                PageCur::new(self.index.clone(), None, block, page);
+                PageCur::new(self.index.clone(), None, block.clone(), page);
 
             // Search for the position of the data tuple in the current page
             page_cur.page_cur_search_with_match(
@@ -410,6 +415,30 @@ impl<'a> BTreeCursor<'a> {
                 mode,
                 &mut match_cache,
             );
+
+            self.position(page_cur.page_cur_get_rec(), block);
         }
+    }
+
+    /// Positions the cursor at a specific record in the B-tree.
+    ///
+    /// This method updates the cursor's internal state to point to the given record
+    /// and buffer block. It creates a new page cursor at the specified record position.
+    ///
+    /// # Arguments
+    ///
+    /// * `rec` - The record to position the cursor at
+    /// * `buf_block` - The buffer block containing the record
+    pub fn position(&mut self, rec: Record, buf_block: Arc<RwLock<BufBlock>>) {
+        let page = buf_block.read().unwrap().get_page();
+        ut_ad!(page.is_page_record(rec));
+
+        self.buf_block = Some(buf_block.clone());
+        self.page_cur = Some(PageCur::new(
+            self.index.clone(),
+            Some(rec),
+            buf_block.clone(),
+            page,
+        ))
     }
 }

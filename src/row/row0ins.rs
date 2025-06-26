@@ -24,11 +24,10 @@ impl RowInsert {
     pub fn index_entry_low(
         &self,
         mode: usize,
-        index: Arc<Mutex<Index>>,
+        index: Arc<Index>,
         dtuple: &DTuple,
         n_ext: usize,
     ) -> Result<(), DbErr> {
-        let index = index.lock().unwrap();
         let btree = { self.dict.lock().unwrap().get_btree() };
 
         Ok(())

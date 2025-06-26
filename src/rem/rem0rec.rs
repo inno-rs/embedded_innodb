@@ -1,4 +1,4 @@
-use std::{ptr, slice};
+use std::{fmt, ptr, slice};
 
 use tracing::{error, info};
 
@@ -179,6 +179,47 @@ pub struct Record {
     // todo: Move to slice.
     /// Pointer to the beginning of the record.
     ptr: *mut u8,
+}
+
+impl fmt::Display for Record {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let n_fields = self.rec_get_n_fields();
+        let info_bits = self.rec_get_info_bits();
+        let byte_format = if self.rec_get_1byte_offs_flag() { 1 } else { 2 };
+
+        write!(
+            f,
+            "PHYSICAL RECORD: n_fields {}; {}-byte offsets; info bits {}; n owned {};",
+            n_fields,
+            byte_format,
+            info_bits,
+            self.rec_get_n_owned()
+        )?;
+
+        write!(f, " fields ")?;
+
+        for n_field in 0..n_fields {
+            write!(f, " {}: ", n_field)?;
+
+            let data = self.rec_get_data(n_field);
+            match data {
+                None => {
+                    ut_panic!("rec_to_string: data out of range");
+                }
+                Some(d) => match d {
+                    RecordFieldData::Data(data) => {
+                        let len = data.len();
+                        write!(f, " {}; len: {} ", data, len)?;
+                    }
+                    RecordFieldData::SqlNullData() => {
+                        write!(f, " SQL NULL, len: {}", 5)?;
+                    }
+                },
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Record {
@@ -824,52 +865,6 @@ impl Record {
             let data = std::str::from_utf8_unchecked(bytes).to_string();
             Some(RecordFieldData::Data(data))
         }
-    }
-
-    /// Converts a physical record to a human-readable string representation.
-    ///
-    /// This function formats the record with information about the number of fields,
-    /// offset size, info bits, and the content of each field.
-    ///
-    /// # Returns
-    ///
-    /// * A string representation of the record.
-    pub fn rec_to_string(&self) -> String {
-        let n_fields = self.rec_get_n_fields();
-        let info_bits = self.rec_get_info_bits();
-        let byte_format = if self.rec_get_1byte_offs_flag() { 1 } else { 2 };
-
-        let mut output_builder = String::new();
-        output_builder.push_str(&format!(
-            "PHYSICAL RECORD: n_fields {}; {}-byte offsets; info bits {}; n owned {};",
-            n_fields, byte_format, info_bits, self.rec_get_n_owned()
-        ));
-
-        output_builder.push_str(" fields ");
-
-        for n_field in 0..n_fields {
-            output_builder.push_str(&format!(" {}: ", n_field));
-
-            let data = self.rec_get_data(n_field);
-            match data {
-                None => {
-                    ut_panic!("rec_to_string: data out of range");
-                }
-                Some(d) => match d {
-                    RecordFieldData::Data(data) => {
-                        let len = data.len();
-                        output_builder
-                            .push_str(&format!(" {}; len: {} ", data, len))
-                    }
-                    RecordFieldData::SqlNullData() => {
-                        output_builder
-                            .push_str(&format!(" SQL NULL, len: {}", 5));
-                    }
-                },
-            }
-        }
-
-        output_builder
     }
 
     /// Get the extra size of the record.

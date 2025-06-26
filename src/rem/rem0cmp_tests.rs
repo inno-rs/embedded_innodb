@@ -11,7 +11,6 @@ mod tests {
         rem::rem0cmp::{cmp_dtuple_rec_with_match, cmp_rec_rec},
         tests::test0utils::{
             FieldType, create_dtuples, create_new_fields, create_records,
-            get_user_records,
         },
     };
 
@@ -53,12 +52,12 @@ mod tests {
         info!("case: 1={}, 2={}", str1, str2);
         let owning_page_1 =
             create_records(1, vec![FieldType::String(Some(str1.to_string()))]);
-        let user_records_1 = get_user_records(owning_page_1.page);
+        let user_records_1 = owning_page_1.page.get_user_records();
         let rec1 = user_records_1[0];
 
         let owning_page_2 =
             create_records(1, vec![FieldType::String(Some(str2.to_string()))]);
-        let user_records_2 = get_user_records(owning_page_2.page);
+        let user_records_2 = owning_page_2.page.get_user_records();
         let rec2 = user_records_2[0];
 
         let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
@@ -100,11 +99,11 @@ mod tests {
         #[case] out: Ordering,
     ) {
         let owning_page_1 = create_records(1, fields1);
-        let user_records_1 = get_user_records(owning_page_1.page);
+        let user_records_1 = owning_page_1.page.get_user_records();
         let rec1 = user_records_1[0];
 
         let owning_page_2 = create_records(1, fields2);
-        let user_records_2 = get_user_records(owning_page_2.page);
+        let user_records_2 = owning_page_2.page.get_user_records();
         let rec2 = user_records_2[0];
 
         let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
@@ -113,8 +112,8 @@ mod tests {
             index.add_field(field);
         }
 
-        info!("rec1={}", rec1.rec_to_string());
-        info!("rec2={}", rec2.rec_to_string());
+        info!("rec1={}", rec1);
+        info!("rec2={}", rec2);
 
         let result = cmp_rec_rec(rec1, rec2, &index);
 
@@ -144,11 +143,11 @@ mod tests {
         #[case] out: Ordering,
     ) {
         let owning_page_1 = create_records(1, fields1);
-        let user_records_1 = get_user_records(owning_page_1.page);
+        let user_records_1 = owning_page_1.page.get_user_records();
         let rec1 = user_records_1[0];
 
         let owning_page_2 = create_records(1, fields2);
-        let user_records_2 = get_user_records(owning_page_2.page);
+        let user_records_2 = owning_page_2.page.get_user_records();
         let rec2 = user_records_2[0];
 
         let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
@@ -193,7 +192,7 @@ mod tests {
         let dtuple = &dtuples[0];
 
         let owning_page = create_records(1, fields2);
-        let user_records = get_user_records(owning_page.page);
+        let user_records = owning_page.page.get_user_records();
         let rec2 = user_records[0];
 
         let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
@@ -241,7 +240,7 @@ mod tests {
         let dtuple = &dtuples[0];
 
         let owning_page = create_records(1, fields2);
-        let user_records = get_user_records(owning_page.page);
+        let user_records = owning_page.page.get_user_records();
         let rec2 = user_records[0];
 
         let mut index = Index::new(PageId { space_id: 0, page_no: 0 });

@@ -21,6 +21,7 @@ pub struct Field {
 }
 
 /// Type of index.
+#[derive(Copy, Clone)]
 pub enum IndexType {
     /// Clustered Index.
     DictClustered,
@@ -33,32 +34,45 @@ pub enum IndexType {
 pub struct Index {
     /// Index id.
     id: usize,
+    /// The page ID of the root page of this index in the B-tree structure.
+    page_id: PageId,
+    /// Inner struct with requires mutability.
+    inner: Arc<Mutex<IndexInner>>,
+}
+
+/// Internal structure of an index that requires mutability.
+///
+/// This struct contains the mutable components of an index, including its type,
+/// field counts, and the actual fields. It is wrapped in an Arc<Mutex<>> in the
+/// Index struct to allow for thread-safe mutability.
+pub struct IndexInner {
     /// Type of index,
     index_type: IndexType,
     /// Number of user defined columns in the index. In the internal representation, we have more.
     n_user_defined_cols: usize,
     /// Number of fields from the beginning that can help determine an entry in the index uniquely.
     n_uniq: usize,
+    /// Number of fields defined in the index.
     n_defined: usize,
     /// Number of nullable fields.
     n_nullable: usize,
-    /// Fields.
+    /// Fields that make up the index.
     fields: Vec<Field>,
-    /// The page ID of the root page of this index in the B-tree structure.
-    page_id: PageId,
 }
 
 impl Index {
     pub fn new(page_id: PageId) -> Self {
         Self {
             id: 0,
-            index_type: IndexType::DictClustered,
-            n_user_defined_cols: 0,
-            n_uniq: 0,
-            n_defined: 0,
-            n_nullable: 0,
-            fields: vec![],
             page_id,
+            inner: Arc::new(Mutex::new(IndexInner {
+                index_type: IndexType::DictClustered,
+                n_user_defined_cols: 0,
+                n_uniq: 0,
+                n_defined: 0,
+                n_nullable: 0,
+                fields: vec![],
+            })),
         }
     }
 
@@ -73,8 +87,9 @@ impl Index {
     /// * The nth column of the table.
     ///     
     pub fn get_nth_col(&self, n: usize) -> Arc<Mutex<Column>> {
-        if n < self.fields.len() {
-            self.fields[n].col.clone()
+        let inner = self.inner.lock().unwrap();
+        if n < inner.fields.len() {
+            inner.fields[n].col.clone()
         } else {
             panic!("Column index out of range");
         }
@@ -104,24 +119,24 @@ impl Index {
         self.page_id
     }
 
-    pub fn index_type(&self) -> &IndexType {
-        &self.index_type
+    pub fn index_type(&self) -> IndexType {
+        self.inner.lock().unwrap().index_type.clone()
     }
 
     pub fn n_user_defined_cols(&self) -> usize {
-        self.n_user_defined_cols
+        self.inner.lock().unwrap().n_user_defined_cols
     }
 
     pub fn n_uniq(&self) -> usize {
-        self.n_uniq
+        self.inner.lock().unwrap().n_uniq
     }
 
     pub fn n_defined(&self) -> usize {
-        self.n_defined
+        self.inner.lock().unwrap().n_defined
     }
 
     pub fn n_nullable(&self) -> usize {
-        self.n_nullable
+        self.inner.lock().unwrap().n_nullable
     }
 
     pub fn page_id(&self) -> PageId {
@@ -129,11 +144,11 @@ impl Index {
     }
 
     pub fn add_field(&mut self, field: Field) {
-        self.fields.push(field);
+        self.inner.lock().unwrap().fields.push(field);
     }
 
     pub fn is_clustered(&self) -> bool {
-        match self.index_type {
+        match self.inner.lock().unwrap().index_type {
             IndexType::DictClustered => true,
             IndexType::DictUnique | IndexType::DictUniversal => false,
         }
@@ -146,9 +161,10 @@ impl Index {
     /// `n_uniq` if clustered.
     /// Otherwise, all fields.
     pub fn get_n_unique_in_tree(&self) -> usize {
+        let inner = self.inner.lock().unwrap();
         match self.is_clustered() {
-            true => self.n_uniq,
-            false => self.fields.len(),
+            true => inner.n_uniq,
+            false => inner.fields.len(),
         }
     }
 
@@ -160,8 +176,9 @@ impl Index {
     /// `n_fields`: Number of fields to copy.
     ///
     pub fn copy_types(&self, dtuple: &mut DTuple, n_fields: usize) {
+        let inner = self.inner.lock().unwrap();
         for i in 0..n_fields {
-            let field = some_or_panic!(self.fields.get(i));
+            let field = some_or_panic!(inner.fields.get(i));
             let dest_field = some_or_panic!(dtuple.fields.get_mut(i));
             let col = field.col.lock().unwrap();
             dest_field.dtype = col.dtype.clone();
