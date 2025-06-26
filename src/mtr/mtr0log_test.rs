@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
 
-    
     use crate::mach::mach0data::mach_parse_compressed;
     use crate::mtr::mtr0types::MlogType;
     use crate::page::page0page::Page;
@@ -9,7 +8,7 @@ mod tests {
     use crate::fil::fil0types::{FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID};
     use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
     use crate::mtr::mtr0log::MLog;
-    use crate::mtr::mtr0mtr::Mtr;
+    use crate::mtr::mtr0mtr::{Mtr, MtrLogMode};
 
     fn make_page() -> (Vec<u8>, Page) {
         // allocate a fresh backing Vec
@@ -25,17 +24,15 @@ mod tests {
         (backing, page)
     }
 
-    fn setup() -> (MLog, Vec<u8>, Page, Mtr) {
+    fn setup() -> (MLog, Vec<u8>, Page) {
         let (backing, page) = make_page();
         let mlog = MLog::new();
-        let mut mtr = Mtr::new();
-        mtr.start();
-        (mlog, backing, page, mtr)
+        (mlog, backing, page)
     }
 
     #[test]
     fn test_mlog_write_u32_1byte() {
-        let (mut mlog, backing, page, mut mtr) = setup();
+        let (mut mlog, backing, page) = setup();
         let offset = 128;
         let val = 0xAB;
 
@@ -44,15 +41,12 @@ mod tests {
             offset,
             val,
             MlogType::MLOG_1BYTE,
-            &mut mtr,
+            MtrLogMode::MTR_LOG_MODE_ALL,
         );
 
         // in-page byte (always little-endian at page)
         let frame = page.to_page_frame();
         assert_eq!(frame.0[offset], val as u8);
-
-        // exactly one log record
-        assert_eq!(mtr.get_n_log_records(), 1);
 
         // parse the log: [type][space varint][page_no varint][offset(2B BE)][value(4B BE)]
         let buf = &mlog.buf;
@@ -80,8 +74,14 @@ mod tests {
             (10, 0xBEEF_u32, MlogType::MLOG_2BYTES),
             (20, 0xDEAD_BEEF_u32, MlogType::MLOG_4BYTES),
         ] {
-            let (mut mlog, backing, page, mut mtr) = setup();
-            mlog.mlog_write_u32(&page, offset, val, mlog_type, &mut mtr);
+            let (mut mlog, backing, page) = setup();
+            mlog.mlog_write_u32(
+                &page,
+                offset,
+                val,
+                mlog_type,
+                MtrLogMode::MTR_LOG_MODE_ALL,
+            );
 
             // figure out how many bytes we wrote
             let width = match mlog_type {
@@ -114,8 +114,10 @@ mod tests {
             assert_eq!(pageno, 0);
 
             let pos = 1 + n1 + n2;
-            let got_off = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
-            let got_val = u32::from_be_bytes(buf[pos + 2..pos + 6].try_into().unwrap());
+            let got_off =
+                u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
+            let got_val =
+                u32::from_be_bytes(buf[pos + 2..pos + 6].try_into().unwrap());
             assert_eq!(got_off, offset);
             assert_eq!(got_val, val);
         }
@@ -123,12 +125,16 @@ mod tests {
 
     #[test]
     fn test_mlog_write_uint64() {
-        let (mut mlog, _, page, mut mtr) = setup();
+        let (mut mlog, _, page) = setup();
         let offset = 16;
         let val: u64 = 0x1122_3344_5566_7788;
 
-        mlog.mlog_write_uint64(&page, offset, val, &mut mtr);
-        assert_eq!(mtr.get_n_log_records(), 1);
+        mlog.mlog_write_uint64(
+            &page,
+            offset,
+            val,
+            MtrLogMode::MTR_LOG_MODE_ALL,
+        );
 
         // parse header
         let buf = &mlog.buf;
@@ -158,17 +164,21 @@ mod tests {
 
     #[test]
     fn test_mlog_write_and_parse_string_roundtrip() {
-        let (mut mlog, backing, page, mut mtr) = setup();
+        let (mut mlog, backing, page) = setup();
         let offset = 13;
-        let data   = b"InnoDB";
+        let data = b"InnoDB";
 
         // write + log
-        mlog.mlog_write_string(&page, offset, data, &mut mtr);
-        assert_eq!(mtr.get_n_log_records(), 1);
+        mlog.mlog_write_string(
+            &page,
+            offset,
+            data,
+            MtrLogMode::MTR_LOG_MODE_ALL,
+        );
 
         // grab a copy of the bytes we need
         let full = mlog.buf.clone();
-        let (space, n1)  = mach_parse_compressed(&full[1..]).unwrap();
+        let (space, n1) = mach_parse_compressed(&full[1..]).unwrap();
         let (pageno, n2) = mach_parse_compressed(&full[1 + n1..]).unwrap();
         let pos = 1 + n1 + n2;
         let slice_len = 4 + data.len();
@@ -183,11 +193,16 @@ mod tests {
 
     #[test]
     fn test_open_and_write_index_nonzero() {
-        let (mut mlog, _backing, page, mut mtr) = setup();
+        let (mut mlog, _backing, page) = setup();
         // request 5‐byte payload
         let size = 5;
         let payload = mlog
-            .mlog_open_and_write_index(&page, &mut mtr, MlogType::MLOG_WRITE_STRING, size)
+            .mlog_open_and_write_index(
+                &page,
+                MlogType::MLOG_WRITE_STRING,
+                size,
+                MtrLogMode::MTR_LOG_MODE_ALL,
+            )
             .expect("should get a payload slice");
         assert_eq!(payload.len(), size);
 
@@ -202,7 +217,7 @@ mod tests {
         assert_eq!(buf[0], MlogType::MLOG_WRITE_STRING as u8);
 
         // skip two varints: space_id + page_no
-        let (space, n1)  = mach_parse_compressed(&buf[1..]).unwrap();
+        let (space, n1) = mach_parse_compressed(&buf[1..]).unwrap();
         let (pageno, n2) = mach_parse_compressed(&buf[1 + n1..]).unwrap();
         assert_eq!(space, 0);
         assert_eq!(pageno, 0);
@@ -211,26 +226,22 @@ mod tests {
         // payload should appear immediately after header
         assert_eq!(&buf[start..start + size], &[1, 2, 3, 4, 5]);
         assert_eq!(buf.len(), start + size);
-        // exactly one record counted
-        assert_eq!(mtr.get_n_log_records(), 1);
     }
-    
+
     #[test]
     fn test_initial_fast_header() {
-        let (mut mlog, _, page, mut mtr) = setup();
+        let (mut mlog, _, page) = setup();
         let start = 0;
         let after = mlog.mlog_write_initial_log_record_fast(
             &page,
             MlogType::MLOG_4BYTES,
             start,
-            &mut mtr,
         );
         // type + two varints(0)
         assert_eq!(mlog.buf[0], MlogType::MLOG_4BYTES as u8);
         assert_eq!(mlog.buf[1], 0);
         assert_eq!(mlog.buf[2], 0);
         assert_eq!(after, 3);
-        assert_eq!(mtr.get_n_log_records(), 1);
     }
 
     #[test]
@@ -240,8 +251,7 @@ mod tests {
         let mtr = Mtr::new(); // default is MTR_LOG_NONE
 
         // Try to catenate bytes 1..4 from page into log
-        mlog.mlog_catenate_string(&page, 1, 3, &mtr);
-
+        mlog.mlog_catenate_string(&page, 1, 3, MtrLogMode::MTR_LOG_NONE);
         // Since logging was disabled, buf must still be empty
         assert!(mlog.buf.is_empty());
     }
@@ -250,18 +260,15 @@ mod tests {
     fn test_mlog_catenate_string_enabled() {
         let mut mlog = MLog::new();
         let page = vec![10u8, 20, 30, 40, 50];
-        let mut mtr = Mtr::new();
-        mtr.start(); // now logging is enabled
 
         // Append 3 bytes starting at offset=1
-        mlog.mlog_catenate_string(&page, 1, 3, &mtr);
+        mlog.mlog_catenate_string(&page, 1, 3, MtrLogMode::MTR_LOG_MODE_ALL);
 
         // Should have appended exactly [20,30,40]
         assert_eq!(mlog.buf, vec![20u8, 30, 40]);
 
         // If we do it again, it concatenates again
-        mlog.mlog_catenate_string(&page, 2, 2, &mtr);
+        mlog.mlog_catenate_string(&page, 2, 2, MtrLogMode::MTR_LOG_MODE_ALL);
         assert_eq!(mlog.buf, vec![20u8, 30, 40, 30, 40]);
     }
 }
-

@@ -1,9 +1,9 @@
-pub(crate) use crate::mtr::{
-    mtr0log::MLog,
-    mtr0types::{
-        LatchHandle, LockMode, MemoSlot, MtrLogMode, MtrState, Savepoint,
-    },
+use crate::mtr::mtr0log::MLog;
+use crate::mtr::mtr0types::MlogType;
+pub(crate) use crate::mtr::mtr0types::{
+    LatchHandle, LockMode, MemoSlot, MtrLogMode, MtrState, Savepoint,
 };
+use crate::page::page0page::Page;
 use crate::{
     buf::buf0types::BufBlock, mtr::mtr0types::OtherResource,
     ut::ut0dbg::ut_ad, ut_panic,
@@ -390,5 +390,58 @@ impl Mtr {
 
     pub fn get_dblwr_create_in_progress(&self) -> bool {
         self.dblwr_create_in_progress
+    }
+
+    // mlog calling methods
+
+    pub fn write_u32(
+        &mut self,
+        page: &Page,
+        offset: usize,
+        val: u32,
+        mlog_type: MlogType,
+    ) {
+        self.log_buffer.mlog_write_u32(
+            page,
+            offset,
+            val,
+            mlog_type,
+            self.log_mode(),
+        );
+        self.inc_n_log_records();
+    }
+
+    pub fn write_uint64(&mut self, page: &Page, offset: usize, val: u64) {
+        self.log_buffer.mlog_write_uint64(page, offset, val, self.log_mode());
+        self.inc_n_log_records();
+    }
+
+    pub fn write_string(&mut self, page: &Page, offset: usize, data: &[u8]) {
+        self.log_buffer.mlog_write_string(page, offset, data, self.log_mode());
+        self.inc_n_log_records();
+    }
+
+    /// Reserve & write an index payload, then count.
+    pub fn open_and_write_index(
+        &mut self,
+        page: &Page,
+        mlog_type: MlogType,
+        size: usize,
+    ) -> Option<&mut [u8]> {
+        let payload = self.log_buffer.mlog_open_and_write_index(
+            page,
+            mlog_type,
+            size,
+            self.log_mode(),
+        );
+        if payload.is_some() {
+            self.n_log_records += 1;
+        }
+        payload
+    }
+
+    pub fn multi_record_end(&mut self) {
+        self.log_buffer.mlog_multi_rec_end();
+        self.inc_n_log_records();
     }
 }
