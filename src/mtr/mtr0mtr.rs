@@ -13,6 +13,14 @@ use crate::{
 };
 
 pub const MTR_MAGIC_N: u32 = 54551;
+/// Mini-transaction (MTR) for managing atomic operations in the database.
+///
+/// A mini-transaction is a sequence of database operations that must be
+/// performed atomically. It provides mechanisms for latching resources,
+/// logging changes, and ensuring that operations can be rolled back if needed.
+///
+/// The MTR tracks all resources it acquires in a memo structure and manages
+/// a log buffer for recording changes that need to be applied to the redo log.
 pub struct Mtr {
     mtr_state: MtrState,
     log_mode: MtrLogMode,
@@ -26,6 +34,10 @@ pub struct Mtr {
 }
 
 impl Mtr {
+    /// Creates a new mini-transaction in an undefined state.
+    ///
+    /// # Returns
+    /// A new Mtr instance with default values and state set to undefined.
     pub fn new() -> Self {
         Self {
             mtr_state: MtrState::MtrUndefined,
@@ -125,19 +137,44 @@ impl Mtr {
         }
     }
 
+    /// Sets a savepoint in the mini-transaction.
+    ///
+    /// A savepoint marks the current state of the memo stack, allowing
+    /// for partial rollbacks to this point later.
+    ///
+    /// # Returns
+    /// The index of the newly created savepoint.
     pub fn set_savepoint(&mut self) -> Savepoint {
         let sp = self.memo.len();
         self.savepoints.push(sp);
         sp
     }
+    /// Gets the current savepoint from the mini-transaction.
+    ///
+    /// # Returns
+    /// The current savepoint index.
+    ///
+    /// # Panics
+    /// Panics if no savepoint has been set.
     pub fn get_savepoint(&self) -> Savepoint {
         *self.savepoints.last().expect("get_savepoint: no savepoint set")
     }
 
+    /// Gets the current log mode of the mini-transaction.
+    ///
+    /// # Returns
+    /// The current log mode.
     pub fn get_log_mode(&self) -> MtrLogMode {
         self.log_mode
     }
 
+    /// Sets a new log mode for the mini-transaction.
+    ///
+    /// # Arguments
+    /// * `new_mode` - The new log mode to set
+    ///
+    /// # Returns
+    /// The previous log mode.
     pub fn set_log_mode(&mut self, new_mode: MtrLogMode) -> MtrLogMode {
         let old = self.log_mode;
         self.log_mode = new_mode;
@@ -245,6 +282,17 @@ impl Mtr {
     }
 
     /// Read a variable‐length “ulint” (1–8 bytes, little‐endian) from `buf[0..type]`. .
+    /// Reads a variable-length unsigned integer (1-8 bytes, little-endian) from a buffer.
+    ///
+    /// # Arguments
+    /// * `buf` - The buffer to read from
+    /// * `ty` - The number of bytes to read (1-8)
+    ///
+    /// # Returns
+    /// The unsigned 64-bit integer value read from the buffer
+    ///
+    /// # Panics
+    /// Panics if `ty` is greater than 8 or if the buffer is too small
     pub fn read_ulint(&self, buf: &[u8], ty: usize) -> u64 {
         ut_ad!(ty <= 8, "type must be 1..=8");
         ut_ad!(buf.len() >= ty, "buffer too small");
@@ -256,38 +304,68 @@ impl Mtr {
         u64::from_le_bytes(tmp)
     }
 
-    /// Read an 8‐byte little‐endian unsigned integer.
-    /// Mirrors C++ `mtr_t::read_uint64(ptr)`.
+    /// Reads an 8-byte little-endian unsigned integer from a buffer.
+    ///
+    /// This method mirrors the C++ `mtr_t::read_uint64(ptr)` function.
+    ///
+    /// # Arguments
+    /// * `buf` - The buffer to read from (must be at least 8 bytes)
+    ///
+    /// # Returns
+    /// The unsigned 64-bit integer value read from the buffer
+    ///
+    /// # Panics
+    /// Panics if the buffer is less than 8 bytes
     pub fn read_uint64(&self, buf: &[u8]) -> u64 {
         let bytes: [u8; 8] =
             buf[0..8].try_into().expect("buffer too small for read_uint64");
         u64::from_le_bytes(bytes)
     }
 
-    /// Increment the number of log records in the mini-transaction.
+    /// Increments the count of log records in the mini-transaction.
+    ///
+    /// This is called internally whenever a new log record is added.
     pub fn inc_n_log_records(&mut self) {
         self.n_log_records += 1;
     }
 
-    /// Get the number of log records in the mini-transaction.
+    /// Gets the number of log records in the mini-transaction.
+    ///
+    /// # Returns
+    /// The count of log records.
     pub fn get_n_log_records(&self) -> usize {
         self.n_log_records
     }
 
+    /// Gets the current state of the mini-transaction.
+    ///
+    /// # Returns
+    /// A clone of the current mini-transaction state.
     pub fn get_mtr_state(&self) -> MtrState {
         self.mtr_state.clone()
     }
 
+    /// Sets the state of the mini-transaction.
+    ///
+    /// # Arguments
+    /// * `mtr_state` - The new state to set
     pub fn set_mtr_state(&mut self, mtr_state: MtrState) {
         self.mtr_state = mtr_state;
     }
 
     /// Disable redo logging for this mini-transaction.
+    ///
+    /// This sets the log mode to NONE, preventing any redo log records
+    /// from being generated during this mini-transaction.
     pub fn disable_redo_logging(&mut self) {
         self.log_mode = MtrLogMode::MTR_LOG_NONE;
     }
 
-    /// Release an s-latch stored at a savepoint.
+    /// Release a shared latch stored at a savepoint.
+    ///
+    /// # Arguments
+    /// * `savepoint` - The savepoint at which the latch was acquired
+    /// * `handle` - The latch handle to release
     pub fn release_s_latch_at_savepoint(
         &mut self,
         savepoint: Savepoint,
@@ -296,24 +374,44 @@ impl Mtr {
         // TODO: check memo[savepoint] matches Latch {{ Shared }} and release it
     }
 
-    /// Acquire a shared latch and record it.
+    /// Acquire a shared latch and record it in the memo structure.
+    ///
+    /// # Arguments
+    /// * `handle` - The latch handle to acquire in shared mode
     pub fn s_lock(&mut self, handle: &mut LatchHandle) {
         // handle.lock_shared();
         self.memo_push(MemoSlot::Latch(*handle, LockMode::Shared));
     }
 
-    /// Acquire an exclusive latch and record it.
+    /// Acquire an exclusive latch and record it in the memo structure.
+    ///
+    /// # Arguments
+    /// * `handle` - The latch handle to acquire in exclusive mode
     pub fn x_lock(&mut self, handle: &mut LatchHandle) {
         // handle.lock_exclusive();
         self.memo_push(MemoSlot::Latch(*handle, LockMode::Exclusive));
     }
 
-    /// Is this mini-transaction active?
+    /// Checks if this mini-transaction is in the active state.
+    ///
+    /// # Returns
+    /// `true` if the mini-transaction is active, `false` otherwise
     pub fn is_active(&self) -> bool {
         self.mtr_state == MtrState::MtrActive
     }
 
-    /// Release a buffer block at a savepoint without rolling back others.
+    /// Releases a buffer block at a specific savepoint without rolling back other operations.
+    ///
+    /// This method allows for selective release of a buffer block that was acquired
+    /// at a specific savepoint, without affecting other resources acquired by the
+    /// mini-transaction.
+    ///
+    /// # Arguments
+    /// * `savepoint` - The savepoint at which the block was acquired
+    /// * `block` - The buffer block to release
+    ///
+    /// # Panics
+    /// Panics if the savepoint is invalid or if the slot at the savepoint is not a page slot.
     pub fn release_block_at_savepoint(
         &mut self,
         savepoint: Savepoint,
@@ -346,48 +444,98 @@ impl Mtr {
         block.fix_dec(); // Unpinning the page
     }
 
+    /// Gets a reference to the current state of the mini-transaction.
+    ///
+    /// # Returns
+    /// A reference to the current mini-transaction state.
     pub fn mtr_state(&self) -> &MtrState {
         &self.mtr_state
     }
 
+    /// Gets the current log mode of the mini-transaction.
+    ///
+    /// # Returns
+    /// The current log mode.
     pub fn log_mode(&self) -> MtrLogMode {
         self.log_mode
     }
 
+    /// Checks if this mini-transaction has made any modifications.
+    ///
+    /// # Returns
+    /// `true` if modifications have been made, `false` otherwise.
     pub fn modifications(&self) -> bool {
         self.modifications
     }
 
+    /// Gets the number of log records in the mini-transaction.
+    ///
+    /// # Returns
+    /// The count of log records.
     pub fn n_log_records(&self) -> usize {
         self.n_log_records
     }
 
+    /// Gets a reference to the memo structure of the mini-transaction.
+    ///
+    /// The memo structure contains all resources acquired by this mini-transaction.
+    ///
+    /// # Returns
+    /// A reference to the vector of memo slots.
     pub fn memo(&self) -> &Vec<MemoSlot> {
         &self.memo
     }
 
+    /// Gets a reference to the log buffer of the mini-transaction.
+    ///
+    /// # Returns
+    /// A reference to the log buffer.
     pub fn log_buffer(&self) -> &MLog {
         &self.log_buffer
     }
 
+    /// Gets a mutable reference to the log buffer of the mini-transaction.
+    ///
+    /// # Returns
+    /// A mutable reference to the log buffer.
     pub fn log_buffer_mut(&mut self) -> &mut MLog {
         &mut self.log_buffer
     }
 
+    /// Gets a reference to the savepoints vector of the mini-transaction.
+    ///
+    /// # Returns
+    /// A reference to the vector of savepoints.
     pub fn savepoints(&self) -> &Vec<Savepoint> {
         &self.savepoints
     }
 
+    /// Gets the magic number of the mini-transaction.
+    ///
+    /// This is used for debugging to verify the integrity of the mini-transaction.
+    ///
+    /// # Returns
+    /// The magic number.
     pub fn magic_n(&self) -> u32 {
         self.magic_n
     }
 
+    /// Checks if a doublewrite buffer creation is in progress.
+    ///
+    /// # Returns
+    /// `true` if a doublewrite buffer creation is in progress, `false` otherwise.
     pub fn get_dblwr_create_in_progress(&self) -> bool {
         self.dblwr_create_in_progress
     }
 
     // mlog calling methods
-
+    /// Writes a 32-bit unsigned integer to the log buffer.
+    ///
+    /// # Arguments
+    /// * `page` - The page being modified
+    /// * `offset` - The offset within the page
+    /// * `val` - The 32-bit value to write
+    /// * `mlog_type` - The type of log record to create
     pub fn write_u32(
         &mut self,
         page: &Page,
@@ -405,17 +553,40 @@ impl Mtr {
         self.inc_n_log_records();
     }
 
+    /// Writes a 64-bit unsigned integer to the log buffer.
+    ///
+    /// # Arguments
+    /// * `page` - The page being modified
+    /// * `offset` - The offset within the page
+    /// * `val` - The 64-bit value to write
     pub fn write_uint64(&mut self, page: &Page, offset: usize, val: u64) {
         self.log_buffer.mlog_write_uint64(page, offset, val, self.log_mode());
         self.inc_n_log_records();
     }
 
+    /// Writes a byte string to the log buffer.
+    ///
+    /// # Arguments
+    /// * `page` - The page being modified
+    /// * `offset` - The offset within the page
+    /// * `data` - The byte slice to write
     pub fn write_string(&mut self, page: &Page, offset: usize, data: &[u8]) {
         self.log_buffer.mlog_write_string(page, offset, data, self.log_mode());
         self.inc_n_log_records();
     }
 
-    /// Reserve & write an index payload, then count.
+    /// Reserves space and writes an index payload to the log buffer.
+    ///
+    /// This method allocates space in the log buffer for an index-related
+    /// operation and returns a mutable slice for the caller to fill with data.
+    ///
+    /// # Arguments
+    /// * `page` - The page being modified
+    /// * `mlog_type` - The type of log record to create
+    /// * `size` - The size of the payload to reserve
+    ///
+    /// # Returns
+    /// An optional mutable slice to the reserved payload area, or None if logging is disabled
     pub fn open_and_write_index(
         &mut self,
         page: &Page,
@@ -434,6 +605,10 @@ impl Mtr {
         payload
     }
 
+    /// Marks the end of a multi-record log entry.
+    ///
+    /// This method is called to finalize a sequence of related log records
+    /// that should be treated as a single atomic operation.
     pub fn multi_record_end(&mut self) {
         self.log_buffer.mlog_multi_rec_end();
         self.inc_n_log_records();
