@@ -201,6 +201,10 @@ impl<'a> BTreeCursor<'a> {
             let success = self.page_reorganize(self.index.deref(), mtr);
         }
 
+        if insert_rec.is_none() {
+            return Err(DbFail("no space left on page".to_string()));
+        }
+
         Ok(())
     }
 
