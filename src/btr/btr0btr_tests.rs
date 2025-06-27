@@ -2,6 +2,7 @@
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
     use rstest::{fixture, rstest};
     use tracing::info;
 
@@ -60,7 +61,7 @@ mod tests {
         let btree =
             BTree::new(buf_pool.clone(), fsp, lock_sys.clone(), index.clone());
 
-        create_blocks_in_buf_pool(buf_pool.clone(), 10);
+        create_blocks_in_buf_pool(buf_pool.clone(), 1);
 
         BTreeFixture { btree, index, buf_pool, lock_sys }
     }
@@ -234,5 +235,144 @@ mod tests {
         let data = record_field.data_or_panic();
 
         assert_eq!(data, expected);
+    }
+
+    #[rstest]
+    fn test_optimistic_insert_returns_none(fixture: BTreeFixture) {
+        let mut btr_cur = BTreeCursor::new(
+            &fixture.btree,
+            fixture.index.clone(),
+            fixture.buf_pool.clone(),
+            fixture.lock_sys.clone(),
+        );
+
+        let mut mtr = Mtr::new();
+        mtr.set_mtr_state(MtrActive);
+
+        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        ut_ad!(buf_block.is_some());
+
+        let buf_block = some_or_panic!(buf_block);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            buf_block.read().unwrap().get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        // Initialize the page.
+        BTree::page_create(
+            buf_block.clone(),
+            fixture.index.clone(),
+            0,
+            &mut mtr,
+        );
+
+        let page: Page = buf_block.read().unwrap().get_page();
+        let record = page.page_get_infimum_rec();
+
+        btr_cur.position(record, buf_block.clone());
+
+        let limit = 750;
+        for i in 0..limit {
+            let mut dtuples = create_dtuples_from_input_data_chunk(vec![[
+                FieldType::String(Some(format!("hello world {i}"))),
+            ]]);
+
+            for (n, dtuple) in dtuples.iter_mut().enumerate() {
+                let ret = btr_cur.optimistic_insert(0, dtuple, 0, &mut mtr);
+
+                if i < 724 {
+                    assert!(ret.is_ok());
+                } else {
+                    assert!(ret.is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_optimistic_insert_in_btree_page() {
+        let seed = 1234u64;
+        let mut rng = StdRng::seed_from_u64(seed);
+        let fixture = fixture();
+        let mut btr_cur = BTreeCursor::new(
+            &fixture.btree,
+            fixture.index.clone(),
+            fixture.buf_pool.clone(),
+            fixture.lock_sys.clone(),
+        );
+
+        let mut mtr = Mtr::new();
+        mtr.set_mtr_state(MtrActive);
+
+        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        ut_ad!(buf_block.is_some());
+
+        let buf_block = some_or_panic!(buf_block);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            buf_block.read().unwrap().get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        // Initialize the page.
+        BTree::page_create(
+            buf_block.clone(),
+            fixture.index.clone(),
+            0,
+            &mut mtr,
+        );
+
+        let page: Page = buf_block.read().unwrap().get_page();
+        let record = page.page_get_infimum_rec();
+
+        btr_cur.position(record, buf_block.clone());
+        let limit = 150;
+        let step_size = 20;
+        for chunk in (0..limit).step_by(step_size) {
+            let mut input: Vec<[FieldType; 1]> = vec![];
+
+            for c in chunk..chunk + step_size {
+                input.push([FieldType::String(Some(format!(
+                    "hello world {:05}",
+                    c
+                )))])
+            }
+
+            let mut dtuples = create_dtuples_from_input_data_chunk(input);
+
+            dtuples.shuffle(&mut rng);
+
+            for dtuple in dtuples.iter_mut() {
+                btr_cur.search_to_nth_level(
+                    vec![],
+                    0,
+                    dtuple,
+                    PAGE_CUR_LE,
+                    0,
+                    &mut mtr,
+                );
+                btr_cur.optimistic_insert(0, dtuple, 0, &mut mtr).unwrap()
+            }
+        }
+
+        let mut user_rec_data: Vec<String> = vec![];
+        for rec in page.get_user_records() {
+            user_rec_data.push(rec.rec_get_data(0).unwrap().data_or_panic());
+        }
+
+        assert!(user_rec_data.is_sorted());
     }
 }

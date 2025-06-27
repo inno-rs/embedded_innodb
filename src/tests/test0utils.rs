@@ -456,7 +456,7 @@ pub fn create_blocks_in_buf_pool(buf_pool: Arc<Mutex<BufPool>>, count: usize) {
         ut_ad!(resp.is_some());
     }
 
-    for i in 1..10 {
+    for i in 1..count as SpaceId {
         let page = buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: i, page_no: i },

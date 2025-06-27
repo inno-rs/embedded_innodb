@@ -325,7 +325,8 @@ impl PageCur {
     ///
     /// # Returns
     ///
-    /// * `Option<Record>`: The newly created record.
+    /// * `Option<Record>`: The newly created record if enough space available on the page.
+    /// None, otherwise.
     ///
     /// # Note
     ///
@@ -355,8 +356,7 @@ impl PageCur {
                 todo!("found some element in the free list, utilize it.")
             }
             None => {
-                let heap_location =
-                    some_or_panic!(self.page.page_mem_alloc_heap(rec_size));
+                let heap_location = self.page.page_mem_alloc_heap(rec_size)?;
                 // Record starts after extra size for all operations.
                 let rec =
                     unsafe { Record::new(heap_location.add(extra_size)) };
