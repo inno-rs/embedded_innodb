@@ -17,13 +17,13 @@ use crate::{
     },
     data::data0types::DTuple,
     dict::dict0types::Index,
-    fil::fil0types::FILL_NULL,
+    fil::fil0types::{FIL_PAGE_NEXT, FILL_NULL},
     fsp::fsp0fsp::Fsp,
     innodb::innodb0types::{PageId, PageNo},
     lock::lock0lock::LockSys,
     mtr::{
         mtr0mtr::{LatchHandle, LockMode, MemoSlot, Mtr},
-        mtr0types::FixMode,
+        mtr0types::{FixMode, MlogType},
     },
     page::{
         page0cur::PAGE_CUR_LE,
@@ -295,13 +295,12 @@ impl BTree {
     ///
     /// This method is currently commented out and not fully implemented.
     pub fn page_set_level(page: &mut Page, level: usize, mtr: &mut Mtr) {
-        // mtr.log_buffer().mlog_write_u32(
-        //     &page,
-        //     PAGE_HEADER + PAGE_LEVEL,
-        //     level as u32,
-        //     MlogType::MLOG_2BYTES,
-        //     mtr,
-        // );
+        mtr.write_u32(
+            &page,
+            PAGE_HEADER + PAGE_LEVEL,
+            level as u32,
+            MlogType::MLOG_2BYTES,
+        );
     }
 
     /// Gets the child page number from a node pointer record.
@@ -344,13 +343,7 @@ impl BTree {
     /// * `next` - The page number to set as the next page
     /// * `mtr` - The mini-transaction that logs this operation
     pub fn page_set_next(page: &Page, next: PageNo, mtr: &mut Mtr) {
-        // mtr.mlog().mlog_write_u32(
-        //     page,
-        //     FIL_PAGE_NEXT,
-        //     next as u32,
-        //     MlogType::MLOG_4BYTES,
-        //     mtr,
-        // );
+        mtr.write_u32(page, FIL_PAGE_NEXT, next as u32, MlogType::MLOG_4BYTES);
     }
 
     /// Raises the root level of the B-tree and inserts a new record.
