@@ -369,7 +369,7 @@ mod tests {
         }
 
         let mut user_rec_data: Vec<String> = vec![];
-        for rec in page.get_user_records() {
+        for rec in page.page_get_user_records() {
             user_rec_data.push(rec.rec_get_data(0).unwrap().data_or_panic());
         }
 
