@@ -1,6 +1,6 @@
 use std::fmt;
 
-use tracing::{error, info};
+use tracing::error;
 
 use crate::{
     data::data0types::{
@@ -8,6 +8,7 @@ use crate::{
         DTuple, DType,
     },
     innodb::innodb0types::UNIV_SQL_NULL,
+    rem::rem0rec::Record,
     ut::ut0dbg::{ut_a, ut_ad},
     ut_panic,
 };
@@ -228,8 +229,23 @@ impl DTuple {
     }
 
     /// Return the size of data tuple when converted to physical record.
-    pub fn rec_get_converted_size(&self) -> usize {
-        self.dtuple_get_data_size()
+    ///
+    /// # Arguments
+    ///
+    /// `n_ext`: Number of external fields.
+    ///
+    /// # Returns
+    ///
+    /// Size
+    pub fn rec_get_converted_size(&self, n_ext: usize) -> usize {
+        let data_size = self.dtuple_get_data_size();
+        let extra_size = Record::rec_get_converted_extra_size(
+            data_size,
+            self.dtuple_get_n_fields(),
+            n_ext,
+        );
+
+        data_size + extra_size
     }
 
     pub fn dtuple_validate(&self) -> bool {
@@ -320,7 +336,6 @@ impl DField {
     /// * `len` - precision of type.
     ///
     pub fn set_type(&mut self, m_type: usize, pr_type: usize, len: usize) {
-        info!("Setting type: {} {} {}", m_type, pr_type, len);
         self.dtype.m_type = m_type as u16;
         self.dtype.pr_type = pr_type;
         self.dtype.len = len as u16;

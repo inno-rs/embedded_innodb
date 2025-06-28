@@ -241,7 +241,7 @@ impl Index {
     /// # Returns
     ///
     /// `DTuple` containing the contents of the record.
-    pub fn build_data_tuple(&self, rec: Record, page_no: PageNo) -> DTuple {
+    pub fn build_data_tuple(&self, rec: Record) -> DTuple {
         let n_fields = rec.rec_get_n_fields();
         let mut dtuple = DTuple::new(n_fields);
 

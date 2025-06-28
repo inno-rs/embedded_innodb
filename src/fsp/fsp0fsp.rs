@@ -505,10 +505,9 @@ impl<'a> FspHeaderPage<'a> {
     /*
     IMP
     Allocate one page from the tablespace, using this order of preference:
-    1.	Try to find a partially-used extent (a FREE_FRAG extent) and allocate a page from it.
-    2.	If no such extent exists, allocate a brand new extent (FREE extent),
+    1.	Try to find a partially used extent (a FREE_FRAG extent) and allocate a page from it.
+    2.	If no such extent exists, allocate a brand-new extent (FREE extent),
     convert it into a FREE_FRAG, and allocate the first page from it.
-
     */
     pub fn alloc_single_page(&mut self) -> Option<u32> {
         // Step 1: Try to allocate from existing partially used extents
@@ -534,7 +533,6 @@ impl<'a> FspHeaderPage<'a> {
     This method tries to allocate n pages from a tablespace. But InnoDB (and our simplified model) only supports:
      •	allocating 1 page (from a partially free extent),
      •	or a full extent of 64 pages (all pages from a fresh extent).
-
     */
     pub fn alloc_n_pages(&mut self, n: usize) -> Option<Vec<u32>> {
         if n == 0 {
@@ -671,7 +669,7 @@ impl<'a> ExtentDescriptor<'a> {
     /// # Panic
     /// Panics if the provided buffer is smaller than XDES_SIZE
     pub fn new(buf: &'a mut [u8]) -> Self {
-        assert!(
+        ut_ad!(
             buf.len() >= XDES_SIZE,
             "extent-descriptor buffer must be at least {} bytes",
             XDES_SIZE

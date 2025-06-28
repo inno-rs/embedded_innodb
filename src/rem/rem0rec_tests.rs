@@ -137,7 +137,7 @@ mod tests {
             0,
             vec![
                 FieldType::String(Some("Hello World 5".to_string())),
-                FieldType::StringNull,
+                FieldType::StringNullable,
             ],
         );
         let page = owning_page.page;
@@ -230,6 +230,66 @@ mod tests {
     #[ignore]
     #[test]
     fn test_rec_field_external_2byte_format() {}
+
+    #[test]
+    fn test_rec_get_converted_extra_size() {
+        // No external field
+        {
+            let data_size = 10;
+            let n_ext = 0;
+            let n_fields = 10;
+            let converted_size = Record::rec_get_converted_extra_size(
+                data_size, n_fields, n_ext,
+            );
+
+            assert_eq!(converted_size, 16);
+        }
+        // 1 external field
+        {
+            let data_size = 10;
+            let n_ext = 1;
+            let n_fields = 10;
+            let converted_size = Record::rec_get_converted_extra_size(
+                data_size, n_fields, n_ext,
+            );
+
+            assert_eq!(converted_size, 26);
+        }
+        // 10 external fields
+        {
+            let data_size = 10;
+            let n_ext = 10;
+            let n_fields = 10;
+            let converted_size = Record::rec_get_converted_extra_size(
+                data_size, n_fields, n_ext,
+            );
+
+            assert_eq!(converted_size, 26);
+        }
+        // data size exceeding 1byte offset format
+        {
+            let data_size = REC_1BYTE_OFFS_LIMIT + 1;
+            let n_ext = 0;
+            let n_fields = 10;
+            let converted_size = Record::rec_get_converted_extra_size(
+                data_size, n_fields, n_ext,
+            );
+
+            assert_eq!(converted_size, 26);
+        }
+
+        // data size exceeding 1byte offset format and multiple external fields
+        {
+            let data_size = REC_1BYTE_OFFS_LIMIT + 1;
+            let n_ext = 10;
+            let n_fields = 10;
+            let converted_size = Record::rec_get_converted_extra_size(
+                data_size, n_fields, n_ext,
+            );
+
+            assert_eq!(converted_size, 26);
+        }
+    }
 
     #[test]
     fn test_rec_field_external_no_field_external() {

@@ -78,11 +78,10 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore]
     fn test_page_cur_get_rec(page_cur_fixture: PageCurFixture) {
         assert_eq!(
             page_cur_fixture.page_cur.page_cur_get_rec(),
-            Record::new(page_cur_fixture.ptr)
+            page_cur_fixture.page.page_get_infimum_rec()
         )
     }
 

@@ -21,6 +21,7 @@ use crate::{
     fsp::fsp0fsp::Fsp,
     innodb::innodb0types::{PageId, PageNo},
     lock::lock0lock::LockSys,
+    mach::mach0data::{mach_read_from_2, mach_read_from_8},
     mtr::{
         mtr0mtr::{LatchHandle, LockMode, MemoSlot, Mtr},
         mtr0types::{FixMode, MlogType},
@@ -247,7 +248,7 @@ impl BTree {
         let offset = PAGE_HEADER + PAGE_INDEX_ID;
         let bytes = &page_frame.0[offset..offset + 8];
 
-        usize::from_le_bytes(bytes.try_into().unwrap())
+        mach_read_from_8(bytes) as usize
     }
 
     /// Sets the index ID for a page.
@@ -259,14 +260,14 @@ impl BTree {
     /// # Arguments
     ///
     /// * `page` - The page whose index ID will be set
-    /// * `level` - The level of the page in the B-tree
+    /// * `index_id` - The index_id of the page in the B-tree
     /// * `mtr` - The mini-transaction that logs this operation
     ///
     /// # Note
     ///
     /// This method is currently not implemented (marked as todo).
-    pub fn page_set_index_id(page: &mut Page, level: usize, mtr: &mut Mtr) {
-        // todo
+    pub fn page_set_index_id(page: &mut Page, index_id: usize, mtr: &mut Mtr) {
+        mtr.write_uint64(page, PAGE_HEADER + PAGE_INDEX_ID, index_id as u64);
     }
 
     /// Get the node level field in an index page.
@@ -275,7 +276,7 @@ impl BTree {
         let offset = PAGE_HEADER + PAGE_LEVEL;
         let bytes = &page_frame.0[offset..offset + 2];
 
-        u16::from_le_bytes(bytes.try_into().unwrap()) as usize
+        mach_read_from_2(bytes) as usize
     }
 
     /// Sets the level of a page in the B-tree.
@@ -295,6 +296,9 @@ impl BTree {
     ///
     /// This method is currently commented out and not fully implemented.
     pub fn page_set_level(page: &mut Page, level: usize, mtr: &mut Mtr) {
+        // todo: Add here what is the size of the tree at level 16
+        ut_ad!(level < 16);
+
         mtr.write_u32(
             &page,
             PAGE_HEADER + PAGE_LEVEL,

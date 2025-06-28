@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     ops::Deref,
     sync::{Arc, Mutex, RwLock},
 };
@@ -25,7 +26,7 @@ use crate::{
         page0cur::{MatchCache, PageCur},
         page0page::Page,
     },
-    rem::rem0rec::Record,
+    rem::{rem0cmp::cmp_dtuple_rec, rem0rec::Record},
     some_or_panic,
     sync::sync0rw::ReadWriteLatch,
     ut::ut0dbg::ut_ad,
@@ -150,7 +151,7 @@ impl<'a> BTreeCursor<'a> {
         );
 
         let max_size = page.page_get_max_insert_size_after_reorganize(1);
-        let mut rec_size = dtuple.rec_get_converted_size();
+        let mut rec_size = dtuple.rec_get_converted_size(n_ext);
 
         if Page::page_rec_needs_ext(rec_size) {
             // Move the big record out of dtuple.
@@ -159,7 +160,7 @@ impl<'a> BTreeCursor<'a> {
                 None => return Err(DbTooBigRecord),
                 Some(_) => {
                     // Recalculate the record size after moving external fields.
-                    rec_size = dtuple.rec_get_converted_size();
+                    rec_size = dtuple.rec_get_converted_size(n_ext);
                 }
             }
         }
@@ -444,5 +445,97 @@ impl<'a> BTreeCursor<'a> {
             buf_block.clone(),
             page,
         ))
+    }
+
+    /// Calculates a split record such that the tuple will certainly fit on its half-page when the split is performed.
+    ///
+    /// # Arguments
+    ///
+    /// `dtuple`: Data tuple to be inserted.
+    /// `n_ext`: Number of external fields.
+    ///
+    /// # Returns
+    ///
+    /// None, if the data tuple will be the first record on the page.
+    /// Otherwise, the record to be split.
+    pub fn page_get_split_rec(
+        &self,
+        dtuple: &DTuple,
+        n_ext: usize,
+    ) -> Option<Record> {
+        let page = some_or_panic!(&self.buf_block).read().unwrap().get_page();
+        // This is the location where we are planning to insert the record.
+        // This is according to the sort order.
+        let insert_rec = some_or_panic!(&self.page_cur).page_cur_get_rec();
+
+        let insert_size = dtuple.rec_get_converted_size(n_ext);
+        let free_space = Page::page_get_free_space_of_empty();
+
+        let total_data = insert_size + page.page_get_data_size();
+        let total_n_recs = page.page_get_n_recs() + 1;
+
+        let total_space =
+            total_data + Page::page_dir_calc_reserved_space(total_n_recs);
+
+        let mut incl_data = 0;
+        let mut rec = page.page_get_infimum_rec().rec_get_next();
+
+        // We linearly keep on including records, and keep on checking if the
+        // total accumulated size is less than total_space / 2.
+        let mut dtuple_included = false;
+        while incl_data + Page::page_dir_calc_reserved_space(total_n_recs)
+            < total_space / 2
+        {
+            if let Some(record) = rec {
+                if record == insert_rec && dtuple_included == false {
+                    incl_data += insert_size;
+                    dtuple_included = true;
+                } else {
+                    incl_data += record.rec_offs_size();
+                    rec = record.rec_get_next();
+                }
+            }
+
+            if rec.is_none() {
+                break;
+            }
+        }
+
+        if incl_data + insert_size < free_space {
+            let split_rec = some_or_panic!(rec);
+            if split_rec == insert_rec {
+                let next_rec = split_rec.rec_get_next();
+                return if let Some(rec) = next_rec
+                    && page.page_rec_is_supremum(rec) == false
+                {
+                    Some(rec)
+                } else {
+                    next_rec
+                };
+            }
+        }
+
+        None
+    }
+
+    /// Check if the given tuple is smaller than every record on the page.
+    pub fn page_tuple_smaller(&self, dtuple: &DTuple, n_uniq: usize) -> bool {
+        let mut page_cur = self.page_cur.clone().unwrap();
+
+        page_cur.page_cur_set_before_first();
+        page_cur.page_cur_move_to_next();
+
+        let first_rec = page_cur.page_cur_get_rec();
+        ut_ad!(
+            self.buf_block
+                .clone()
+                .unwrap()
+                .read()
+                .unwrap()
+                .get_page()
+                .page_rec_is_user_rec(first_rec)
+        );
+
+        cmp_dtuple_rec(dtuple, first_rec) == Ordering::Less
     }
 }

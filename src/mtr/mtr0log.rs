@@ -233,9 +233,9 @@ impl MLog {
 
         // --- 3) COMPRESS & WRITE page_no ---
 
-        let pageno = page.page_get_fil_offset_be();
+        let page_no = page.page_get_fil_offset_be();
         let n_page =
-            mach_write_compressed(&mut self.buf[log_pos..], pageno as u32);
+            mach_write_compressed(&mut self.buf[log_pos..], page_no as u32);
         log_pos += n_page;
 
         // Return where the caller can append payload

@@ -215,6 +215,24 @@ pub fn cmp_rec_rec(rec_1: Record, rec_2: Record, index: &Index) -> Ordering {
 /// Compare a data tuple to a physical record.
 /// Only dtuple.n_fields_cmp are used for comparison.
 /// If rec has some externally stored fields,
+/// we do not compare them but return Ordering::Equal if such a comparison is made.
+///
+/// # Arguments
+/// * `dtuple` - The data tuple to compare.
+/// * `rec` - The physical record to compare.
+///
+/// # Returns
+///
+/// * `Ordering::Less` if the data tuple is less than the record.
+/// * `Ordering::Greater` if the data tuple is greater than the record.
+/// * `Ordering::Equal` if they are equal.
+pub fn cmp_dtuple_rec(dtuple: &DTuple, rec: Record) -> Ordering {
+    cmp_dtuple_rec_with_match(dtuple, rec, &mut 0, &mut 0)
+}
+
+/// Compare a data tuple to a physical record.
+/// Only dtuple.n_fields_cmp are used for comparison.
+/// If rec has some externally stored fields,
 /// we do not compare then but return Ordering::Equal if such a comparison is made.
 pub fn cmp_dtuple_rec_with_match(
     dtuple: &DTuple,

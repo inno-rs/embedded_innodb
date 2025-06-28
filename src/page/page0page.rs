@@ -4,6 +4,7 @@ use tracing::{info, warn};
 
 use crate::{
     buf::buf0types::BufBlock,
+    const_assert,
     data::data0types::{DATA_ENGLISH, DATA_NOT_NULL, DATA_VARCHAR, DTuple},
     dict::dict0types::Index,
     fil::fil0types::{
@@ -357,6 +358,14 @@ impl Page {
         // This is where everything's related to the header ends.
         // PAGE_DIR = Size of the page trailer.
         // 2 * PAGE_DIR_SLOT_SIZE = Both infimum and supremum records are stored in the page directory in an empty page as well.
+        const_assert!(
+            UNIV_PAGE_SIZE
+                - PAGE_SUPREMUM_END
+                - PAGE_DIR
+                - 2 * PAGE_DIR_SLOT_SIZE
+                == 16191
+        );
+
         UNIV_PAGE_SIZE - PAGE_SUPREMUM_END - PAGE_DIR - 2 * PAGE_DIR_SLOT_SIZE
     }
 
@@ -825,6 +834,7 @@ impl Page {
     /// # Returns
     ///
     /// * The amount of space reserved for directory slots in bytes.
+    #[inline(always)]
     pub fn page_dir_calc_reserved_space(n_recs: usize) -> usize {
         (PAGE_DIR_SLOT_SIZE * n_recs + PAGE_DIR_SLOT_MIN_N_OWNED - 1)
             / PAGE_DIR_SLOT_MIN_N_OWNED
