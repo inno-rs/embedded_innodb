@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use parking_lot::Mutex;
 pub(crate) use crate::mtr::mtr0types::{
     LatchHandle, LockMode, MemoSlot, MtrLogMode, MtrState, Savepoint,
 };
@@ -10,7 +12,9 @@ use crate::{
     page::page0page::Page,
     ut::ut0dbg::ut_ad,
     ut_panic,
+    mach::mach0data::{mach_read_from_1, mach_read_from_2, mach_read_from_4},
 };
+use crate::log::log0log::Log;
 
 pub const MTR_MAGIC_N: u32 = 54551;
 /// Mini-transaction (MTR) for managing atomic operations in the database.
@@ -34,10 +38,21 @@ pub struct Mtr {
 }
 
 impl Mtr {
-    /// Creates a new mini-transaction in an undefined state.
-    ///
+    /// Creates a new mini-transaction (MTR) instance.
+    /// 
+    /// This constructor initializes a new MTR with default values:
+    /// - State is set to `MtrUndefined`
+    /// - Log mode is set to `MTR_LOG_NONE` (no logging)
+    /// - No modifications flag is set to false
+    /// - Log record count is initialized to 0
+    /// - Empty memo list for tracking resources
+    /// - Empty log buffer
+    /// - Empty savepoints list
+    /// - Double-write buffer creation flag is set to false
+    /// - Magic number is set to the constant value for validation
+    /// 
     /// # Returns
-    /// A new Mtr instance with default values and state set to undefined.
+    /// A new `Mtr` instance in the undefined state
     pub fn new() -> Self {
         Self {
             mtr_state: MtrState::MtrUndefined,
@@ -77,7 +92,16 @@ impl Mtr {
         self
     }
 
-    ///  Record a resource so it can be undone later.
+    /// Records a resource in the mini-transaction's memo list so it can be tracked and released later.
+    ///
+    /// This method adds a resource (like a page fix, latch, etc.) to the memo list,
+    /// which keeps track of all resources acquired during the mini-transaction.
+    /// These resources will be automatically released when the mini-transaction commits or rolls back.
+    ///
+    /// # Arguments
+    /// * `slot` - The memo slot representing the resource to be recorded
+    ///
+    /// Panics in debug mode if the mini-transaction is not in the ACTIVE state
     pub fn memo_push(&mut self, slot: MemoSlot) {
         ut_ad!(
             self.mtr_state == MtrState::MtrActive,
@@ -154,7 +178,6 @@ impl Mtr {
     /// # Returns
     /// The current savepoint index.
     ///
-    /// # Panics
     /// Panics if no savepoint has been set.
     pub fn get_savepoint(&self) -> Savepoint {
         *self.savepoints.last().expect("get_savepoint: no savepoint set")
@@ -280,31 +303,47 @@ impl Mtr {
             ut_panic!("rollback_to_savepoint: no savepoint to pop");
         }
     }
-
-    /// Read a variable‐length “ulint” (1–8 bytes, little‐endian) from `buf[0..type]`. .
-    /// Reads a variable-length unsigned integer (1-8 bytes, little-endian) from a buffer.
-    ///
-    /// # Arguments
-    /// * `buf` - The buffer to read from
-    /// * `ty` - The number of bytes to read (1-8)
-    ///
-    /// # Returns
-    /// The unsigned 64-bit integer value read from the buffer
+    
+    /// Drain & release *all* memo slots (the C++ `mtr_memo_pop_all`).
     ///
     /// # Panics
-    /// Panics if `ty` is greater than 8 or if the buffer is too small
-    pub fn read_ulint(&self, buf: &[u8], ty: usize) -> u64 {
-        ut_ad!(ty <= 8, "type must be 1..=8");
-        ut_ad!(buf.len() >= ty, "buffer too small");
+    ///
+    /// - If the magic number has been corrupted.
+    /// - If we're not in the COMMITTING state.
+    pub fn memo_pop_all(&mut self) {
+        // debug‐only assertions to mirror the C++ ut_ad checks:
+        ut_ad!(self.magic_n == MTR_MAGIC_N);
+        ut_ad!(self.mtr_state == MtrState::MtrCommitting);
 
-        // Copy the first `ty` bytes into a zeroed 8-byte array,
-        // then convert that full array from Little Endian → u64.
-        let mut tmp = [0u8; 8];
-        tmp[..ty].copy_from_slice(&buf[..ty]);
-        u64::from_le_bytes(tmp)
+        // Pop off *each* MemoSlot, from last to first:
+        while let Some(mut slot) = self.memo.pop() {
+            // We take ownership of the slot, wrap it in a temporary `&mut`
+            // so we can call your in-place release helper:
+            self.memo_slot_release(&mut slot);
+        }
     }
 
-    /// Reads an 8-byte little-endian unsigned integer from a buffer.
+    /// Read a 1-, 2-, or 4-byte ULINT from `buf` (all big-endian),
+    /// only allowed when the MTR is ACTIVE and the page has been fixed.
+    pub fn read_ulint(&self, buf: &[u8], ty: usize) -> u64 {
+        ut_ad!(self.is_active(), "read_ulint only in ACTIVE state");
+        // Here you’d assert the page-that-owns-`buf` is in memo, e.g.:
+        // ut_ad!(self.memo_contains_page(ptr, PAGE_S_FIX) || self.memo_contains_page(ptr, PAGE_X_FIX));
+
+        ut_ad!([1,2,4].contains(&ty), "type must be 1,2, or 4");
+        ut_ad!(buf.len() >= ty, "buffer too small for read_ulint");
+
+        let val = match ty {
+            1 => mach_read_from_1(&buf[0..1])    as u64,
+            2 => mach_read_from_2(&buf[0..2])    as u64,
+            4 => mach_read_from_4(&buf[0..4])    as u64,
+            _ => unreachable!(),
+        };
+        val
+    }
+
+
+    /// Read an 8-byte ULINT from `buf` (big-endian).
     ///
     /// This method mirrors the C++ `mtr_t::read_uint64(ptr)` function.
     ///
@@ -317,14 +356,16 @@ impl Mtr {
     /// # Panics
     /// Panics if the buffer is less than 8 bytes
     pub fn read_uint64(&self, buf: &[u8]) -> u64 {
-        let bytes: [u8; 8] =
-            buf[0..8].try_into().expect("buffer too small for read_uint64");
-        u64::from_le_bytes(bytes)
-    }
+        ut_ad!(self.is_active(), "read_uint64 only in ACTIVE state");
+        // ut_ad!(self.memo_contains_page(ptr, PAGE_S_FIX) || self.memo_contains_page(ptr, PAGE_X_FIX));
+        
+        ut_ad!(buf.len() >= 8, "buffer too small for read_uint64");
 
-    /// Increments the count of log records in the mini-transaction.
-    ///
-    /// This is called internally whenever a new log record is added.
+        let high = mach_read_from_4(&buf[0..4]) as u64;
+        let low  = mach_read_from_4(&buf[4..8]) as u64;
+        (high << 32) | low
+    }
+    /// Increment the number of log records in the mini-transaction.
     pub fn inc_n_log_records(&mut self) {
         self.n_log_records += 1;
     }
@@ -335,22 +376,6 @@ impl Mtr {
     /// The count of log records.
     pub fn get_n_log_records(&self) -> usize {
         self.n_log_records
-    }
-
-    /// Gets the current state of the mini-transaction.
-    ///
-    /// # Returns
-    /// A clone of the current mini-transaction state.
-    pub fn get_mtr_state(&self) -> MtrState {
-        self.mtr_state.clone()
-    }
-
-    /// Sets the state of the mini-transaction.
-    ///
-    /// # Arguments
-    /// * `mtr_state` - The new state to set
-    pub fn set_mtr_state(&mut self, mtr_state: MtrState) {
-        self.mtr_state = mtr_state;
     }
 
     /// Disable redo logging for this mini-transaction.
@@ -444,6 +469,7 @@ impl Mtr {
         block.fix_dec(); // Unpinning the page
     }
 
+
     /// Gets a reference to the current state of the mini-transaction.
     ///
     /// # Returns
@@ -528,6 +554,33 @@ impl Mtr {
         self.dblwr_create_in_progress
     }
 
+
+    pub fn log_reserve_and_write(
+        &mut self,
+        recovery: u32,
+        log: Arc<Mutex<Log>>
+    ) -> Result<(), String> {
+        let data = &self.log_buffer.buf;
+        
+
+        // Fast‐path: try to fit in the current block.
+        if let Ok(res) = log.lock().reserve_and_write_fast(data) {
+           // self.m_end_lsn = res.end_lsn;
+            return Ok(());
+        }
+
+        // Fallback: write it all via write_low, which does the open/reserve internally.
+        let res = log.lock().write_low(data)
+            .map_err(|e| format!("write_low failed: {}", e))?;
+       // self.m_end_lsn = res.end_lsn;
+
+        // Finally close/flush the log if your Log API requires it.
+     /*   self.m_end_lsn = log.close(recovery)
+            .map_err(|e| format!("close failed: {}", e))?;*/
+
+        Ok(())
+    }
+    
     // mlog calling methods
     /// Writes a 32-bit unsigned integer to the log buffer.
     ///
@@ -613,4 +666,15 @@ impl Mtr {
         self.log_buffer.mlog_multi_rec_end();
         self.inc_n_log_records();
     }
+    
+
+    pub fn get_mtr_state(&self) -> MtrState {
+        self.mtr_state.clone()
+    }
+
+    pub fn set_mtr_state(&mut self, mtr_state: MtrState) {
+        self.mtr_state = mtr_state;
+    }
+
+
 }
