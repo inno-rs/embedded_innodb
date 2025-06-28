@@ -17,8 +17,8 @@ mod tests {
         page::{page0cur::PageCur, page0page::Page},
         rem::rem0rec::{OrphanRecord, Record},
         tests::test0utils::{
-            FieldType, create_dtuples, create_dtuples_from_input_data_chunk,
-            create_records,
+            FieldType, FieldType::Int, create_dtuples,
+            create_dtuples_from_input_data_chunk, create_records,
         },
     };
 
@@ -211,5 +211,94 @@ mod tests {
 
         assert_eq!(page.page_get_n_recs(), 0);
         assert_eq!(page.page_get_user_records().len(), 0);
+    }
+
+    #[test]
+    fn test_page_cur_delete_moves_to_next_rec() {
+        let limit = 47;
+        let mut mtr = Mtr::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let owning_page = create_records(0, vec![]);
+        let page = owning_page.page;
+        let mut page_cur = PageCur::new(
+            index.clone(),
+            None,
+            owning_page.buf_block.clone(),
+            page,
+        );
+
+        for i in 0..limit {
+            let dtuples = create_dtuples_from_input_data_chunk(vec![[
+                FieldType::String(Some(format!(
+                    "hello world {:05}",
+                    limit - i
+                ))),
+            ]]);
+
+            page_cur.page_cur_set_before_first();
+            page_cur.page_cur_tuple_insert(
+                &dtuples[0],
+                index.deref(),
+                0,
+                &mut mtr,
+            );
+        }
+
+        page_cur.page_cur_set_before_first();
+        page_cur.page_cur_move_to_next();
+
+        for i in 0..limit {
+            page_cur.page_cur_delete_rec(Some(&mut mtr));
+
+            let row_data = page_cur
+                .page_cur_get_rec()
+                .rec_get_data(0)
+                .unwrap()
+                .data_or_panic();
+            if i < limit - 1 {
+                assert_eq!(row_data, format!("hello world {:05}", i + 2))
+            } else {
+                // last data should be supremum
+                assert_eq!(row_data, "supremumr")
+            }
+        }
+
+        assert_eq!(page.page_get_n_recs(), 0);
+    }
+
+    #[test]
+    fn test_page_cur_is_before_first() {
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let owning_page = create_records(20, vec![Int(Some(45))]);
+        let mut page_cur = PageCur::new(
+            index,
+            None,
+            owning_page.buf_block.clone(),
+            owning_page.page,
+        );
+
+        page_cur.page_cur_set_before_first();
+
+        assert!(
+            owning_page.page.page_rec_is_infimum(page_cur.page_cur_get_rec())
+        );
+    }
+
+    #[test]
+    fn test_page_cur_is_after_last() {
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let owning_page = create_records(20, vec![Int(Some(45))]);
+        let mut page_cur = PageCur::new(
+            index,
+            None,
+            owning_page.buf_block.clone(),
+            owning_page.page,
+        );
+
+        page_cur.page_cur_set_after_last();
+
+        assert!(
+            owning_page.page.page_rec_is_supremum(page_cur.page_cur_get_rec())
+        );
     }
 }

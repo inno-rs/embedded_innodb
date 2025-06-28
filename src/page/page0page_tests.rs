@@ -348,7 +348,6 @@ mod tests {
     }
 
     #[test]
-    // #[ignore]
     fn test_page_move_rec_list_end() {
         let n_recs = 30;
         for i in 0..n_recs {
@@ -377,6 +376,83 @@ mod tests {
             assert_eq!(src_page.page_get_user_records().len(), i);
             assert_eq!(dest_page.page_get_user_records().len(), n_recs - i);
         }
+    }
+
+    #[test]
+    fn test_page_delete_rec_list_start() {
+        let n_recs = 30;
+        for i in 0..n_recs {
+            let mut mtr = Mtr::new();
+            let index = Arc::new(Index::new(PageId::dummy()));
+            let owning_page = create_records(
+                n_recs,
+                vec![FieldType::String(Some("foo".to_string()))],
+            );
+
+            let mut page = owning_page.page;
+            let rec = page.page_get_user_records()[i];
+
+            assert_eq!(page.page_get_user_records().len(), n_recs);
+
+            // deletion does not delete the record being pointed to by the page cursor.
+            page.page_delete_rec_list_start(
+                rec,
+                owning_page.buf_block.clone(),
+                index,
+                &mut mtr,
+            );
+
+            // Since the record being pointed to is not being deleted, the number of records after the first deletion does not change the number of records.
+            assert_eq!(page.page_get_user_records().len(), n_recs - i);
+        }
+    }
+
+    #[test]
+    fn test_page_delete_rec_list_start_when_rec_points_to_supremum() {
+        let n_recs = 45;
+        let mut mtr = Mtr::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let src_owning_page = create_records(
+            n_recs,
+            vec![FieldType::String(Some("foo".to_string()))],
+        );
+
+        let mut page = src_owning_page.page;
+
+        assert_eq!(page.page_get_user_records().len(), n_recs);
+
+        page.page_delete_rec_list_start(
+            page.page_get_supremum_rec(),
+            src_owning_page.buf_block.clone(),
+            index,
+            &mut mtr,
+        );
+
+        assert_eq!(page.page_get_user_records().len(), 0);
+    }
+
+    #[test]
+    fn test_page_delete_rec_list_start_when_rec_points_to_infimum() {
+        let n_recs = 45;
+        let mut mtr = Mtr::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let src_owning_page = create_records(
+            n_recs,
+            vec![FieldType::String(Some("foo".to_string()))],
+        );
+
+        let mut page = src_owning_page.page;
+
+        assert_eq!(page.page_get_user_records().len(), n_recs);
+
+        page.page_delete_rec_list_start(
+            page.page_get_infimum_rec(),
+            src_owning_page.buf_block.clone(),
+            index,
+            &mut mtr,
+        );
+
+        assert_eq!(page.page_get_user_records().len(), n_recs);
     }
 
     #[test]

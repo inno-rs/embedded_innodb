@@ -373,8 +373,6 @@ impl Record {
         dtuple: &DTuple,
         n_ext: usize,
     ) -> Record {
-        info!("rec_convert_dtuple_to_rec");
-
         ut_ad!(dtuple.dtuple_validate());
         ut_ad!(dtuple.dtuple_type_checked());
 
