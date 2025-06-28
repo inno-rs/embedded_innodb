@@ -276,9 +276,6 @@ impl PageCur {
 
         let next_rec = self.rec;
 
-        info!("next_rec={}", next_rec);
-        info!("prev_rec={}", prev_rec.unwrap());
-
         /* 3. Remove the record from the linked list of records. */
         self.page.page_rec_set_next(prev_rec.unwrap(), Some(next_rec));
 

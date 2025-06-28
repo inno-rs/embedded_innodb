@@ -11,7 +11,7 @@ use crate::{
         FIL_PAGE_PREV, FIL_PAGE_SPACE_ID, FSEG_PAGE_DATA,
     },
     innodb::innodb0types::{PageFrame, PageNo, SpaceId, UNIV_PAGE_SIZE},
-    mtr::mtr0mtr::Mtr,
+    mtr::{mtr0mtr::Mtr, mtr0types::MtrLogMode::MTR_LOG_NONE},
     page::page0cur::PageCur,
     rem::rem0rec::{
         REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM, Record,
@@ -169,6 +169,13 @@ impl Page {
         Page { ptr }
     }
 
+    /// Checks if a record belongs to the page and is within valid boundaries.
+    ///
+    /// # Parameters
+    /// * `rec` - The record to check
+    ///
+    /// # Returns
+    /// * `true` if the record is valid, assertions will fail in debug mode if invalid
     pub fn page_rec_check(&self, rec: Record) -> bool {
         ut_ad!(
             self.page_offset(rec) <= self.page_header_get_field(PAGE_HEAP_TOP)
@@ -281,6 +288,13 @@ impl Page {
         }
     }
 
+    /// Converts the page to a PageFrame reference.
+    ///
+    /// This method creates a PageFrame reference from the page's raw pointer,
+    /// allowing access to the page data as a fixed-size array.
+    ///
+    /// # Returns
+    /// * A `PageFrame` reference to the page data
     pub fn to_page_frame(&self) -> PageFrame<'_> {
         unsafe {
             let array_ptr = self.ptr as *mut [u8; UNIV_PAGE_SIZE];
@@ -357,6 +371,15 @@ impl Page {
     }
 
     /// Checks if the given record belongs to the page.
+    ///
+    /// This method verifies that the record is stored within this page by comparing
+    /// the page-aligned address of the record with the page's address.
+    ///
+    /// # Parameters
+    /// * `record` - The record to check
+    ///
+    /// # Returns
+    /// * `true` if the record belongs to this page, `false` otherwise
     #[cfg(debug_assertions)]
     pub fn is_page_record(&self, record: Record) -> bool {
         record.page_align() == self.ptr
@@ -401,6 +424,17 @@ impl Page {
         }
     }
 
+    /// Retrieves a pointer to a field in the page header.
+    ///
+    /// # Parameters
+    /// * `field` - The offset (in `usize`) of the specific field within the page header
+    ///
+    /// # Returns
+    /// * A raw pointer to the specified field in the page header
+    ///
+    /// # Safety
+    /// This function is unsafe because it returns a raw pointer that could be used to
+    /// read or write memory outside the bounds of the page if used incorrectly.
     pub unsafe fn page_header_get_ptr(&self, field: usize) -> *mut u8 {
         unsafe { self.ptr.add(self.page_header_get_field(field)) }
     }
@@ -447,13 +481,18 @@ impl Page {
 
     /// Allocates memory from the page heap.
     ///
+    /// This method attempts to allocate a block of memory of the specified size from
+    /// the page's heap area. It updates the page header to reflect the new heap top
+    /// and increments the heap number counter.
+    ///
     /// # Arguments
     ///
     /// * `need`: The amount of memory needed in bytes.
     ///
     /// # Returns
     ///
-    /// * This function currently has no implementation and returns nothing.
+    /// * `Some(*mut u8)`: A pointer to the allocated memory block if successful.
+    /// * `None`: If there is not enough space available in the page.
     pub fn page_mem_alloc_heap(&self, need: usize) -> Option<*mut u8> {
         let available_space = self.page_get_max_insert_size(1);
 
@@ -560,9 +599,20 @@ impl Page {
     }
 
     /// Add a slot to the page directory.
-    /// But it does not set the record pointers in the added slots or update n_owned values.
-    /// The caller is responsible for the change.
     ///
+    /// This method adds a new slot to the page directory at the specified position.
+    /// It does not set the record pointers in the added slots or update n_owned values.
+    /// The caller is responsible for these changes.
+    ///
+    /// # Parameters
+    /// * `slot` - The position where the new slot should be added
+    ///
+    /// # Returns
+    /// * None
+    ///
+    /// # Note
+    /// This method only updates the page directory structure and the slot count.
+    /// The caller must set appropriate record pointers and ownership values.
     pub fn page_dir_add_slot(&self, slot: SlotId) {
         let n_slots = self.page_dir_get_n_slots();
 
@@ -638,6 +688,15 @@ impl Page {
 
     /// Sets the number of slots in the page directory.
     ///
+    /// This method updates the page header to reflect the new number of slots
+    /// in the page directory. This is typically called when adding or removing
+    /// slots from the directory.
+    ///
+    /// # Parameters
+    /// * `n_slots` - The new number of slots to set
+    ///
+    /// # Returns
+    /// * None
     pub fn page_dir_set_n_slots(&self, n_slots: usize) {
         self.page_header_set_field(PAGE_N_DIR_SLOTS, n_slots)
     }
@@ -1065,6 +1124,20 @@ impl Page {
     }
 
     /// Sets the pointer to the next record on the page.
+    ///
+    /// This method updates the next-record pointer of the given record to point to
+    /// another record or to null (indicating end of list). This is used to maintain
+    /// the linked list of records on the page.
+    ///
+    /// # Parameters
+    /// * `rec` - The record whose next pointer will be updated
+    /// * `next_rec` - The record that should be set as the next record, or None to indicate end of list
+    ///
+    /// # Returns
+    /// * None
+    ///
+    /// # Note
+    /// This method performs several assertions in debug mode to ensure the integrity of the record chain.
     pub fn page_rec_set_next(&self, rec: Record, next_rec: Option<Record>) {
         ut_ad!(self.page_rec_check(rec));
         ut_ad!(!self.page_rec_is_supremum(rec));
@@ -1175,9 +1248,27 @@ impl Page {
         )
     }
 
-    // Copies records from the src page to the destination page.
-    // Infimum and Supremum records are not copied.
-    // The records are copied from the start to the given record excluding the record.
+    /// Copies records from the source page to the destination page.
+    ///
+    /// This method copies records from the beginning of the source page up to (including)
+    /// the specified record.
+    /// Infimum and Supremum records are not copied.
+    ///
+    /// # Parameters
+    /// * `dest` - Destination buffer block where records will be copied to
+    /// * `src` - Source buffer block where records will be copied from
+    /// * `rec` - The record up to which copying should occur (exclusive)
+    /// * `index` - Index to which the records belong
+    /// * `mtr` - Mini-transaction handle
+    ///
+    /// # Returns
+    /// * None
+    ///
+    /// # Note
+    /// If the destination page is empty (newly created), it will use a specialized method
+    /// for copying to an empty page.
+    /// For clustered indexes on leaf pages, the maximum
+    /// transaction ID is also updated.
     pub fn page_copy_rec_list_start(
         &self,
         dest: Arc<RwLock<BufBlock>>,
@@ -1206,8 +1297,26 @@ impl Page {
         }
     }
 
-    /// Copies records from src page to the destination page. Infimum and Supremum records are not copied.
-    /// The records are copied to the start of the record list on the page.
+    /// Copies records from source page to the destination page.
+    ///
+    /// This method copies records from the specified record to the end of the source page.
+    /// Infimum and Supremum records are not copied.
+    /// The records are copied to the start of the record list on the destination page.
+    ///
+    /// # Parameters
+    /// * `dest` - Destination buffer block where records will be copied to
+    /// * `rec` - The starting record from which copying should begin (inclusive)
+    /// * `index` - Index to which the records belong
+    /// * `mtr` - Mini-transaction handle
+    ///
+    /// # Returns
+    /// * None
+    ///
+    /// # Note
+    /// If the destination page is empty (newly created), it will use a specialized method
+    /// for copying to an empty page.
+    /// For clustered indexes on leaf pages, the maximum
+    /// transaction ID is also updated.
     pub fn page_copy_rec_list_end(
         &self,
         dest: Arc<RwLock<BufBlock>>,
@@ -1276,6 +1385,57 @@ impl Page {
             Some(new_page_size - old_page_size),
             mtr,
         );
+    }
+
+    /// Deletes records from the page starting from the beginning up to the given record.
+    ///
+    /// This method removes records from the page, starting from the first user record
+    /// (after infimum) and continuing up to (but not including) the specified record.
+    /// It uses a page cursor to navigate and delete each record individually.
+    ///
+    /// # Parameters
+    /// * `rec` - The record up to which deletion should occur (exclusive)
+    /// * `buf_block` - The buffer block containing the page
+    /// * `index` - Index to which the records belong
+    /// * `mtr` - Mini-transaction handle
+    ///
+    /// # Returns
+    /// * None
+    ///
+    /// # Note
+    /// If the specified record is the infimum record, no deletion occurs.
+    /// The method temporarily disables logging of individual record deletions
+    /// and then restores the original log mode.
+    pub fn page_delete_rec_list_start(
+        &mut self,
+        rec: Record,
+        buf_block: Arc<RwLock<BufBlock>>,
+        index: Arc<Index>,
+        mtr: &mut Mtr,
+    ) {
+        if self.page_rec_is_infimum(rec) {
+            return;
+        }
+
+        // page_delete_rec_list_write_log
+
+        let mut page_cur =
+            PageCur::new(index, Some(rec), buf_block, self.clone());
+
+        page_cur.page_cur_set_before_first();
+        page_cur.page_cur_move_to_next();
+
+        while page_cur.page_cur_get_rec() != rec {
+            page_cur.page_cur_delete_rec(Some(mtr));
+        }
+
+        // Individual delete records are not logged.
+        // todo: Why??
+        let log_mode = mtr.set_log_mode(MTR_LOG_NONE);
+
+        // Restore log mode
+        let old_mode = mtr.set_log_mode(log_mode);
+        ut_ad!(old_mode == MTR_LOG_NONE);
     }
 
     /// Deletes records from the page starting from the given record to the end of the page.
@@ -1374,6 +1534,19 @@ impl Page {
 
     /// Set the max transaction id to the new value if it exceeds the previous value.
     ///
+    /// This method updates the maximum transaction ID stored in the page if the provided
+    /// transaction ID is greater than the current maximum. This is used to track the
+    /// highest transaction ID that has modified the page.
+    ///
+    /// # Parameters
+    /// * `txn_id` - The transaction ID to potentially set as the new maximum
+    /// * `mtr` - Mini-transaction handle for logging the change
+    ///
+    /// # Returns
+    /// * None
+    ///
+    /// # Note
+    /// This method only operates on leaf pages and will assert in debug mode if called on a non-leaf page.
     pub fn page_update_max_trx_id(&self, txn_id: TxnId, mtr: &mut Mtr) {
         ut_ad!(self.page_is_leaf());
 
@@ -1384,7 +1557,25 @@ impl Page {
         }
     }
 
-    /// Copies records from the start to the given record (exclusive).
+    /// Copies records from the start to the given record (exclusive) to a newly created page.
+    ///
+    /// This specialized method copies records from the beginning of the source page up to
+    /// (but not including) the specified record to a newly created (empty) destination page.
+    /// It is optimized for the case where the destination page has just been initialized.
+    ///
+    /// # Parameters
+    /// * `dest_page` - Destination page where records will be copied to
+    /// * `rec` - The record up to which copying should occur (exclusive)
+    /// * `index` - Index to which the records belong
+    /// * `buf_block` - The buffer block containing the destination page
+    /// * `mtr` - Mini-transaction handle
+    ///
+    /// # Returns
+    /// * None
+    ///
+    /// # Note
+    /// This method asserts that the destination page is empty (has the initial heap number).
+    /// If the specified record is the infimum record, no copying occurs.
     pub fn page_copy_rec_list_start_to_created_page(
         &self,
         dest_page: Page,
@@ -1416,7 +1607,26 @@ impl Page {
         }
     }
 
-    /// Copies records from the current page to the destination page. The specified record is also copied.
+    /// Copies records from the specified record to the end of the page to a newly created page.
+    ///
+    /// This specialized method copies records from the specified record to the end of the source page
+    /// (including the specified record) to a newly created (empty) destination page.
+    /// It is optimized for the case where the destination page has just been initialized.
+    ///
+    /// # Parameters
+    /// * `dest_page` - Destination page where records will be copied to
+    /// * `rec` - The starting record from which copying should begin (inclusive)
+    /// * `index` - Index to which the records belong
+    /// * `buf_block` - The buffer block containing the destination page
+    /// * `mtr` - Mini-transaction handle
+    ///
+    /// # Returns
+    /// * None
+    ///
+    /// # Note
+    /// This method asserts that the destination page is empty (has the initial heap number).
+    /// If the specified record is the infimum record, copying starts from the next record.
+    /// If the specified record is the supremum record, no copying occurs.
     pub fn page_copy_rec_list_end_to_created_page(
         &self,
         dest_page: Page,
@@ -1519,6 +1729,13 @@ impl Page {
     }
 
     /// Get the page header output string for debugging purposes.
+    ///
+    /// This method creates a formatted string containing the key information from the page header,
+    /// including the page address, record count, directory slots, heap information, and other
+    /// page metadata. This is useful for debugging and logging.
+    ///
+    /// # Returns
+    /// * A formatted string containing the page header information
     pub fn page_header_str(&self) -> String {
         let mut out = String::new();
         out.push_str(
@@ -1547,7 +1764,18 @@ Page last insert {}, direction {}, n direction {}\n",
         out
     }
 
-    /// Print out the header for debugging purposes.
+    /// Print out the page header information for debugging purposes.
+    ///
+    /// This method formats the page header information into a string and logs it
+    /// using the tracing framework. It includes details such as the page address,
+    /// record count, directory slots, heap information, and other page metadata.
+    ///
+    /// # Returns
+    /// * None
+    ///
+    /// # Note
+    /// This method uses the same formatting as `page_header_str()` but outputs
+    /// the result to the log instead of returning it as a string.
     pub fn page_header_print(&self) {
         let mut out = String::new();
         out.push_str(
