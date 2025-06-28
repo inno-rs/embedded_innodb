@@ -11,7 +11,7 @@ use crate::{
     dict::dict0types::Index,
     innodb::innodb0types::{
         IbSearchMode::{IbCurG, IbCurGe, IbCurL, IbCurLe, IbCurrUnSupp},
-        PageId, UNIV_PAGE_SIZE,
+        UNIV_PAGE_SIZE,
     },
     mtr::mtr0mtr::Mtr,
     page::page0page::{
@@ -196,9 +196,11 @@ impl PageCur {
     /// * If the cursor is already after the last record.
     /// * If no next record is found.
     pub fn page_cur_move_to_next(&mut self) {
-        if self.page_cur_is_after_last() {
-            ut_panic!("Cursor is after the last record");
-        }
+        ut_ad!(
+            self.page_cur_is_after_last() == false,
+            "Cursor is after the last record"
+        );
+
         match self.rec.rec_get_next() {
             Some(next_rec) => self.rec = next_rec,
             None => ut_panic!("No next record found"),
@@ -227,7 +229,6 @@ impl PageCur {
     /// # Arguments
     ///
     /// * `&mut self`: Mutable reference to the cursor.
-    /// * `index`: The index to which the record belongs.
     /// * `mtr`: Optional Mini-Transaction object for logging.
     ///
     /// # Returns
@@ -241,13 +242,14 @@ impl PageCur {
     ///   - Updating directory slots if needed
     ///   - Freeing memory occupied by the record
     ///   - Balancing slots if necessary
-    pub fn page_cur_delete_rec(&mut self, index: Index, mtr: Option<Mtr>) {
+    pub fn page_cur_delete_rec(&mut self, mtr: Option<&mut Mtr>) {
         let current_rec = self.rec;
 
         ut_ad!(self.page.page_rec_is_user_rec(current_rec));
 
         let cur_slot_no = self.page.page_dir_find_owner_slot(current_rec);
-        let cur_n_owned = current_rec.rec_get_n_owned();
+        let cur_n_owned =
+            self.page.page_dir_slot_get_rec(cur_slot_no).rec_get_n_owned();
 
         /* 0. Write the log record. */
         // page_cur_delete_rec_write_log
@@ -264,7 +266,7 @@ impl PageCur {
         Look for the immediate predecessor of the current_rec in a loop.
          */
 
-        let mut prev_rec: Option<Record> = Option::None;
+        let mut prev_rec: Option<Record> = None;
         while rec != current_rec {
             prev_rec = Some(rec);
             rec = rec.rec_get_next().unwrap()
@@ -274,11 +276,13 @@ impl PageCur {
 
         let next_rec = self.rec;
 
+        info!("next_rec={}", next_rec);
+        info!("prev_rec={}", prev_rec.unwrap());
+
         /* 3. Remove the record from the linked list of records. */
         self.page.page_rec_set_next(prev_rec.unwrap(), Some(next_rec));
 
         /* 4. If the deleted record is pointed to by a dir slot, then we update the record pointer in the slot. */
-
         if current_rec == self.page.page_dir_slot_get_rec(cur_slot_no) {
             self.page.page_dir_slot_set_rec(cur_slot_no, prev_rec.unwrap());
         }
@@ -308,7 +312,6 @@ impl PageCur {
             OrphanRecord::new(vec![0; UNIV_PAGE_SIZE], dtuple.n_fields);
         let orphan_record = orphan_record.get_record();
 
-        let index = Index::new(PageId::dummy());
         let rec = orphan_record.rec_convert_dtuple_to_rec(&index, &dtuple, 0);
 
         self.page_cur_insert_rec_low(rec, mtr)
@@ -373,8 +376,8 @@ impl PageCur {
 
         /* 4. Insert the record in the linked list of records. */
         let next_rec = self.rec.rec_get_next().unwrap();
-        self.page.page_set_next_rec(insert_rec, Some(next_rec));
-        self.page.page_set_next_rec(self.rec, Some(insert_rec));
+        self.page.page_rec_set_next(insert_rec, Some(next_rec));
+        self.page.page_rec_set_next(self.rec, Some(insert_rec));
 
         let n_recs = self.page.page_header_get_field(PAGE_N_RECS);
         self.page.page_header_set_field(PAGE_N_RECS, 1 + n_recs);

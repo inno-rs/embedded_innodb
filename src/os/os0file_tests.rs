@@ -69,6 +69,8 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), WriteResult {});
 
+        os_file_fsync(&os_file).unwrap();
+
         // Get the size of the file
         let size = os_file_get_size(&os_file);
         assert!(size >= 0, "File size should be non-negative");
@@ -121,7 +123,7 @@ mod tests {
         os_file_write(&mut os_file, data.as_slice(), offset, len)
             .expect("write should succeed");
 
-        let result = os_file_fsync(os_file);
+        let result = os_file_fsync(&os_file);
         assert!(result.is_ok());
 
         os_file_delete(&file_name).expect("should remove file");

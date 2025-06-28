@@ -438,7 +438,7 @@ pub fn os_file_delete(name: &str) -> Result<(), String> {
 ///
 /// * `Ok()` - If the sync operation was successful
 /// * `Err(String)` - If an error occurred during the fsync operation, with an error message
-pub fn os_file_fsync(os_file: OsFile) -> Result<(), String> {
+pub fn os_file_fsync(os_file: &OsFile) -> Result<(), String> {
     let rt = Runtime::new().unwrap();
     let result_fut = os_file.sync_all();
     match rt.block_on(result_fut) {

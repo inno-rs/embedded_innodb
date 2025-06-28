@@ -1,7 +1,16 @@
 #[cfg(test)]
 mod tests {
-    use std::alloc::{Layout, alloc_zeroed};
+    use std::{
+        alloc::{Layout, alloc_zeroed},
+        collections::HashMap,
+        ops::Add,
+        sync::Arc,
+    };
 
+    use rand::{
+        SeedableRng,
+        prelude::{SliceRandom, StdRng},
+    };
     use rstest::{fixture, rstest};
     use tracing::info;
 
@@ -151,17 +160,6 @@ mod tests {
 
         assert!(!page.page_rec_is_user_rec(infimum_rec));
         assert!(!page.page_rec_is_user_rec(supremum_rec));
-    }
-
-    #[rstest]
-    fn test_page_dir_find_owner_slot(page_fixture: PageFixture) {
-        let page = &page_fixture.page;
-
-        let infimum_rec = page.page_get_infimum_rec();
-        let supremum_rec = infimum_rec.rec_get_next().unwrap();
-
-        assert_eq!(page.page_dir_find_owner_slot(infimum_rec), 0);
-        assert_eq!(page.page_dir_find_owner_slot(supremum_rec), 1);
     }
 
     #[rstest]
@@ -349,6 +347,74 @@ mod tests {
         assert!(rec.is_some());
     }
 
+    #[test]
+    // #[ignore]
+    fn test_page_move_rec_list_end() {
+        let n_recs = 30;
+        for i in 0..n_recs {
+            let mut mtr = Mtr::new();
+            let index = Arc::new(Index::new(PageId::dummy()));
+            let src_owning_page = create_records(
+                n_recs,
+                vec![FieldType::String(Some("foo".to_string()))],
+            );
+
+            let dest_owning_page = create_records(0, vec![]);
+
+            let src_page = src_owning_page.page;
+            let dest_page = dest_owning_page.page;
+            let rec = src_page.page_get_user_records()[i];
+
+            assert_eq!(src_page.page_get_user_records().len(), n_recs);
+
+            src_page.page_move_rec_list_end(
+                dest_owning_page.buf_block.clone(),
+                rec,
+                index,
+                &mut mtr,
+            );
+
+            assert_eq!(src_page.page_get_user_records().len(), i);
+            assert_eq!(dest_page.page_get_user_records().len(), n_recs - i);
+        }
+    }
+
+    #[test]
+    fn test_page_n_owned() {
+        let owning_page = create_records(
+            100,
+            vec![FieldType::String(Some("foo".to_string()))],
+        );
+
+        let page = owning_page.page;
+
+        let mut slot_recs = vec![];
+
+        let n_slots = page.page_dir_get_n_slots();
+        // First slot == infimum
+        // Last slot == supremum
+        for slot_id in 1..n_slots - 1 {
+            let rec = page.page_dir_slot_get_rec(slot_id);
+            slot_recs.push(rec);
+        }
+
+        let mut n_owned_recs = vec![];
+        for rec in page.page_get_user_records() {
+            if rec.rec_get_n_owned() != 0 {
+                n_owned_recs.push(rec);
+            }
+        }
+
+        let rec_cmp = |x: &Record, y: &Record| x.get_ptr().cmp(&y.get_ptr());
+
+        slot_recs.sort_by(rec_cmp);
+        n_owned_recs.sort_by(rec_cmp);
+
+        assert_eq!(slot_recs, n_owned_recs);
+    }
+
+    /* START PAGE DIRECTORY TESTS */
+
     #[rstest]
     fn test_page_dir_add_slot(page_fixture: PageFixture) {
         let page = &page_fixture.page;
@@ -365,7 +431,59 @@ mod tests {
         assert_eq!(5, page.page_dir_get_n_slots());
     }
 
-    /* START PAGE DIRECTORY TESTS */
+    #[rstest]
+    fn test_page_dir_find_owner_slot_on_empty_page(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
+
+        let infimum_rec = page.page_get_infimum_rec();
+        let supremum_rec = infimum_rec.rec_get_next().unwrap();
+
+        assert_eq!(page.page_dir_find_owner_slot(infimum_rec), 0);
+        assert_eq!(page.page_dir_find_owner_slot(supremum_rec), 1);
+    }
+
+    #[test]
+    fn test_page_dir_find_owner_slot_with_multiple_records() {
+        // Set a deterministic seed for reproducibility
+        let seed = 42;
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        let mut range: Vec<usize> = (1..=200).collect();
+        range.shuffle(&mut rng);
+        let result: Vec<usize> = range.into_iter().take(10).collect();
+
+        for total_records in result {
+            let owning_page = create_records(
+                total_records,
+                vec![FieldType::String(Some("foo".to_string()))],
+            );
+
+            let page = owning_page.page;
+
+            let mut slot_map = HashMap::<SlotId, Vec<Record>>::new();
+
+            for rec in page.page_get_user_records() {
+                let slot_id = page.page_dir_find_owner_slot(rec);
+                slot_map.entry(slot_id).or_default().push(rec);
+            }
+
+            let mut total_recs_from_slot_map = 0;
+            let mut recs = Vec::<Record>::new();
+            for (_key, value) in slot_map {
+                total_recs_from_slot_map =
+                    total_recs_from_slot_map.add(value.len());
+                recs.extend(value);
+            }
+
+            assert_eq!(total_recs_from_slot_map, total_records);
+            recs.sort_by(|x, y| x.get_ptr().cmp(&y.get_ptr()));
+
+            let mut user_recs = owning_page.page.page_get_user_records();
+            user_recs.sort_by(|x, y| x.get_ptr().cmp(&y.get_ptr()));
+
+            assert_eq!(recs, user_recs);
+        }
+    }
 
     #[rstest]
     fn test_page_directory_on_empty_page(page_fixture: PageFixture) {

@@ -16,7 +16,10 @@ mod tests {
         mtr::mtr0mtr::Mtr,
         page::{page0cur::PageCur, page0page::Page},
         rem::rem0rec::{OrphanRecord, Record},
-        tests::test0utils::{FieldType, create_dtuples, create_records},
+        tests::test0utils::{
+            FieldType, create_dtuples, create_dtuples_from_input_data_chunk,
+            create_records,
+        },
     };
 
     fn get_raw_block() -> Frame {
@@ -126,7 +129,7 @@ mod tests {
         assert_eq!(page_cur_fixture.page.page_n_get_recs(), 0);
 
         let mut n_recs = 0;
-        for rec in owing_page.page.get_user_records() {
+        for rec in owing_page.page.page_get_user_records() {
             n_recs += 1;
             let new_rec = page_cur_fixture
                 .page_cur
@@ -140,5 +143,73 @@ mod tests {
             assert_eq!(new_rec.rec_get_n_fields(), 1);
             info!("rec={}", new_rec);
         }
+    }
+
+    #[test]
+    fn test_page_cur_delete_rec_single() {
+        let mut mtr = Mtr::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+
+        let owning_page = create_records(
+            1,
+            vec![FieldType::String(Some("Hello World 9".to_string()))],
+        );
+        let page = owning_page.page;
+
+        assert_eq!(page.page_get_n_recs(), 1);
+        assert_eq!(page.page_get_user_records().len(), 1);
+
+        let mut page_cur = PageCur::new(
+            index,
+            Some(page.page_get_user_records()[0]),
+            owning_page.buf_block.clone(),
+            page,
+        );
+
+        page_cur.page_cur_delete_rec(Some(&mut mtr));
+
+        assert_eq!(page.page_get_n_recs(), 0);
+        assert_eq!(page.page_get_user_records().len(), 0);
+    }
+
+    #[test]
+    fn test_page_cur_delete_rec_multiple() {
+        let mut mtr = Mtr::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let owning_page = create_records(0, vec![]);
+        let page = owning_page.page;
+        let mut page_cur = PageCur::new(
+            index.clone(),
+            None,
+            owning_page.buf_block.clone(),
+            page,
+        );
+
+        let page = owning_page.page;
+        let limit = 700;
+
+        for i in 0..limit {
+            let dtuples = create_dtuples_from_input_data_chunk(vec![[
+                FieldType::String(Some(format!("hello world {i}"))),
+            ]]);
+
+            page_cur.page_cur_tuple_insert(
+                &dtuples[0],
+                index.deref(),
+                0,
+                &mut mtr,
+            );
+        }
+
+        assert_eq!(page.page_get_n_recs(), limit);
+        assert_eq!(page.page_get_user_records().len(), limit);
+
+        for rec in owning_page.page.page_get_user_records() {
+            page_cur.page_cur_position(rec);
+            page_cur.page_cur_delete_rec(Some(&mut mtr));
+        }
+
+        assert_eq!(page.page_get_n_recs(), 0);
+        assert_eq!(page.page_get_user_records().len(), 0);
     }
 }

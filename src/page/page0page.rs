@@ -17,7 +17,10 @@ use crate::{
         REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM, Record,
     },
     some_or_panic,
-    ut::ut0dbg::{ut_a, ut_ad},
+    ut::{
+        ut0dbg::{ut_a, ut_ad},
+        ut0math::ut_align_down,
+    },
     ut_panic,
     utils::TxnId,
 };
@@ -679,7 +682,12 @@ impl Page {
     ///
     pub fn page_dir_find_owner_slot(&self, record: Record) -> SlotId {
         let first_slot = self.page_dir_get_nth_slot(0);
-        let record_offset = self.page_offset(record);
+        let mut rec = record;
+        while rec.rec_get_n_owned() == 0 {
+            rec = some_or_panic!(rec.rec_get_next());
+        }
+
+        let record_offset = self.page_offset(rec);
 
         unsafe {
             let mut slot =
@@ -688,7 +696,8 @@ impl Page {
             info!("slot: {}", slot as usize);
             info!("record_offset: {}", record_offset);
 
-            while (slot as *mut u16).read_unaligned() as usize != record_offset
+            while (slot as *const u16).read_unaligned() as usize
+                != record_offset
             {
                 slot = slot.add(PAGE_DIR_SLOT_SIZE);
             }
@@ -945,6 +954,11 @@ impl Page {
     /// - `false`: If the record is not a user record.
     ///
     pub fn page_rec_is_user_rec(&self, rec: Record) -> bool {
+        ut_ad!(
+            ut_align_down(self.ptr as usize, UNIV_PAGE_SIZE)
+                == ut_align_down(rec.get_ptr() as usize, UNIV_PAGE_SIZE)
+        );
+
         let rec_offset = self.page_offset(rec);
 
         rec_offset != PAGE_INFIMUM && rec_offset != PAGE_SUPREMUM
@@ -1000,24 +1014,6 @@ impl Page {
         // todo
     }
 
-    /// Sets the pointer to the next record on the page.
-    ///
-    /// # Arguments
-    ///
-    /// * `rec`: The record whose next pointer will be set.
-    /// * `next_rec`: An optional record that will be set as the next record. If None, the next pointer will be set to 0.
-    ///
-    /// # Returns
-    ///
-    /// * This function does not return a value.
-    pub fn page_set_next_rec(&self, rec: Record, next_rec: Option<Record>) {
-        ut_ad!(!self.page_rec_is_supremum(rec));
-        ut_ad!(next_rec.is_some() && rec != next_rec.unwrap());
-
-        let offset = next_rec.map_or(0, |r| self.page_offset(r));
-        rec.rec_set_next_offs(offset);
-    }
-
     /// Add a record to the free list.
     ///
     /// # Arguments
@@ -1031,7 +1027,8 @@ impl Page {
         // Get the head of the free list. None if empty.
         let free_rec = self.page_header_get_page_free();
 
-        self.page_set_next_rec(rec, free_rec);
+        self.page_rec_set_next(rec, free_rec);
+        self.page_rec_set_next(rec, free_rec);
 
         // Make the head of the free list point to the newly freed up record.
         self.page_header_set_page_free(rec);
@@ -1072,9 +1069,13 @@ impl Page {
         ut_ad!(self.page_rec_check(rec));
         ut_ad!(!self.page_rec_is_supremum(rec));
         ut_ad!(next_rec.is_none() || rec != next_rec.unwrap());
-
         ut_ad!(
-            next_rec.is_none() || self.page_rec_is_infimum(next_rec.unwrap())
+            next_rec.is_none()
+                || self.page_rec_is_infimum(next_rec.unwrap()) == false
+        );
+        ut_ad!(
+            next_rec.is_none()
+                || rec.page_align() == next_rec.unwrap().page_align()
         );
 
         let offset = match next_rec {
@@ -1210,15 +1211,13 @@ impl Page {
     pub fn page_copy_rec_list_end(
         &self,
         dest: Arc<RwLock<BufBlock>>,
-        src: Arc<RwLock<BufBlock>>,
         rec: Record,
         index: Arc<Index>,
         mtr: &mut Mtr,
     ) {
         let dest_page = dest.write().unwrap().get_page();
-        let src_page = src.write().unwrap().get_page();
 
-        ut_ad!(dest_page.page_is_leaf() == src_page.page_is_leaf());
+        ut_ad!(dest_page.page_is_leaf() == self.page_is_leaf());
 
         if dest_page.page_dir_get_n_heap() == PAGE_HEAP_NO_USER_LOW {
             dest_page.page_copy_rec_list_end_to_created_page(
@@ -1230,9 +1229,147 @@ impl Page {
             );
         }
 
-        if index.is_clustered() && src_page.page_is_leaf() {
+        if index.is_clustered() && self.page_is_leaf() {
             dest_page.page_update_max_trx_id(self.page_get_max_trx_id(), mtr);
         }
+    }
+
+    /// Moves records from source page to the destination page.
+    ///
+    /// This function moves records from the current page (source) to a destination page,
+    /// starting from the given record and including all subsequent records up to the end
+    /// of the page. The function first copies the records to the destination page and then
+    /// deletes them from the source page.
+    ///
+    /// # Parameters
+    /// * `dest` - Destination buffer block where records will be moved to
+    /// * `rec` - Starting record to be moved (and all records after it)
+    /// * `index` - Index to which the records belong
+    /// * `mtr` - Mini-transaction handle
+    ///
+    /// # Notes
+    /// * Infimum and Supremum records are not moved
+    /// * The function maintains the integrity of the page directory and record chains
+    /// * This operation is logged in the mini-transaction
+    pub fn page_move_rec_list_end(
+        &self,
+        dest: Arc<RwLock<BufBlock>>,
+        rec: Record,
+        index: Arc<Index>,
+        mtr: &mut Mtr,
+    ) {
+        let dest_page = dest.read().unwrap().get_page();
+
+        let old_n_recs = dest_page.page_get_n_recs();
+        let old_page_size = dest_page.page_get_data_size();
+
+        self.page_copy_rec_list_end(dest, rec, index, mtr);
+
+        let new_n_recs = dest_page.page_get_n_recs();
+        let new_page_size = dest_page.page_get_data_size();
+
+        ut_ad!(new_page_size > old_page_size);
+
+        self.page_delete_rec_list_end(
+            rec,
+            Some(new_n_recs - old_n_recs),
+            Some(new_page_size - old_page_size),
+            mtr,
+        );
+    }
+
+    /// Deletes records from the page starting from the given record to the end of the page.
+    ///
+    /// This function removes a chain of records from the page, starting from the specified record
+    /// and continuing to the end of the page (before the supremum record). It updates the page
+    /// directory, record links, and page metadata to maintain consistency after deletion.
+    ///
+    /// # Parameters
+    /// * `rec` - The first record to be deleted (and all records after it)
+    /// * `n_recs` - Optional number of records being deleted (if known)
+    /// * `size` - Optional total size of records being deleted in bytes (if known)
+    /// * `mtr` - Mini-transaction handle
+    ///
+    /// # Notes
+    /// * The Infimum and Supremum records are never deleted
+    /// * If the record is the infimum record, deletion starts from the next record
+    /// * If the record is the supremum record, no deletion occurs
+    /// * The function updates page metadata including garbage size and record count
+    /// * This operation is logged in the mini-transaction
+    /// * The page directory is updated to maintain proper record ownership
+    pub fn page_delete_rec_list_end(
+        &self,
+        rec: Record,
+        n_recs: Option<usize>,
+        size: Option<usize>,
+        mtr: &mut Mtr,
+    ) {
+        let rec = if self.page_rec_is_infimum(rec) {
+            some_or_panic!(rec.rec_get_next())
+        } else {
+            rec
+        };
+
+        if self.page_rec_is_supremum(rec) {
+            return;
+        }
+
+        let (deleted_size, deleted_n_recs) =
+            if size.is_none() || n_recs.is_none() {
+                (0, 0)
+            } else {
+                (some_or_panic!(size), some_or_panic!(n_recs))
+            };
+
+        // 1. Reset the last insert info in the page header.
+        self.page_header_set_field(PAGE_LAST_INSERT, 0);
+
+        // 2. Increment the modify clock of the block.
+        // buf_block_modify_clock_inc
+
+        // 3. Write the log record.
+        // page_delete_rec_list_write_log
+
+        let prev_rec = rec.rec_get_prev();
+        let last_rec = self.page_get_supremum_rec().rec_get_prev();
+
+        // Update the page directory.
+        let mut count = 0;
+        let mut rec2 = rec;
+        while rec2.rec_get_n_owned() == 0 {
+            count += 1;
+            rec2 = some_or_panic!(rec2.rec_get_next());
+        }
+
+        ut_ad!(rec2.rec_get_n_owned() > count);
+        let n_owned = rec2.rec_get_n_owned() - count;
+        let slot_id = self.page_dir_find_owner_slot(rec2);
+
+        self.page_dir_slot_set_rec(slot_id, self.page_get_supremum_rec());
+        self.page_dir_set_n_owned(slot_id, n_owned);
+
+        self.page_dir_set_n_slots(slot_id + 1);
+
+        // Remove the record chain segment from the page.
+        self.page_rec_set_next(
+            some_or_panic!(prev_rec),
+            Some(self.page_get_supremum_rec()),
+        );
+
+        // Concatenate the record list freed up to the free list.
+        self.page_rec_set_next(
+            some_or_panic!(last_rec),
+            Some(self.page_get_supremum_rec()),
+        );
+
+        self.page_header_set_field(
+            PAGE_GARBAGE,
+            deleted_size + self.page_header_get_field(PAGE_GARBAGE),
+        );
+        self.page_header_set_field(
+            PAGE_N_RECS,
+            self.page_header_get_field(PAGE_N_RECS) - deleted_n_recs,
+        );
     }
 
     /// Set the max transaction id to the new value if it exceeds the previous value.
@@ -1279,6 +1416,7 @@ impl Page {
         }
     }
 
+    /// Copies records from the current page to the destination page. The specified record is also copied.
     pub fn page_copy_rec_list_end_to_created_page(
         &self,
         dest_page: Page,
@@ -1337,7 +1475,7 @@ impl Page {
     /// # Returns
     ///
     /// `Vec<Record>` A vector of user records (excluding infimum and supremum).
-    pub fn get_user_records(&self) -> Vec<Record> {
+    pub fn page_get_user_records(&self) -> Vec<Record> {
         let mut result = Vec::<Record>::new();
         let mut cur_rec = Some(self.page_get_infimum_rec());
         while cur_rec.is_some() {
