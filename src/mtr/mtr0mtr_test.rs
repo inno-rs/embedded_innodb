@@ -37,11 +37,12 @@ mod tests {
 
     #[test]
     fn test_read_ulint_and_uint64() {
-        let mtr = Mtr::new();
-        let buf = [0x01, 0x02, 0x03];
-        assert_eq!(mtr.read_ulint(&buf, 3), 0x030201);
+        let mut mtr = Mtr::new();
+        mtr.start();
+        let buf = [0x01u8, 0x02, 0x03, 0x04];
+        assert_eq!(mtr.read_ulint(&buf, 4), 0x01020304);
         let buf64 = [1u8, 2, 3, 4, 5, 6, 7, 8];
-        assert_eq!(mtr.read_uint64(&buf64), 0x0807060504030201);
+        assert_eq!(mtr.read_uint64(&buf64), 0x0102030405060708);
     }
 
     #[test]
