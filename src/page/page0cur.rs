@@ -85,6 +85,7 @@ impl Default for MatchCache {
 ///
 /// This cursor is used to traverse, insert, and delete records on a page.
 /// It maintains a reference to the current record, the page, and the index.
+#[derive(Clone)]
 pub struct PageCur {
     /// The index to which the cursor belongs
     index: Arc<Index>,

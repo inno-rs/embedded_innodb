@@ -887,7 +887,7 @@ impl Record {
     /// # Return
     ///
     /// Total extra size of the record.
-    fn rec_get_converted_extra_size(
+    pub fn rec_get_converted_extra_size(
         data_size: usize,
         n_fields: usize,
         n_ext: usize,

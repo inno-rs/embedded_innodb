@@ -266,7 +266,6 @@ impl Mtr {
     /// A savepoint is just a marker you drop into the stack to remember “this spot.”
     ///
     pub fn rollback_to_savepoint(&mut self, savepoint: usize) {
-        #[cfg(debug_assertions)]
         ut_ad!(
             self.magic_n == MTR_MAGIC_N,
             "MTR magic mismatch in rollback_to_savepoint"
@@ -297,8 +296,8 @@ impl Mtr {
 
         // 2) Remove the savepoint marker itself
         if let Some(popped_sp) = self.savepoints.pop() {
-            debug_assert_eq!(
-                popped_sp, savepoint,
+            ut_ad!(
+                popped_sp == savepoint,
                 "rollback_to_savepoint: popped savepoint {popped_sp}, but expected {savepoint}"
             );
         } else {
@@ -436,7 +435,7 @@ impl Mtr {
     /// * `savepoint` - The savepoint at which the block was acquired
     /// * `block` - The buffer block to release
     ///
-    /// # Panics
+    /// # Panic
     /// Panics if the savepoint is invalid or if the slot at the savepoint is not a page slot.
     pub fn release_block_at_savepoint(
         &mut self,
@@ -510,22 +509,6 @@ impl Mtr {
     /// A reference to the vector of memo slots.
     pub fn memo(&self) -> &Vec<MemoSlot> {
         &self.memo
-    }
-
-    /// Gets a reference to the log buffer of the mini-transaction.
-    ///
-    /// # Returns
-    /// A reference to the log buffer.
-    pub fn log_buffer(&self) -> &MLog {
-        &self.log_buffer
-    }
-
-    /// Gets a mutable reference to the log buffer of the mini-transaction.
-    ///
-    /// # Returns
-    /// A mutable reference to the log buffer.
-    pub fn log_buffer_mut(&mut self) -> &mut MLog {
-        &mut self.log_buffer
     }
 
     /// Gets a reference to the savepoints vector of the mini-transaction.

@@ -4,7 +4,7 @@ mod tests {
     use crate::{
         fil::fil0types::{FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID},
         innodb::innodb0types::UNIV_PAGE_SIZE,
-        mach::mach0data::mach_parse_compressed,
+        mach::mach0data::{mach_parse_compressed, mach_write_to_4},
         mtr::{
             mtr0log::MLog,
             mtr0mtr::{Mtr, MtrLogMode},
@@ -19,10 +19,8 @@ mod tests {
         // wrap its buffer pointer in our Page type
         let space_offset = FIL_PAGE_SPACE_ID;
         let page_offset = FIL_PAGE_OFFSET;
-        backing[space_offset..space_offset + 4]
-            .copy_from_slice(&0u32.to_be_bytes());
-        backing[page_offset..page_offset + 4]
-            .copy_from_slice(&0u32.to_be_bytes());
+        mach_write_to_4(&mut backing[space_offset..], 0);
+        mach_write_to_4(&mut backing[page_offset..], 0);
         let page = Page::new(backing.as_mut_ptr());
         (backing, page)
     }
@@ -143,9 +141,9 @@ mod tests {
         let buf = &mlog.buf;
         assert_eq!(buf[0], MlogType::MLOG_8BYTES as u8);
         let (space, n1) = mach_parse_compressed(&buf[1..]).unwrap();
-        let (pageno, n2) = mach_parse_compressed(&buf[1 + n1..]).unwrap();
+        let (page_no, n2) = mach_parse_compressed(&buf[1 + n1..]).unwrap();
         assert_eq!(space, 0);
-        assert_eq!(pageno, 0);
+        assert_eq!(page_no, 0);
 
         let mut pos = 1 + n1 + n2;
         let off = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;

@@ -2,7 +2,7 @@
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
+    use rand::{Rng, SeedableRng, rngs::StdRng, seq::SliceRandom};
     use rstest::{fixture, rstest};
     use tracing::info;
 
@@ -14,6 +14,7 @@ mod tests {
             buf0rea::BufRea,
             buf0types::{BUF_GET_ALWAYS, Request},
         },
+        data::data0types::DTuple,
         dict::dict0types::Index,
         fil::fil0fil::Fil,
         fsp::fsp0fsp::Fsp,
@@ -64,6 +65,107 @@ mod tests {
         create_blocks_in_buf_pool(buf_pool.clone(), 1);
 
         BTreeFixture { btree, index, buf_pool, lock_sys }
+    }
+
+    #[fixture]
+    fn fixture_with_page(fixture: BTreeFixture) -> (BTreeFixture, Page) {
+        let btr_cur = BTreeCursor::new(
+            &fixture.btree,
+            fixture.index.clone(),
+            fixture.buf_pool.clone(),
+            fixture.lock_sys.clone(),
+        );
+
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::XLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        ut_ad!(buf_block.is_some());
+
+        let buf_block = some_or_panic!(buf_block);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            buf_block.read().unwrap().get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        // Initialize the page.
+        BTree::page_create(
+            buf_block.clone(),
+            fixture.index.clone(),
+            0,
+            &mut mtr,
+        );
+
+        (fixture, buf_block.read().unwrap().get_page())
+    }
+
+    #[fixture]
+    fn fixture_with_data(
+        fixture: BTreeFixture,
+    ) -> (BTreeFixture, Page, Vec<DTuple>) {
+        let mut btr_cur = BTreeCursor::new(
+            &fixture.btree,
+            fixture.index.clone(),
+            fixture.buf_pool.clone(),
+            fixture.lock_sys.clone(),
+        );
+
+        let mut mtr = Mtr::new();
+        mtr.set_mtr_state(MtrActive);
+
+        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        ut_ad!(buf_block.is_some());
+
+        let buf_block = some_or_panic!(buf_block);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            buf_block.read().unwrap().get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        // Initialize the page.
+        BTree::page_create(
+            buf_block.clone(),
+            fixture.index.clone(),
+            0,
+            &mut mtr,
+        );
+
+        let page: Page = buf_block.read().unwrap().get_page();
+        let record = page.page_get_infimum_rec();
+
+        btr_cur.position(record, buf_block.clone());
+
+        let low_limit = 100;
+        let up_limit = 200;
+        let mut input: Vec<[FieldType; 1]> = vec![];
+        for i in low_limit..up_limit {
+            input.push([FieldType::String(Some(format!(
+                "hello world {:05}",
+                i
+            )))])
+        }
+
+        let mut dtuples = create_dtuples_from_input_data_chunk(input);
+
+        for dtuple in dtuples.iter_mut() {
+            btr_cur.optimistic_insert(0, dtuple, 0, &mut mtr).unwrap()
+        }
+
+        (fixture, page, dtuples)
     }
 
     #[rstest]
@@ -121,6 +223,93 @@ mod tests {
         }
 
         assert_eq!(page.page_get_n_recs(), limit);
+    }
+
+    #[rstest]
+    fn test_page_set_level(fixture_with_page: (BTreeFixture, Page)) {
+        let mut page: Page = fixture_with_page.1;
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let level_max = 16;
+        for level in 0..level_max {
+            BTree::page_set_level(&mut page, level, &mut mtr);
+            let found = BTree::page_get_level(&page);
+            assert_eq!(level, found);
+        }
+    }
+
+    #[rstest]
+    fn test_page_set_index_id(fixture_with_page: (BTreeFixture, Page)) {
+        let mut page: Page = fixture_with_page.1;
+        let seed = 42;
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        let values: Vec<usize> =
+            (0..10).map(|_| rng.random::<u64>() as usize).collect();
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        for index_id in values {
+            BTree::page_set_index_id(&mut page, index_id, &mut mtr);
+            let found = BTree::page_get_index_id(&page);
+            assert_eq!(index_id, found);
+        }
+    }
+
+    #[rstest]
+    fn test_page_tuple_smaller(
+        fixture_with_data: (BTreeFixture, Page, Vec<DTuple>),
+    ) {
+        let mut btr_cur = BTreeCursor::new(
+            &fixture_with_data.0.btree,
+            fixture_with_data.0.index.clone(),
+            fixture_with_data.0.buf_pool.clone(),
+            fixture_with_data.0.lock_sys.clone(),
+        );
+
+        let page = fixture_with_data.1;
+
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let buf_block =
+            fixture_with_data.0.buf_pool.lock().unwrap().get(Request {
+                rw_latch: ReadWriteLatch::XLatch,
+                page_id: PageId { space_id: 0, page_no: 0 },
+                mode: BUF_GET_ALWAYS,
+                mtr: &mut mtr,
+            });
+
+        ut_ad!(buf_block.is_some());
+
+        let buf_block = some_or_panic!(buf_block);
+
+        btr_cur.position(page.page_get_infimum_rec(), buf_block);
+
+        {
+            let dtuples = create_dtuples_from_input_data_chunk(vec![[
+                FieldType::String(Some(
+                    format!("hello world {:05}", 0).to_string(),
+                )),
+            ]]);
+
+            let dtuple = &dtuples[0];
+
+            assert!(btr_cur.page_tuple_smaller(dtuple, 100));
+        }
+
+        {
+            let dtuples = create_dtuples_from_input_data_chunk(vec![[
+                FieldType::String(Some(
+                    format!("hello world {:05}", 1000).to_string(),
+                )),
+            ]]);
+
+            let dtuple = &dtuples[0];
+
+            assert!(!btr_cur.page_tuple_smaller(dtuple, 100));
+        }
     }
 
     #[rstest]

@@ -51,20 +51,22 @@ impl Drop for OwningPage {
 pub enum FieldType {
     /// Signed 32-bit integer
     Int(Option<i32>),
-    IntNull(Option<i32>),
+    IntNullable(Option<i32>),
     /// Unsigned 64-bit integer
     UnsignedInt(Option<u64>),
     /// Binary data
     Binary(Option<Vec<u8>>),
     /// Variable-length string
     String(Option<String>),
-    StringNull,
+    StringNullable,
     /// Decimal number
     Decimal(Option<String>),
     /// Single-precision floating point number
     Float(Option<f32>),
+    FloatNullable(Option<f32>),
     /// Double-precision floating point number
     Double(Option<f64>),
+    DoubleNullable(Option<f64>),
 }
 
 /// Create records.
@@ -271,10 +273,14 @@ pub fn create_dfield(field_type: &FieldType) -> DField {
                 .build()
                 .unwrap()
         }
-        FieldType::IntNull(ni) => {
+        FieldType::IntNullable(ni) => {
             let data = ni.map(|a| a.to_le_bytes().to_vec()).unwrap_or(vec![]);
-            let len = data.len();
-            let typ = DTYPE_INT.clone();
+            let len = if data.len() == 0 { UNIV_SQL_NULL } else { data.len() };
+            let mut typ = DTYPE_INT.clone();
+            if len != 0 {
+                typ.pr_type |= DATA_NOT_NULL;
+            }
+
             DFieldBuilder::default()
                 .data(data)
                 .len(len)
@@ -300,7 +306,6 @@ pub fn create_dfield(field_type: &FieldType) -> DField {
         }
         FieldType::Binary(bin) => {
             // BINARY(5), value = 01 02 03 04 05
-
             let data =
                 bin.clone().unwrap_or(vec![0x01, 0x02, 0x03, 0x04, 0x05]);
             let len = data.len();
@@ -314,7 +319,7 @@ pub fn create_dfield(field_type: &FieldType) -> DField {
                 .build()
                 .unwrap()
         }
-        FieldType::StringNull => {
+        FieldType::StringNullable => {
             let len = UNIV_SQL_NULL;
             let typ = DTYPE_VARCHAR.clone();
 
@@ -377,6 +382,22 @@ pub fn create_dfield(field_type: &FieldType) -> DField {
                 .build()
                 .unwrap()
         }
+        FieldType::FloatNullable(f) => {
+            let data = f.map(|a| a.to_le_bytes().to_vec()).unwrap_or(vec![]);
+
+            let len = if data.len() == 0 { UNIV_SQL_NULL } else { data.len() };
+            let mut typ = DTYPE_FLOAT.clone();
+            if len != 0 {
+                typ.pr_type |= DATA_NOT_NULL;
+            }
+
+            DFieldBuilder::default()
+                .data(data)
+                .len(len)
+                .dtype(typ)
+                .build()
+                .unwrap()
+        }
         FieldType::Double(d) => {
             // DOUBLE, value = 3.14f64 → 0x40091EB851EB851F
             let data = d.map(|a| a.to_le_bytes().to_vec()).unwrap_or(vec![
@@ -386,6 +407,22 @@ pub fn create_dfield(field_type: &FieldType) -> DField {
             let len = data.len();
             let mut typ = DTYPE_DOUBLE.clone();
             typ.pr_type |= DATA_NOT_NULL;
+
+            DFieldBuilder::default()
+                .data(data)
+                .len(len)
+                .dtype(typ)
+                .build()
+                .unwrap()
+        }
+        FieldType::DoubleNullable(d) => {
+            let data = d.map(|a| a.to_le_bytes().to_vec()).unwrap_or(vec![]);
+
+            let len = if data.len() == 0 { UNIV_SQL_NULL } else { data.len() };
+            let mut typ = DTYPE_DOUBLE.clone();
+            if data.len() != 0 {
+                typ.pr_type |= DATA_NOT_NULL;
+            }
 
             DFieldBuilder::default()
                 .data(data)
