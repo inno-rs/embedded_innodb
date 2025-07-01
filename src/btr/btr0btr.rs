@@ -69,6 +69,10 @@ impl BTree {
         BTree { buf_pool, fsp, lock_sys, index }
     }
 
+    pub fn get_index(&self) -> &Arc<Index> {
+        &self.index
+    }
+
     /// Retrieves the previous user record in the B-tree.
     ///
     /// This method navigates to the previous record in the B-tree, potentially
@@ -417,5 +421,35 @@ impl BTree {
 
         BTree::page_set_level(&mut page, level, mtr);
         BTree::page_set_index_id(&mut page, index.get_index_id(), mtr);
+    }
+
+    /// Creates an empty page in a B-tree at the specified level.
+    ///
+    /// This function initializes a new empty page in the B-tree structure. It creates
+    /// a page using `Page::page_create` and sets its level in the B-tree hierarchy.
+    /// The operation is logged in the mini-transaction (mtr).
+    ///
+    /// # Arguments
+    /// * `buf_block` - The buffer block where the page will be created
+    /// * `level` - The level in the B-tree where the page will be used
+    /// * `mtr` - The mini-transaction that logs this operation
+    pub fn page_empty(
+        &self,
+        buf_block: Arc<RwLock<BufBlock>>,
+        level: usize,
+        mtr: &mut Mtr,
+    ) {
+        let page_id = buf_block.read().unwrap().get_page_id();
+
+        ut_ad!(
+            mtr.memo_contains(&MemoSlot::PageFix(page_id, FixMode::Exclusive))
+        );
+
+        let mut page = {
+            let buf_block = buf_block.write().unwrap();
+            Page::page_create(self.index.deref(), buf_block.deref(), Some(mtr))
+        };
+
+        Self::page_set_level(&mut page, level, mtr);
     }
 }

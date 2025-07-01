@@ -1,6 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        ops::Deref,
+        sync::{Arc, Mutex},
+    };
 
     use rand::{Rng, SeedableRng, rngs::StdRng, seq::SliceRandom};
     use rstest::{fixture, rstest};
@@ -32,14 +35,15 @@ mod tests {
         some_or_panic,
         sync::sync0rw::ReadWriteLatch,
         tests::test0utils::{
-            FieldType, create_blocks_in_buf_pool,
+            FieldType, create_blocks_in_buf_pool, create_dtuple,
             create_dtuples_from_input_data_chunk,
+            fill_block_with_uniform_data,
         },
-        ut::ut0dbg::ut_ad,
+        ut::{ut0dbg::ut_ad, ut0ut::random_string_with_seed},
     };
 
     struct BTreeFixture {
-        btree: BTree,
+        btree: Arc<BTree>,
         index: Arc<Index>,
         buf_pool: Arc<Mutex<BufPool>>,
         lock_sys: Arc<Mutex<LockSys>>,
@@ -64,18 +68,11 @@ mod tests {
 
         create_blocks_in_buf_pool(buf_pool.clone(), 1);
 
-        BTreeFixture { btree, index, buf_pool, lock_sys }
+        BTreeFixture { btree: Arc::new(btree), index, buf_pool, lock_sys }
     }
 
     #[fixture]
     fn fixture_with_page(fixture: BTreeFixture) -> (BTreeFixture, Page) {
-        let btr_cur = BTreeCursor::new(
-            &fixture.btree,
-            fixture.index.clone(),
-            fixture.buf_pool.clone(),
-            fixture.lock_sys.clone(),
-        );
-
         let mut mtr = Mtr::new();
         mtr.start();
 
@@ -563,5 +560,144 @@ mod tests {
         }
 
         assert!(user_rec_data.is_sorted());
+    }
+
+    #[rstest]
+    fn test_page_empty(fixture_with_data: (BTreeFixture, Page, Vec<DTuple>)) {
+        let btree = &fixture_with_data.0.btree;
+        let page = &fixture_with_data.1;
+
+        // Initially the page has some recs.
+        assert_eq!(page.page_get_n_recs(), 100);
+
+        // After page empty call, it should be empty.
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        mtr.memo_push(MemoSlot::PageFix(
+            PageId { space_id: 0, page_no: 0 },
+            FixMode::Exclusive,
+        ));
+
+        let buf_block =
+            fixture_with_data.0.buf_pool.lock().unwrap().get(Request {
+                rw_latch: ReadWriteLatch::NoLatch,
+                page_id: PageId { space_id: 0, page_no: 0 },
+                mode: BUF_GET_ALWAYS,
+                mtr: &mut mtr,
+            });
+
+        assert!(buf_block.is_some());
+
+        let buf_block = some_or_panic!(buf_block);
+
+        btree.page_empty(buf_block.clone(), 10, &mut mtr);
+
+        assert_eq!(page.page_get_n_recs(), 0);
+        assert_eq!(BTree::page_get_level(page), 10);
+
+        btree.page_empty(buf_block, 11, &mut mtr);
+
+        assert_eq!(page.page_get_n_recs(), 0);
+        assert_eq!(BTree::page_get_level(page), 11);
+    }
+
+    #[rstest]
+    fn test_page_get_split_rec_with_full_page(
+        fixture_with_data: (BTreeFixture, Page, Vec<DTuple>),
+    ) {
+        let seed = 42;
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let btree = fixture_with_data.0.btree;
+        let buf_pool = fixture_with_data.0.buf_pool;
+        let lock_sys = fixture_with_data.0.lock_sys;
+
+        let buf_block = buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        assert!(buf_block.is_some());
+
+        fill_block_with_uniform_data(
+            btree.clone(),
+            some_or_panic!(&buf_block).clone(),
+            buf_pool.clone(),
+            lock_sys.clone(),
+            42,
+        );
+
+        let buf_block = some_or_panic!(buf_block);
+
+        let page = buf_block.read().unwrap().get_page();
+        assert_eq!(page.page_get_data_size(), 15820);
+
+        let mut btr_cur = BTreeCursor::new(
+            btree.deref(),
+            fixture_with_data.0.index,
+            buf_pool,
+            lock_sys,
+        );
+
+        btr_cur.position(page.page_get_infimum_rec(), buf_block);
+
+        let dtuple = create_dtuple(&[FieldType::String(Some(
+            random_string_with_seed(100, seed),
+        ))]);
+
+        let rec = btr_cur.page_get_split_rec(&dtuple, 0);
+        assert!(rec.is_some());
+
+        let n_recs = page.page_get_n_recs();
+        let split_rec_index = page.page_get_rec_index(rec.unwrap());
+        // It should partition the page midway.
+        assert_eq!(n_recs / 2, split_rec_index + 1);
+    }
+
+    #[rstest]
+    fn test_page_get_split_rec_with_empty_page(
+        fixture_with_page: (BTreeFixture, Page),
+    ) {
+        let seed = 42;
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let btree = fixture_with_page.0.btree;
+        let buf_pool = fixture_with_page.0.buf_pool;
+        let lock_sys = fixture_with_page.0.lock_sys;
+
+        let buf_block = buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        assert!(buf_block.is_some());
+
+        let buf_block = some_or_panic!(buf_block);
+
+        let page = buf_block.read().unwrap().get_page();
+        assert_eq!(page.page_get_n_recs(), 0);
+
+        let mut btr_cur = BTreeCursor::new(
+            btree.deref(),
+            fixture_with_page.0.index,
+            buf_pool,
+            lock_sys,
+        );
+
+        btr_cur.position(page.page_get_infimum_rec(), buf_block);
+
+        let dtuple = create_dtuple(&[FieldType::String(Some(
+            random_string_with_seed(100, seed),
+        ))]);
+
+        let rec = btr_cur.page_get_split_rec(&dtuple, 0);
+        assert!(rec.is_none());
     }
 }

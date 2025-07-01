@@ -480,7 +480,7 @@ impl<'a> BTreeCursor<'a> {
         let mut incl_data = 0;
         let mut rec = page.page_get_infimum_rec().rec_get_next();
 
-        // We linearly keep on including records, and keep on checking if the
+        // We linearly keep on including records and keep on checking if the
         // total accumulated size is less than total_space / 2.
         let mut dtuple_included = false;
         while incl_data + Page::page_dir_calc_reserved_space(total_n_recs)
@@ -501,8 +501,9 @@ impl<'a> BTreeCursor<'a> {
             }
         }
 
-        if incl_data + insert_size < free_space {
-            let split_rec = some_or_panic!(rec);
+        if let Some(split_rec) = rec
+            && incl_data + insert_size < free_space
+        {
             if split_rec == insert_rec {
                 let next_rec = split_rec.rec_get_next();
                 return if let Some(rec) = next_rec
@@ -512,6 +513,8 @@ impl<'a> BTreeCursor<'a> {
                 } else {
                     next_rec
                 };
+            } else {
+                return Some(split_rec);
             }
         }
 

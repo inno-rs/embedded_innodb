@@ -1738,6 +1738,29 @@ impl Page {
         if occupied > free_space { 0 } else { free_space - occupied }
     }
 
+    /// Returns the index of a record within the page's user records.
+    ///
+    /// This function finds the position (index) of the given record in the list of user records
+    /// on the page. It is primarily used for testing purposes.
+    ///
+    /// # Arguments
+    /// * `rec` - The record whose index is to be found
+    ///
+    /// # Returns
+    /// * The zero-based index of the record within the page's user records
+    ///
+    /// # Panics
+    /// * If the record is not a user record
+    /// * If the record is not found in the page's user records
+    #[cfg(test)]
+    pub fn page_get_rec_index(&self, rec: Record) -> usize {
+        ut_ad!(self.page_rec_is_user_rec(rec));
+
+        some_or_panic!(
+            self.page_get_user_records().iter().position(|r| r == &rec)
+        )
+    }
+
     /// Get the page header output string for debugging purposes.
     ///
     /// This method creates a formatted string containing the key information from the page header,

@@ -5,7 +5,10 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 
+use tracing::info;
+
 use crate::{
+    btr::{btr0btr::BTree, btr0cur::BTreeCursor},
     buf::{
         buf0buf::BufPool,
         buf0types::{BUF_GET_IF_IN_POOL, BufBlock, BufPage, Request},
@@ -17,10 +20,17 @@ use crate::{
     },
     dict::dict0types::{Column, Field, Index},
     innodb::innodb0types::{PageId, SpaceId, UNIV_PAGE_SIZE, UNIV_SQL_NULL},
-    mtr::mtr0mtr::{Mtr, MtrState::MtrActive},
+    lock::lock0lock::LockSys,
+    mtr::{
+        mtr0mtr::Mtr,
+        mtr0types::{FixMode, MemoSlot},
+    },
     page::{page0cur::PageCur, page0page::Page},
     sync::sync0rw::ReadWriteLatch,
-    ut::ut0dbg::{ut_a, ut_ad},
+    ut::{
+        ut0dbg::{ut_a, ut_ad},
+        ut0ut::random_string_with_seed,
+    },
 };
 
 /// A structure that owns both the page memory and the Page object that references it.
@@ -224,21 +234,31 @@ pub fn create_dtuples_from_input_data_chunk<const N: usize>(
         }
     }
 
-    input_data
-        .iter()
-        .map(|input| {
-            let dfields: Vec<DField> =
-                input.iter().map(|f| create_dfield(f)).collect();
+    input_data.iter().map(|input| create_dtuple(input)).collect()
+}
 
-            DTupleBuilder::default()
-                .info_bits(0)
-                .n_fields(dfields.len())
-                .n_fields_cmp(dfields.len())
-                .fields(dfields)
-                .build()
-                .unwrap()
-        })
-        .collect()
+/// Creates a data tuple from an array of field types for testing purposes.
+///
+/// This function builds a data tuple (DTuple) by converting each field type in the input array
+/// to a data field (DField) using the `create_dfield` function. The resulting DTuple contains
+/// all the fields with appropriate test data.
+///
+/// # Arguments
+/// * `fields` - An array of field types that will be converted to data fields
+///
+/// # Returns
+/// * A new DTuple containing the specified fields
+pub fn create_dtuple<const N: usize>(fields: &[FieldType; N]) -> DTuple {
+    let dfields: Vec<DField> =
+        fields.iter().map(|f| create_dfield(f)).collect();
+
+    DTupleBuilder::default()
+        .info_bits(0)
+        .n_fields(dfields.len())
+        .n_fields_cmp(dfields.len())
+        .fields(dfields)
+        .build()
+        .unwrap()
 }
 
 /// Creates a data field of the specified type for testing purposes.
@@ -482,7 +502,7 @@ pub fn create_blocks_in_buf_pool(buf_pool: Arc<Mutex<BufPool>>, count: usize) {
     let mut buf_pool = buf_pool.lock().unwrap();
 
     let mut mtr = Mtr::new();
-    mtr.set_mtr_state(MtrActive);
+    mtr.start();
 
     // Add some pages, and then retry creating.
     let _result = buf_pool.chunk_init(count * UNIV_PAGE_SIZE);
@@ -508,4 +528,61 @@ pub fn create_blocks_in_buf_pool(buf_pool: Arc<Mutex<BufPool>>, count: usize) {
             i
         );
     }
+}
+
+/// Fills a buffer block with uniform data for testing purposes.
+///
+/// This function populates a buffer block with a large number of records containing
+/// random string data. It creates a B-tree cursor, positions it at the infimum record,
+/// generates random string data, creates data tuples from this data, and inserts them
+/// into the B-tree using optimistic insert.
+///
+/// # Arguments
+/// * `btree` - The B-tree to insert records into
+/// * `buf_block` - The buffer block to fill with data
+/// * `buf_pool` - The buffer pool for managing pages
+/// * `lock_sys` - The lock system for managing locks
+/// * `seed` - A seed value for random string generation
+pub fn fill_block_with_uniform_data(
+    btree: Arc<BTree>,
+    buf_block: Arc<RwLock<BufBlock>>,
+    buf_pool: Arc<Mutex<BufPool>>,
+    lock_sys: Arc<Mutex<LockSys>>,
+    seed: u64,
+) {
+    let page: Page = buf_block.read().unwrap().get_page();
+    let record = page.page_get_infimum_rec();
+
+    let btree = btree.deref();
+    let mut btr_cur =
+        BTreeCursor::new(btree, btree.get_index().clone(), buf_pool, lock_sys);
+    btr_cur.position(record, buf_block.clone());
+
+    let low_limit = 0;
+    let up_limit = 725;
+    let mut input: Vec<[FieldType; 1]> = vec![];
+    for _ in low_limit..up_limit {
+        let str = random_string_with_seed(15, 42);
+        info!("{}", str);
+        input.push([FieldType::String(Some(str))]);
+    }
+
+    let mut dtuples = create_dtuples_from_input_data_chunk(input);
+
+    let mut mtr = Mtr::new();
+    mtr.start();
+    mtr.memo_push(MemoSlot::PageFix(
+        PageId { space_id: 0, page_no: 0 },
+        FixMode::Exclusive,
+    ));
+
+    for dtuple in dtuples.iter_mut() {
+        btr_cur.optimistic_insert(0, dtuple, 0, &mut mtr);
+    }
+
+    let user_recs = page.page_get_user_records();
+
+    // ut_ad!(all_equal_by(&user_recs, |a: &Record, b: &Record| {
+    //     a.rec_offs_size() == b.rec_offs_size()
+    // }));
 }
