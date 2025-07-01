@@ -25,7 +25,10 @@ use crate::{
         mtr0mtr::Mtr,
         mtr0types::{FixMode, MemoSlot},
     },
-    page::{page0cur::PageCur, page0page::Page},
+    page::{
+        page0cur::PageCur,
+        page0page::{Page, PageDebug},
+    },
     sync::sync0rw::ReadWriteLatch,
     ut::{
         ut0dbg::{ut_a, ut_ad},

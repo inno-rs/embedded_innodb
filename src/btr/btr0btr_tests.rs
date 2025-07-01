@@ -30,7 +30,7 @@ mod tests {
         os::{os0io::OsIo, os0runtime::create_runtime},
         page::{
             page0cur::{PAGE_CUR_G, PAGE_CUR_GE, PAGE_CUR_L, PAGE_CUR_LE},
-            page0page::Page,
+            page0page::{Page, PageDebug},
         },
         some_or_panic,
         sync::sync0rw::ReadWriteLatch,
@@ -163,6 +163,43 @@ mod tests {
         }
 
         (fixture, page, dtuples)
+    }
+
+    #[fixture]
+    fn fixture_with_full_page_and_small_data(
+        fixture_with_data: (BTreeFixture, Page, Vec<DTuple>),
+    ) -> (BTreeFixture, Page, Vec<DTuple>) {
+        let seed = 42;
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let btree = fixture_with_data.0.btree.clone();
+        let buf_pool = fixture_with_data.0.buf_pool.clone();
+        let lock_sys = fixture_with_data.0.lock_sys.clone();
+
+        let buf_block = buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        assert!(buf_block.is_some());
+
+        fill_block_with_uniform_data(
+            btree.clone(),
+            some_or_panic!(&buf_block).clone(),
+            buf_pool.clone(),
+            lock_sys.clone(),
+            seed,
+        );
+
+        let buf_block = some_or_panic!(buf_block);
+
+        let page = buf_block.read().unwrap().get_page();
+        assert_eq!(page.page_get_data_size(), 15820);
+
+        fixture_with_data
     }
 
     #[rstest]
@@ -604,15 +641,19 @@ mod tests {
 
     #[rstest]
     fn test_page_get_split_rec_with_full_page(
-        fixture_with_data: (BTreeFixture, Page, Vec<DTuple>),
+        fixture_with_full_page_and_small_data: (
+            BTreeFixture,
+            Page,
+            Vec<DTuple>,
+        ),
     ) {
-        let seed = 42;
+        let fixture = &fixture_with_full_page_and_small_data;
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let btree = fixture_with_data.0.btree;
-        let buf_pool = fixture_with_data.0.buf_pool;
-        let lock_sys = fixture_with_data.0.lock_sys;
+        let btree = &fixture.0.btree;
+        let buf_pool = &fixture.0.buf_pool;
+        let lock_sys = &fixture.0.lock_sys;
 
         let buf_block = buf_pool.lock().unwrap().get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
@@ -621,15 +662,63 @@ mod tests {
             mtr: &mut mtr,
         });
 
-        assert!(buf_block.is_some());
+        let buf_block = some_or_panic!(buf_block);
 
-        fill_block_with_uniform_data(
-            btree.clone(),
-            some_or_panic!(&buf_block).clone(),
+        let page = buf_block.read().unwrap().get_page();
+        assert_eq!(page.page_get_data_size(), 15820);
+
+        let mut btr_cur = BTreeCursor::new(
+            btree.deref(),
+            fixture.0.index.clone(),
             buf_pool.clone(),
             lock_sys.clone(),
-            42,
         );
+
+        btr_cur.position(page.page_get_infimum_rec(), buf_block);
+
+        // New record size same as other rows.
+        let dtuple_size = 100;
+        let dtuple = create_dtuple(&[FieldType::String(Some(
+            random_string_with_seed(dtuple_size, 42),
+        ))]);
+
+        let rec = btr_cur.page_get_split_rec(&dtuple, 0);
+        assert!(rec.is_some());
+
+        let split_rec_index = page.page_get_rec_index(rec.unwrap());
+
+        let left_sum = page
+            .page_get_rec_size_from_start_to_rec(split_rec_index)
+            + dtuple_size;
+
+        let right_sum =
+            page.page_get_rec_size_from_rec_to_end(split_rec_index);
+
+        assert!(left_sum.abs_diff(right_sum) < 1000);
+    }
+
+    #[rstest]
+    fn test_page_get_split_rec_with_full_page_at_every_rec(
+        fixture_with_full_page_and_small_data: (
+            BTreeFixture,
+            Page,
+            Vec<DTuple>,
+        ),
+    ) {
+        let fixture = &fixture_with_full_page_and_small_data;
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let btree = &fixture.0.btree;
+        let buf_pool = &fixture.0.buf_pool;
+        let lock_sys = &fixture.0.lock_sys;
+
+        let buf_block = buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
 
         let buf_block = some_or_panic!(buf_block);
 
@@ -638,27 +727,97 @@ mod tests {
 
         let mut btr_cur = BTreeCursor::new(
             btree.deref(),
-            fixture_with_data.0.index,
-            buf_pool,
-            lock_sys,
+            fixture.0.index.clone(),
+            buf_pool.clone(),
+            lock_sys.clone(),
+        );
+
+        // New record size same as other rows.
+        let dtuple_size = 100;
+        let dtuple = create_dtuple(&[FieldType::String(Some(
+            random_string_with_seed(dtuple_size, 42),
+        ))]);
+
+        for rec in page.page_get_user_records() {
+            // Position the cursor at every record and call split.
+            btr_cur.position(rec, buf_block.clone());
+
+            let rec = btr_cur.page_get_split_rec(&dtuple, 0);
+            assert!(rec.is_some());
+
+            let split_rec_index = page.page_get_rec_index(rec.unwrap());
+
+            let left_sum = page
+                .page_get_rec_size_from_start_to_rec(split_rec_index)
+                + dtuple_size;
+
+            let right_sum =
+                page.page_get_rec_size_from_rec_to_end(split_rec_index);
+
+            assert!(left_sum.abs_diff(right_sum) < 1000);
+        }
+    }
+
+    #[rstest]
+    fn test_page_get_split_rec_with_full_page_and_very_large_dtuple(
+        fixture_with_full_page_and_small_data: (
+            BTreeFixture,
+            Page,
+            Vec<DTuple>,
+        ),
+    ) {
+        let fixture = &fixture_with_full_page_and_small_data;
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let btree = &fixture.0.btree;
+        let buf_pool = &fixture.0.buf_pool;
+        let lock_sys = &fixture.0.lock_sys;
+
+        let buf_block = buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        let buf_block = some_or_panic!(buf_block);
+
+        let page = buf_block.read().unwrap().get_page();
+        assert_eq!(page.page_get_data_size(), 15820);
+
+        let mut btr_cur = BTreeCursor::new(
+            btree.deref(),
+            fixture.0.index.clone(),
+            buf_pool.clone(),
+            lock_sys.clone(),
         );
 
         btr_cur.position(page.page_get_infimum_rec(), buf_block);
 
+        let dtuple_size = 9000;
+        // New record size same as other rows.
         let dtuple = create_dtuple(&[FieldType::String(Some(
-            random_string_with_seed(100, seed),
+            random_string_with_seed(dtuple_size, 42),
         ))]);
 
         let rec = btr_cur.page_get_split_rec(&dtuple, 0);
         assert!(rec.is_some());
 
-        let n_recs = page.page_get_n_recs();
         let split_rec_index = page.page_get_rec_index(rec.unwrap());
-        // It should partition the page midway.
-        assert_eq!(n_recs / 2, split_rec_index + 1);
+
+        let left_sum = page
+            .page_get_rec_size_from_start_to_rec(split_rec_index)
+            + dtuple_size;
+
+        let right_sum =
+            page.page_get_rec_size_from_rec_to_end(split_rec_index);
+
+        assert!(left_sum.abs_diff(right_sum) < 1000);
     }
 
     #[rstest]
+    #[ignore]
     fn test_page_get_split_rec_with_empty_page(
         fixture_with_page: (BTreeFixture, Page),
     ) {

@@ -62,7 +62,7 @@ pub fn random_string_with_seed(len: usize, seed: u64) -> String {
 ///
 /// # Returns
 ///
-/// * `true` if all elements are equal according to the comparison function or if the slice is empty
+/// * `true` if all elements are equal, according to the comparison function, or if the slice is empty
 /// * `false` if any element is not equal to the first element
 pub fn all_equal_by<T, F>(items: &[T], mut equal: F) -> bool
 where

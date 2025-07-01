@@ -1121,7 +1121,6 @@ impl Page {
     ///
     /// * The maximum size in bytes that can be inserted on top of the heap record.
     pub fn page_get_max_insert_size(&self, n_recs: usize) -> usize {
-        info!("heap top={}", self.page_header_get_field(PAGE_HEAP_TOP));
         let occupied = self.page_header_get_field(PAGE_HEAP_TOP)
             - PAGE_SUPREMUM_END
             + Self::page_dir_calc_reserved_space(
@@ -1686,30 +1685,6 @@ impl Page {
         ret
     }
 
-    /// Get all the user records on the page.
-    ///
-    /// # Arguments
-    ///
-    /// `page`: Page containing the records.
-    ///
-    /// # Returns
-    ///
-    /// `Vec<Record>` A vector of user records (excluding infimum and supremum).
-    pub fn page_get_user_records(&self) -> Vec<Record> {
-        let mut result = Vec::<Record>::new();
-        let mut cur_rec = Some(self.page_get_infimum_rec());
-        while cur_rec.is_some() {
-            let rec = some_or_panic!(cur_rec);
-            if self.page_rec_is_user_rec(rec) {
-                result.push(rec);
-            }
-
-            cur_rec = cur_rec.unwrap().rec_get_next();
-        }
-
-        result
-    }
-
     /// Returns the maximum combined size of records that can be inserted on top of the record heap if the page is first reorganized.
     ///
     /// This function calculates how much space would be available for new records if the page
@@ -1736,29 +1711,6 @@ impl Page {
         let free_space = Self::page_get_free_space_of_empty();
 
         if occupied > free_space { 0 } else { free_space - occupied }
-    }
-
-    /// Returns the index of a record within the page's user records.
-    ///
-    /// This function finds the position (index) of the given record in the list of user records
-    /// on the page. It is primarily used for testing purposes.
-    ///
-    /// # Arguments
-    /// * `rec` - The record whose index is to be found
-    ///
-    /// # Returns
-    /// * The zero-based index of the record within the page's user records
-    ///
-    /// # Panics
-    /// * If the record is not a user record
-    /// * If the record is not found in the page's user records
-    #[cfg(test)]
-    pub fn page_get_rec_index(&self, rec: Record) -> usize {
-        ut_ad!(self.page_rec_is_user_rec(rec));
-
-        some_or_panic!(
-            self.page_get_user_records().iter().position(|r| r == &rec)
-        )
     }
 
     /// Get the page header output string for debugging purposes.
@@ -1835,5 +1787,114 @@ Page last insert {}, direction {}, n direction {}\n",
         );
 
         info!("{}", out);
+    }
+}
+
+#[cfg(debug_assertions)]
+pub trait PageDebug {
+    /// Calculates the total size of all records from the beginning up to and including the record at the specified index.
+    ///
+    /// This function sums the sizes of all user records from the start of the page up to and including
+    /// the record at the given index. It is primarily used for debugging and testing purposes.
+    ///
+    /// # Arguments
+    /// * `rec_index` - The index of the record up to which sizes should be summed
+    ///
+    /// # Returns
+    /// * The total size in bytes of all records from the beginning up to and including the specified index
+    ///
+    /// # Panics
+    /// * If there are no records in the specified range
+    fn page_get_rec_size_from_start_to_rec(&self, rec_index: usize) -> usize;
+
+    /// Calculates the total size of all records after the specified index to the end of the page.
+    ///
+    /// This function sums the sizes of all user records that come after the record at the given index.
+    /// It is primarily used for debugging and testing purposes.
+    ///
+    /// # Arguments
+    /// * `rec_index` - The index after which record sizes should be summed
+    ///
+    /// # Returns
+    /// * The total size in bytes of all records after the specified index to the end of the page
+    ///
+    /// # Panics
+    /// * If there are no records in the specified range
+    fn page_get_rec_size_from_rec_to_end(&self, rec_index: usize) -> usize;
+
+    /// Returns the index of a record within the page's user records.
+    ///
+    /// This function finds the position (index) of the given record in the list of user records
+    /// on the page.
+    /// It is primarily used for testing purposes.
+    ///
+    /// # Arguments
+    /// * `rec` - The record whose index is to be found
+    ///
+    /// # Returns
+    /// * The zero-based index of the record within the page's user records
+    ///
+    /// # Panics
+    /// * If the record is not a user record
+    /// * If the record is not found in the page's user records
+    fn page_get_rec_index(&self, rec: Record) -> usize;
+
+    /// Retrieves all user records on the page.
+    ///
+    /// This function collects all user records (excluding infimum and supremum) from the page
+    /// into a vector. It is primarily used for debugging and testing purposes.
+    ///
+    /// # Returns
+    /// * A vector of user records (excluding infimum and supremum)
+    fn page_get_user_records(&self) -> Vec<Record>;
+}
+
+#[cfg(debug_assertions)]
+impl PageDebug for Page {
+    fn page_get_rec_size_from_start_to_rec(&self, rec_index: usize) -> usize {
+        let user_recs = self.page_get_user_records();
+        let left_sum = user_recs
+            .iter()
+            .enumerate()
+            .filter(|item| item.0 <= rec_index)
+            .map(|item| item.1.rec_offs_size())
+            .reduce(|a, b| a + b);
+
+        some_or_panic!(left_sum)
+    }
+
+    fn page_get_rec_size_from_rec_to_end(&self, rec_index: usize) -> usize {
+        let user_recs = self.page_get_user_records();
+        let left_sum = user_recs
+            .iter()
+            .enumerate()
+            .filter(|item| item.0 > rec_index)
+            .map(|item| item.1.rec_offs_size())
+            .reduce(|a, b| a + b);
+
+        some_or_panic!(left_sum)
+    }
+
+    fn page_get_rec_index(&self, rec: Record) -> usize {
+        ut_ad!(self.page_rec_is_user_rec(rec));
+
+        some_or_panic!(
+            self.page_get_user_records().iter().position(|r| r == &rec)
+        )
+    }
+
+    fn page_get_user_records(&self) -> Vec<Record> {
+        let mut result = Vec::<Record>::new();
+        let mut cur_rec = Some(self.page_get_infimum_rec());
+        while cur_rec.is_some() {
+            let rec = some_or_panic!(cur_rec);
+            if self.page_rec_is_user_rec(rec) {
+                result.push(rec);
+            }
+
+            cur_rec = cur_rec.unwrap().rec_get_next();
+        }
+
+        result
     }
 }

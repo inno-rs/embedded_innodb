@@ -6,7 +6,7 @@ mod tests {
 
     use crate::{
         innodb::innodb0types::UNIV_PAGE_SIZE,
-        page::page0page::Page,
+        page::page0page::{Page, PageDebug},
         rem::rem0rec::*,
         some_or_panic,
         tests::test0utils::{FieldType, create_records},
