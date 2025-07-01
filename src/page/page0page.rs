@@ -341,7 +341,7 @@ impl Page {
     ///
     /// A `Record` object representing the record at the specified offset.
     pub fn page_get_rec(&self, offset: usize) -> Record {
-        ut_ad!(offset < UNIV_PAGE_SIZE);
+        ut_ad!(offset < UNIV_PAGE_SIZE, "offset: {}", offset);
         Record::new(unsafe { self.ptr.add(offset) })
     }
 
@@ -405,9 +405,7 @@ impl Page {
     ///
     /// * `()`: This function does not return a value.
     pub fn page_header_set_page_free(&self, record: Record) {
-        let offset = self.page_offset(record);
-        let page = self.to_page_frame();
-        mach_write_to_2(&mut page.0[PAGE_HEADER + PAGE_FREE..], offset as u16);
+        self.page_header_set_field(PAGE_FREE, self.page_offset(record));
     }
 
     /// Get the head of the free list.
@@ -416,6 +414,8 @@ impl Page {
     ///
     /// * `Option<Record>`: The head record of the free list if it exists, or `None` if the free list is empty.
     pub fn page_header_get_page_free(&self) -> Option<Record> {
+        ut_ad!(self.page_validate());
+
         let offset = self.page_header_get_field(PAGE_FREE);
         if offset == 0 { None } else { Some(self.page_get_rec(offset)) }
     }
@@ -454,6 +454,7 @@ impl Page {
             let new_heap_top =
                 self.page_header_get_field(PAGE_HEAP_TOP) + need;
             self.page_header_set_field(PAGE_HEAP_TOP, new_heap_top);
+            ut_ad!(self.page_header_get_field(PAGE_HEAP_TOP) != 0);
 
             /* 2. Update the heap no in the page header. */
             let heap_no = self.page_dir_get_n_heap();
@@ -524,7 +525,7 @@ impl Page {
     /// - `rec`: The record to set in the slot.
     /// # Returns
     /// - None
-    pub fn page_dir_slot_set_rec(&self, slot: usize, rec: Record) {
+    pub fn page_dir_slot_set_rec(&self, slot: SlotId, rec: Record) {
         let record_offset = self.page_offset(rec);
         let page = self.to_page_frame();
 
@@ -540,15 +541,12 @@ impl Page {
     /// # Returns
     /// - A `Record` object representing the record at the specified slot.
     ///
-    pub fn page_dir_slot_get_rec(&self, slot: usize) -> Record {
-        unsafe {
-            let slot_offset = self.page_dir_get_nth_slot(slot);
-            let page = self.to_page_frame();
-            let record_offset =
-                mach_read_from_2(&page.0[slot_offset..]) as usize;
-            let rec_ptr = self.ptr.add(record_offset);
-            Record::new(rec_ptr)
-        }
+    pub fn page_dir_slot_get_rec(&self, slot: SlotId) -> Record {
+        let slot_offset = self.page_dir_get_nth_slot(slot);
+        let page = self.to_page_frame();
+        let record_offset = mach_read_from_2(&page.0[slot_offset..]) as usize;
+
+        unsafe { Record::new(self.ptr.add(record_offset)) }
     }
 
     /// Add a slot to the page directory.
@@ -775,7 +773,7 @@ impl Page {
     ///
     /// This method initializes a new page for use in a B-tree index structure. It performs
     /// several key operations:
-    /// 1. Creates and initializes the page header
+    /// 1. Creates and initializes page header
     /// 2. Creates infimum and supremum records that serve as boundaries for the page
     /// 3. Sets up the page directory with initial slots
     /// 4. Establishes the record linkage between infimum and supremum
@@ -906,6 +904,7 @@ impl Page {
     ///
     /// - The offset of the record within the page as a `usize`.
     fn page_offset(&self, rec: Record) -> usize {
+        ut_ad!(self.is_page_record(rec));
         rec.get_ptr() as usize % UNIV_PAGE_SIZE
     }
 
@@ -1052,6 +1051,8 @@ impl Page {
     ///
     /// * The maximum size in bytes that can be inserted on top of the heap record.
     pub fn page_get_max_insert_size(&self, n_recs: usize) -> usize {
+        ut_ad!(self.page_header_get_field(PAGE_HEAP_TOP) != 0);
+
         let occupied = self.page_header_get_field(PAGE_HEAP_TOP)
             - PAGE_SUPREMUM_END
             + Self::page_dir_calc_reserved_space(
@@ -1113,7 +1114,7 @@ impl Page {
     pub fn page_rec_find_owner_rec(&self, rec: Record) -> Record {
         let mut cur = rec;
         while cur.rec_get_n_owned() == 0 {
-            cur = cur.rec_get_next().unwrap();
+            cur = some_or_panic!(cur.rec_get_next());
         }
 
         cur
@@ -1260,12 +1261,14 @@ impl Page {
         index: Arc<Index>,
         mtr: &mut Mtr,
     ) {
+        ut_ad!(self.is_page_record(rec));
+
         let dest_page = dest.write().unwrap().get_page();
 
         ut_ad!(dest_page.page_is_leaf() == self.page_is_leaf());
 
         if dest_page.page_dir_get_n_heap() == PAGE_HEAP_NO_USER_LOW {
-            dest_page.page_copy_rec_list_end_to_created_page(
+            self.page_copy_rec_list_end_to_created_page(
                 dest_page,
                 rec,
                 index.clone(),
@@ -1571,6 +1574,7 @@ impl Page {
         buf_block: Arc<RwLock<BufBlock>>,
         mtr: &mut Mtr,
     ) {
+        ut_ad!(self.is_page_record(rec));
         ut_ad!(dest_page.page_dir_get_n_heap() == PAGE_HEAP_NO_USER_LOW);
 
         let mut rec = if self.page_rec_is_infimum(rec) {
@@ -1638,6 +1642,26 @@ impl Page {
         let free_space = Self::page_get_free_space_of_empty();
 
         if occupied > free_space { 0 } else { free_space - occupied }
+    }
+
+    /// Validates the integrity of a page.
+    ///
+    /// This function performs basic validation checks on the page structure to ensure
+    /// its integrity. Currently, it verifies that the page heap top pointer is not zero,
+    /// which is a fundamental requirement for a properly initialized page.
+    ///
+    /// # Returns
+    /// * `true` if the page passes all validation checks
+    /// * In debug mode, assertions will fail if validation errors are detected
+    ///
+    /// # Note
+    /// This function is important for detecting corruption in the database pages.
+    /// Additional validation checks may be added in the future to enhance the
+    /// robustness of page integrity verification.
+    pub fn page_validate(&self) -> bool {
+        ut_ad!(self.page_header_get_field(PAGE_HEAP_TOP) != 0);
+
+        true
     }
 
     /// Get the page header output string for debugging purposes.

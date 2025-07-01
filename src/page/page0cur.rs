@@ -120,6 +120,15 @@ impl PageCur {
         PageCur { index, rec, block, page }
     }
 
+    /// Gets the page associated with the cursor.
+    ///
+    /// # Return
+    ///
+    /// * Page
+    pub fn page_cur_get_page(&self) -> Page {
+        self.page.clone()
+    }
+
     /// Gets the record to which the cursor points.
     ///
     /// # Returns
@@ -464,7 +473,7 @@ impl PageCur {
 
         let mut low = 0;
         let mut up = page.page_dir_get_n_slots() - 1;
-        info!("bin_search low={} up={}", low, up);
+        // info!("bin_search low={} up={}", low, up);
 
         // Perform binary search until the lower and upper limit directory slots come to a distance of 1 of each other.
         while up - low > 1 {

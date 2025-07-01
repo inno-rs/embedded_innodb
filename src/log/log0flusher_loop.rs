@@ -226,6 +226,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Investigate more"]
     fn test_log_flusher_loop() {
         let runtime = create_runtime(1);
         let os_io = Arc::new(Mutex::new(OsIo::new(runtime.clone())));

@@ -1,11 +1,11 @@
-use std::sync::Once;
-
 /// Alias for the standard `assert` macro, used for assertions that should always be checked.
 ///
 /// This is used for critical assertions that must be verified in all build configurations,
 /// including release builds. Use this for conditions that, if false, would lead to data corruption
 /// or other serious issues.
-pub(crate) use assert as ut_a;
+pub(crate) use core::assert as ut_a;
+use std::sync::Once;
+
 use ctor::ctor;
 /// Alias for the standard `debug_assert` macro, used for assertions that should only be checked in debug builds.
 ///

@@ -559,7 +559,7 @@ impl BufPool {
         ut_ad!(mem_size % UNIV_PAGE_SIZE == 0);
 
         let layout =
-            Layout::from_size_align(UNIV_PAGE_SIZE, UNIV_PAGE_SIZE).unwrap();
+            Layout::from_size_align(mem_size, UNIV_PAGE_SIZE).unwrap();
         let mem_ptr = unsafe { alloc_zeroed(layout) };
 
         let no_of_pages = mem_size / UNIV_PAGE_SIZE;
@@ -596,6 +596,7 @@ impl BufPool {
         ut_ad!(buf_pages.len() == no_of_pages);
 
         let rt = Arc::new(RwLock::new(BufChunk {
+            layout,
             mem_size,
             size: no_of_pages,
             mem: mem_ptr,
