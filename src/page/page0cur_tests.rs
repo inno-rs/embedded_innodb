@@ -14,7 +14,10 @@ mod tests {
         dict::dict0types::Index,
         innodb::innodb0types::{PageId, UNIV_PAGE_SIZE},
         mtr::mtr0mtr::Mtr,
-        page::{page0cur::PageCur, page0page::Page},
+        page::{
+            page0cur::PageCur,
+            page0page::{Page, PageDebug},
+        },
         rem::rem0rec::{OrphanRecord, Record},
         tests::test0utils::{
             FieldType, FieldType::Int, create_dtuples,

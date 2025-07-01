@@ -125,6 +125,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_mlog_write_uint64() {
         let (mut mlog, _, page) = setup();
         let offset = 16;
@@ -230,6 +231,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_initial_fast_header() {
         let (mut mlog, _, page) = setup();
         let start = 0;

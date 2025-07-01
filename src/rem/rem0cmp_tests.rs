@@ -8,6 +8,7 @@ mod tests {
     use crate::{
         dict::dict0types::Index,
         innodb::innodb0types::PageId,
+        page::page0page::PageDebug,
         rem::rem0cmp::{cmp_dtuple_rec_with_match, cmp_rec_rec},
         tests::test0utils::{
             FieldType, create_dtuples, create_new_fields, create_records,

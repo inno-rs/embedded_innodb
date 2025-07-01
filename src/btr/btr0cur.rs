@@ -478,7 +478,7 @@ impl<'a> BTreeCursor<'a> {
             total_data + Page::page_dir_calc_reserved_space(total_n_recs);
 
         let mut incl_data = 0;
-        let mut rec = page.page_get_infimum_rec().rec_get_next();
+        let mut rec = Some(page.page_get_infimum_rec());
 
         // We linearly keep on including records and keep on checking if the
         // total accumulated size is less than total_space / 2.
@@ -490,8 +490,10 @@ impl<'a> BTreeCursor<'a> {
                 if record == insert_rec && dtuple_included == false {
                     incl_data += insert_size;
                     dtuple_included = true;
-                } else {
+                } else if page.page_rec_is_user_rec(record) {
                     incl_data += record.rec_offs_size();
+                    rec = record.rec_get_next();
+                } else {
                     rec = record.rec_get_next();
                 }
             }
@@ -504,21 +506,21 @@ impl<'a> BTreeCursor<'a> {
         if let Some(split_rec) = rec
             && incl_data + insert_size < free_space
         {
-            if split_rec == insert_rec {
+            return if split_rec == insert_rec {
                 let next_rec = split_rec.rec_get_next();
-                return if let Some(rec) = next_rec
+                if let Some(rec) = next_rec
                     && page.page_rec_is_supremum(rec) == false
                 {
                     Some(rec)
                 } else {
                     next_rec
-                };
+                }
             } else {
-                return Some(split_rec);
-            }
+                Some(split_rec)
+            };
         }
 
-        None
+        rec
     }
 
     /// Check if the given tuple is smaller than every record on the page.
