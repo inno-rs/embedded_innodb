@@ -227,13 +227,13 @@ impl MLog {
 
         // --- 2) COMPRESS & WRITE space_id ---
 
-        let space = page.page_get_space_id_be();
+        let space = page.page_get_space_id();
         let n_space = mach_write_compressed(&mut self.buf[log_pos..], space);
         log_pos += n_space;
 
         // --- 3) COMPRESS & WRITE page_no ---
 
-        let page_no = page.page_get_fil_offset_be();
+        let page_no = page.page_get_space_id();
         let n_page =
             mach_write_compressed(&mut self.buf[log_pos..], page_no as u32);
         log_pos += n_page;

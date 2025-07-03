@@ -1,4 +1,7 @@
-use std::sync::{Arc, RwLock};
+use std::{
+    ops::Add,
+    sync::{Arc, RwLock},
+};
 
 use tracing::{info, warn};
 
@@ -12,6 +15,10 @@ use crate::{
         FIL_PAGE_PREV, FIL_PAGE_SPACE_ID, FSEG_PAGE_DATA,
     },
     innodb::innodb0types::{PageFrame, PageNo, SpaceId, UNIV_PAGE_SIZE},
+    mach::mach0data::{
+        mach_read_from_2, mach_read_from_4, mach_read_from_8, mach_write_to_2,
+        mach_write_to_4, mach_write_to_8,
+    },
     mtr::{mtr0mtr::Mtr, mtr0types::MtrLogMode::MTR_LOG_NONE},
     page::page0cur::PageCur,
     rem::rem0rec::{
@@ -192,32 +199,8 @@ impl Page {
     ///
     /// * The tablespace identifier as a `SpaceId`.
     pub fn page_get_space_id(&self) -> SpaceId {
-        unsafe {
-            let ptr = self.ptr.add(FIL_PAGE_SPACE_ID) as *const u32;
-            ptr.read_unaligned() as SpaceId
-        }
-    }
-
-    /// Read the 4-byte `FIL_PAGE_SPACE_ID` field as a big-endian u32.
-    pub fn page_get_space_id_be(&self) -> SpaceId {
-        unsafe {
-            // Manually load the four bytes MSB→LSB
-            let b0 = *self.ptr.add(FIL_PAGE_SPACE_ID);
-            let b1 = *self.ptr.add(FIL_PAGE_SPACE_ID + 1);
-            let b2 = *self.ptr.add(FIL_PAGE_SPACE_ID + 2);
-            let b3 = *self.ptr.add(FIL_PAGE_SPACE_ID + 3);
-            u32::from_be_bytes([b0, b1, b2, b3]) as SpaceId
-        }
-    }
-
-    /// Write a new 4-byte `FIL_PAGE_SPACE_ID` field in big-endian order.
-    pub fn page_set_space_id_be(&mut self, new_space: SpaceId) {
-        let v: u32 = new_space as u32;
-        let be = v.to_be_bytes();
-        unsafe {
-            let dst = self.ptr.add(FIL_PAGE_SPACE_ID);
-            dst.copy_from_nonoverlapping(be.as_ptr(), 4);
-        }
+        let page = self.to_page_frame();
+        mach_read_from_4(&page.0[FIL_PAGE_SPACE_ID..])
     }
 
     /// Copy the page to a destination buffer.
@@ -238,10 +221,8 @@ impl Page {
     ///
     /// * `()`: This function does not return a value.
     pub fn page_set_space_id(&self, space_id: SpaceId) {
-        unsafe {
-            let ptr = self.ptr.add(FIL_PAGE_SPACE_ID) as *mut u32;
-            ptr.write_unaligned(space_id as u32);
-        }
+        let page = self.to_page_frame();
+        mach_write_to_4(&mut page.0[FIL_PAGE_SPACE_ID..], space_id);
     }
 
     /// Get the file page offset of the page.
@@ -250,43 +231,14 @@ impl Page {
     ///
     /// * The file page offset as a `usize`.
     pub fn page_get_fil_offset(&self) -> usize {
-        unsafe {
-            let ptr = self.ptr.add(FIL_PAGE_OFFSET) as *const u32;
-            ptr.read_unaligned() as usize
-        }
+        let page = self.to_page_frame();
+        mach_read_from_4(&page.0[FIL_PAGE_OFFSET..]) as usize
     }
 
     /// Write a new 4-byte page-offset field (little-endian).
     pub fn page_set_fil_offset(&mut self, new_offset: usize) {
-        let v: u32 = new_offset as u32;
-        let le = v.to_le_bytes();
-        unsafe {
-            let dst = self.ptr.add(FIL_PAGE_OFFSET);
-            dst.copy_from_nonoverlapping(le.as_ptr(), 4);
-        }
-    }
-
-    /// Read the 4-byte `FIL_PAGE_OFFSET` field as a big-endian u32.
-    pub fn page_get_fil_offset_be(&self) -> usize {
-        unsafe {
-            // Read the four bytes one at a time, MSB first
-            let b0 = *self.ptr.add(FIL_PAGE_OFFSET);
-            let b1 = *self.ptr.add(FIL_PAGE_OFFSET + 1);
-            let b2 = *self.ptr.add(FIL_PAGE_OFFSET + 2);
-            let b3 = *self.ptr.add(FIL_PAGE_OFFSET + 3);
-            u32::from_be_bytes([b0, b1, b2, b3]) as usize
-        }
-    }
-
-    /// Write a new 4-byte `FIL_PAGE_OFFSET` field in big-endian order.
-    pub fn page_set_fil_offset_be(&mut self, new_offset: usize) {
-        let v: u32 = new_offset as u32;
-        let be = v.to_be_bytes();
-        unsafe {
-            let dst = self.ptr.add(FIL_PAGE_OFFSET);
-            // copy MSB first
-            dst.copy_from_nonoverlapping(be.as_ptr(), 4);
-        }
+        let page = self.to_page_frame();
+        mach_write_to_4(&mut page.0[FIL_PAGE_OFFSET..], new_offset as u32);
     }
 
     /// Converts the page to a PageFrame reference.
@@ -318,18 +270,18 @@ impl Page {
         max_trx_id: TxnId,
         mtr: Option<&mut Mtr>,
     ) {
-        let page = self.ptr;
         /* It is not necessary to write this change to the redo log as
         during the database recovery we assume that the max transaction id
         of every pae is the maximum transaction id assigned before the crash.
         */
         match mtr {
-            None => unsafe {
-                let loc =
-                    page.add(PAGE_HEADER + PAGE_MAX_TRX_ID) as *mut TxnId;
-
-                loc.write_unaligned(max_trx_id);
-            },
+            None => {
+                let page = self.to_page_frame();
+                mach_write_to_8(
+                    &mut page.0[PAGE_HEADER + PAGE_MAX_TRX_ID..],
+                    max_trx_id as u64,
+                );
+            }
             Some(_) => {
                 warn!("don't know how to handle Mtr");
                 ut_panic!("don't know how to handle Mtr");
@@ -341,11 +293,8 @@ impl Page {
     /// # Returns
     /// The maximum transaction ID (`TxnId`) stored in the page.
     pub fn page_get_max_trx_id(&self) -> TxnId {
-        unsafe {
-            let page_ptr =
-                self.ptr.add(PAGE_HEADER + PAGE_MAX_TRX_ID) as *const TxnId;
-            page_ptr.read_unaligned()
-        }
+        let page = self.to_page_frame();
+        mach_read_from_8(&page.0[PAGE_HEADER + PAGE_MAX_TRX_ID..])
     }
 
     /// Calculates the free space available in an empty page.
@@ -413,10 +362,8 @@ impl Page {
     /// # Returns
     /// - None
     pub fn page_header_set_field(&self, field: usize, value: usize) {
-        unsafe {
-            let ptr = self.ptr.add(PAGE_HEADER + field) as *mut u16;
-            ptr.write_unaligned(value as u16);
-        }
+        let page = self.to_page_frame();
+        mach_write_to_2(&mut page.0[PAGE_HEADER + field..], value as u16);
     }
 
     /// Retrieves the value of a given field from the page header.
@@ -427,10 +374,8 @@ impl Page {
     /// # Returns
     /// - Returns the value of the field as a `usize`.
     pub fn page_header_get_field(&self, field: usize) -> usize {
-        unsafe {
-            let ptr = self.ptr.add(PAGE_HEADER + field) as *const u16;
-            ptr.read_unaligned() as usize
-        }
+        let page = self.to_page_frame();
+        mach_read_from_2(&page.0[PAGE_HEADER + field..]) as usize
     }
 
     /// Retrieves a pointer to a field in the page header.
@@ -459,10 +404,8 @@ impl Page {
     /// * `()`: This function does not return a value.
     pub fn page_header_set_page_free(&self, record: Record) {
         let offset = self.page_offset(record);
-        unsafe {
-            let ptr = self.ptr.add(PAGE_HEADER + PAGE_FREE) as *mut u16;
-            ptr.write_unaligned(offset as u16)
-        }
+        let page = self.to_page_frame();
+        mach_write_to_2(&mut page.0[PAGE_HEADER + PAGE_FREE..], offset as u16);
     }
 
     /// Get the head of the free list.
@@ -586,10 +529,10 @@ impl Page {
     /// - None
     pub fn page_dir_slot_set_rec(&self, slot: usize, rec: Record) {
         let record_offset = self.page_offset(rec);
-        unsafe {
-            let slot_ptr = self.page_dir_get_nth_slot(slot) as *mut u16;
-            slot_ptr.write_unaligned(record_offset as u16);
-        }
+        let page = self.to_page_frame();
+
+        let slot_offset = self.page_dir_get_nth_slot(slot);
+        mach_write_to_2(&mut page.0[slot_offset..], record_offset as u16);
     }
 
     /// Get the record pointer to by the slot in the page directory.
@@ -602,8 +545,12 @@ impl Page {
     ///
     pub fn page_dir_slot_get_rec(&self, slot: usize) -> Record {
         unsafe {
-            let slot_ptr = self.page_dir_get_nth_slot(slot) as *const u16;
-            Record::new(self.ptr.add(slot_ptr.read_unaligned() as usize))
+            let slot_offset = self.page_dir_get_nth_slot(slot);
+            let page = self.to_page_frame();
+            let record_offset =
+                mach_read_from_2(&page.0[slot_offset..]) as usize;
+            let rec_ptr = self.ptr.add(record_offset);
+            Record::new(rec_ptr)
         }
     }
 
@@ -630,15 +577,13 @@ impl Page {
         /* Update the page header */
         self.page_dir_set_n_slots(n_slots + 1);
 
-        let slot_ptr = self.page_dir_get_nth_slot(n_slots);
-
+        let slot_offset = self.page_dir_get_nth_slot(n_slots);
         /* Move slots up */
-        unsafe {
-            slot_ptr.copy_from(
-                slot_ptr.add(PAGE_DIR_SLOT_SIZE),
-                (n_slots - 1 - slot) * PAGE_DIR_SLOT_SIZE,
-            );
-        }
+        let page = self.to_page_frame();
+
+        let low = slot_offset + PAGE_DIR_SLOT_SIZE;
+        let high = low + (n_slots - 1 - slot) * PAGE_DIR_SLOT_SIZE;
+        page.0.copy_within(low..high, slot_offset);
     }
 
     /// Splits a directory slot that owns too many records.
@@ -749,6 +694,7 @@ impl Page {
     /// - The slot ID of the owner slot as a `SlotId`.
     ///
     pub fn page_dir_find_owner_slot(&self, record: Record) -> SlotId {
+        let page = self.to_page_frame();
         let first_slot = self.page_dir_get_nth_slot(0);
         let mut rec = record;
         while rec.rec_get_n_owned() == 0 {
@@ -756,22 +702,16 @@ impl Page {
         }
 
         let record_offset = self.page_offset(rec);
+        let mut slot_offset =
+            self.page_dir_get_nth_slot(self.page_dir_get_n_slots() - 1);
 
-        unsafe {
-            let mut slot =
-                self.page_dir_get_nth_slot(self.page_dir_get_n_slots() - 1);
-
-            info!("slot: {}", slot as usize);
-            info!("record_offset: {}", record_offset);
-
-            while (slot as *const u16).read_unaligned() as usize
-                != record_offset
-            {
-                slot = slot.add(PAGE_DIR_SLOT_SIZE);
-            }
-
-            (first_slot as usize - slot as usize) / PAGE_DIR_SLOT_SIZE
+        while mach_read_from_2(&page.0[slot_offset..]) as usize
+            != record_offset
+        {
+            slot_offset = slot_offset.add(PAGE_DIR_SLOT_SIZE);
         }
+
+        (first_slot - slot_offset) / PAGE_DIR_SLOT_SIZE
     }
 
     /// Retrieves the pointer to the nth slot in the page directory.
@@ -782,16 +722,10 @@ impl Page {
     ///
     /// # Returns
     ///
-    /// - A pointer to the nth slot in the page directory.
+    /// - Offset to the nth slot in the page directory.
     ///
-    fn page_dir_get_nth_slot(&self, slot_id: SlotId) -> *mut u8 {
-        unsafe {
-            self.ptr.add(
-                UNIV_PAGE_SIZE
-                    - PAGE_DIR
-                    - ((slot_id + 1) * PAGE_DIR_SLOT_SIZE),
-            )
-        }
+    pub fn page_dir_get_nth_slot(&self, slot_id: SlotId) -> usize {
+        UNIV_PAGE_SIZE - PAGE_DIR - ((slot_id + 1) * PAGE_DIR_SLOT_SIZE)
     }
 
     /// Get the number of records in the heap.
@@ -1196,10 +1130,8 @@ impl Page {
     /// # Returns
     /// * The page number of the previous page as a `PageNo`
     pub fn get_prev_page(&self) -> PageNo {
-        unsafe {
-            let ptr = self.ptr.add(FIL_PAGE_PREV) as *const u32;
-            ptr.read_unaligned()
-        }
+        let page = self.to_page_frame();
+        mach_read_from_4(&page.0[FIL_PAGE_PREV..])
     }
 
     /// Gets the page number of the next page in the linked list of pages.
@@ -1210,10 +1142,8 @@ impl Page {
     /// # Returns
     /// * The page number of the next page as a `PageNo`
     pub fn get_next_page(&self) -> PageNo {
-        unsafe {
-            let ptr = self.ptr.add(FIL_PAGE_NEXT) as *const u32;
-            ptr.read_unaligned()
-        }
+        let page = self.to_page_frame();
+        mach_read_from_4(&page.0[FIL_PAGE_NEXT..])
     }
 
     /// Checks if a record needs to be stored externally due to its size.

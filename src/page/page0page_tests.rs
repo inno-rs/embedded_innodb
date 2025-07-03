@@ -152,6 +152,17 @@ mod tests {
     }
 
     #[rstest]
+    fn test_page_dir_get_nth_slot(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
+        let mut expected = UNIV_PAGE_SIZE - PAGE_DIR - PAGE_DIR_SLOT_SIZE;
+        for i in 0..100 {
+            let slot_offset = page.page_dir_get_nth_slot(i);
+            assert_eq!(expected, slot_offset);
+            expected -= PAGE_DIR_SLOT_SIZE;
+        }
+    }
+
+    #[rstest]
     fn test_page_rec_is_user_record(page_fixture: PageFixture) {
         let page = &page_fixture.page;
 
