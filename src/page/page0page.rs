@@ -328,6 +328,23 @@ impl Page {
         Record::new(ptr)
     }
 
+    /// Gets the record from the given offset in the page.
+    /// The offset is relative to the start of the page.
+    ///
+    /// This method creates a new `Record` object from the specified offset.
+    ///
+    /// # Parameters
+    ///
+    /// * `offset`: The offset in bytes from the start of the page where the record is located.
+    ///
+    /// # Returns
+    ///
+    /// A `Record` object representing the record at the specified offset.
+    pub fn page_get_rec(&self, offset: usize) -> Record {
+        ut_ad!(offset < UNIV_PAGE_SIZE);
+        Record::new(unsafe { self.ptr.add(offset) })
+    }
+
     /// Checks if the given record belongs to the page.
     ///
     /// This method verifies that the record is stored within this page by comparing
@@ -378,21 +395,6 @@ impl Page {
         mach_read_from_2(&page.0[PAGE_HEADER + field..]) as usize
     }
 
-    /// Retrieves a pointer to a field in the page header.
-    ///
-    /// # Parameters
-    /// * `field` - The offset (in `usize`) of the specific field within the page header
-    ///
-    /// # Returns
-    /// * A raw pointer to the specified field in the page header
-    ///
-    /// # Safety
-    /// This function is unsafe because it returns a raw pointer that could be used to
-    /// read or write memory outside the bounds of the page if used incorrectly.
-    pub unsafe fn page_header_get_ptr(&self, field: usize) -> *mut u8 {
-        unsafe { self.ptr.add(self.page_header_get_field(field)) }
-    }
-
     /// Set the header of the free list.
     ///
     /// # Arguments
@@ -415,11 +417,7 @@ impl Page {
     /// * `Option<Record>`: The head record of the free list if it exists, or `None` if the free list is empty.
     pub fn page_header_get_page_free(&self) -> Option<Record> {
         let offset = self.page_header_get_field(PAGE_FREE);
-        if offset == 0 {
-            None
-        } else {
-            unsafe { Some(Record::new(self.ptr.add(offset))) }
-        }
+        if offset == 0 { None } else { Some(self.page_get_rec(offset)) }
     }
 
     /// Retrieves the number of records in the page.
@@ -443,26 +441,25 @@ impl Page {
     ///
     /// # Returns
     ///
-    /// * `Some(*mut u8)`: A pointer to the allocated memory block if successful.
+    /// * `Some(usize)`: Offset of the allocated memory block if successful.
     /// * `None`: If there is not enough space available in the page.
-    pub fn page_mem_alloc_heap(&self, need: usize) -> Option<*mut u8> {
+    pub fn page_mem_alloc_heap(&self, need: usize) -> Option<usize> {
         let available_space = self.page_get_max_insert_size(1);
 
         if available_space >= need {
-            unsafe {
-                let block = self.page_header_get_ptr(PAGE_HEAP_TOP);
+            let block_offset = self.page_header_get_field(PAGE_HEAP_TOP);
+            ut_ad!(block_offset < UNIV_PAGE_SIZE);
 
-                /* 1. Update the page header to point to the new heap top.  */
-                let new_heap_top =
-                    self.page_header_get_field(PAGE_HEAP_TOP) + need;
-                self.page_header_set_field(PAGE_HEAP_TOP, new_heap_top);
+            /* 1. Update the page header to point to the new heap top.  */
+            let new_heap_top =
+                self.page_header_get_field(PAGE_HEAP_TOP) + need;
+            self.page_header_set_field(PAGE_HEAP_TOP, new_heap_top);
 
-                /* 2. Update the heap no in the page header. */
-                let heap_no = self.page_dir_get_n_heap();
-                self.page_dir_set_n_heap(heap_no + 1);
+            /* 2. Update the heap no in the page header. */
+            let heap_no = self.page_dir_get_n_heap();
+            self.page_dir_set_n_heap(heap_no + 1);
 
-                return Some(block);
-            }
+            return Some(block_offset);
         }
 
         None

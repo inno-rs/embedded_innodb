@@ -1,9 +1,10 @@
 use std::{
     cmp::Ordering,
+    ops::Add,
     sync::{Arc, RwLock},
 };
 
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{
     buf::buf0types::BufBlock,
@@ -360,7 +361,7 @@ impl PageCur {
                 let heap_location = self.page.page_mem_alloc_heap(rec_size)?;
                 // Record starts after extra size for all operations.
                 let rec =
-                    unsafe { Record::new(heap_location.add(extra_size)) };
+                    self.page.page_get_rec(heap_location.add(extra_size));
 
                 info!("creating new record at: {}", rec.get_ptr() as usize);
                 insert_rec_opt.replace(rec);
@@ -470,8 +471,8 @@ impl PageCur {
             let mid = (low + up) / 2;
 
             let slot_rec = page.page_dir_slot_get_rec(mid);
-            info!("bin_search mid_rec={}", slot_rec);
-            info!("bin_search dtuple={}", dtuple);
+            debug!("bin_search mid_rec={}", slot_rec);
+            debug!("bin_search dtuple={}", dtuple);
 
             let cmp = cmp_dtuple_rec_with_match(
                 dtuple,
@@ -515,9 +516,9 @@ impl PageCur {
         while low_rec.rec_get_next().unwrap() != up_rec {
             let mid_rec = low_rec.rec_get_next().unwrap();
 
-            info!("low_rec={}", low_rec);
-            info!("mid_rec={}", mid_rec);
-            info!("up_rec={}", up_rec);
+            debug!("low_rec={}", low_rec);
+            debug!("mid_rec={}", mid_rec);
+            debug!("up_rec={}", up_rec);
 
             let cmp = cmp_dtuple_rec_with_match(
                 dtuple,
@@ -528,17 +529,14 @@ impl PageCur {
 
             match cmp {
                 Ordering::Greater => {
-                    info!("Greater");
                     low_rec = mid_rec;
                     update_low_match(cur_matched_fields, cur_matched_bytes);
                 }
                 Ordering::Less => {
-                    info!("Less");
                     up_rec = mid_rec;
                     update_up_match(cur_matched_fields, cur_matched_bytes);
                 }
                 Ordering::Equal => {
-                    info!("Equal");
                     if mode == PAGE_CUR_GE || mode == PAGE_CUR_L {
                         up_rec = mid_rec;
                         update_up_match(cur_matched_fields, cur_matched_bytes);
