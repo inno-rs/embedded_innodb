@@ -835,7 +835,7 @@ impl Page {
         ut_ad!(infimum_rec.rec_get_n_fields() == 1);
         info!("infimum position: {}", infimum_rec.get_ptr() as usize);
         infimum_rec.rec_set_n_owned(1);
-        // infimum_rec.rec_set_heap_no(0);
+        infimum_rec.rec_set_heap_no(0);
 
         // Create tuple for supremum record
 
@@ -858,7 +858,7 @@ impl Page {
         ut_ad!(supremum_rec.rec_get_n_fields() == 1);
         info!("supremum position: {}", supremum_rec.get_ptr() as usize);
         supremum_rec.rec_set_n_owned(1);
-        // supremum_rec.rec_set_heap_no(1);
+        supremum_rec.rec_set_heap_no(1);
 
         /* 4. INITIALIZE THE PAGE */
         page.page_header_set_field(PAGE_N_DIR_SLOTS, 2);
