@@ -127,6 +127,10 @@ mod tests {
         assert_eq!(infimum_rec.rec_get_next_offs(), PAGE_SUPREMUM);
         assert_eq!(page.page_get_supremum_rec().rec_get_next_offs(), 0);
 
+        // Check heap no of the infimum record and supremum record
+        assert_eq!(infimum_rec.rec_get_heap_no(), 0);
+        assert_eq!(supremum_rec.rec_get_heap_no(), 1);
+
         assert!(page.page_header_get_page_free().is_none());
     }
 

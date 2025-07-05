@@ -6,6 +6,9 @@ use crate::{
     data::data0types::DTuple,
     dict::dict0types::Index,
     innodb::innodb0types::{UNIV_PAGE_SIZE, UNIV_SQL_NULL},
+    mach::mach0data::{
+        mach_read_from_1, mach_read_from_2, mach_write_to_1, mach_write_to_2,
+    },
     page::page0page::Page,
     rem::rem0types::REC_MAX_N_FIELDS,
     ut::{ut0dbg::ut_ad, ut0math::ut_align_down},
@@ -31,36 +34,36 @@ pub const REC_N_EXTRA_BYTES: usize = 6;
 /// Maximum length of the data in the physical record if the offsets are in 1-byte format.
 pub const REC_1BYTE_OFFS_LIMIT: usize = 0x7F;
 
-/***
-The record header is 6 bytes long and contains the following fields:
-
-1. Next record pointer (2 bytes)
-2. Short flag (1 bit)
-3. Number of fields (7 bits)
-4. Heap number (5 bits)
-5. Number of records owned (4 bits)
-6. Info bits (4 bits)
-
-Row Format: [... record header | data]
-
-The layout of the record header is as follows:
-╔══════════════╦══════════════════════════════════════════════╗
-║ Byte Offset  ║ Bit Usage (within byte)                      ║
-╠══════════════╬══════════════════════════════════════════════╣
-║ -1            ║ [0..7] → Next record pointer (low byte)      ║
-║ -2            ║ [0..7] → Next record pointer (high byte)     ║
-║ -3            ║ [7]    → Short flag                           ║
-║               ║ [0..6] → Number of fields (bits 0–6)          ║
-║ -4            ║ [6..7] → Number of fields (bits 6–7)          ║
-║               ║ [0..5] → Heap number (bits 0–5)              ║
-║ -5            ║ [0..7] → Heap number (bits 5–12)             ║
-║ -6            ║ [4..7] → Number of records owned (n_owned)   ║
-║               ║ [0..3] → Info bits (e.g., delete mark, etc.) ║
-╚═══════════════╩══════════════════════════════════════════════╝
-Read the table upwards.
-
-[ info_bits (4) | n_owned (4) | heap_no (13) | n_fields (10) | short_flag (1) | next_rec_ptr (16) ]
-*/
+/// The record header is 6 bytes long and contains the following fields:
+///
+/// 1. Next record pointer (2 bytes)
+/// 2. Short flag (1 bit)
+/// 3. Number of fields (7 bits)
+/// 4. Heap number (5 bits)
+/// 5. Number of records owned (4 bits)
+/// 6. Info bits (4 bits)
+///
+/// Row Format: [... record header | data]
+///
+/// The layout of the record header is as follows:
+/// ```text
+/// ╔══════════════╦══════════════════════════════════════════════╗
+/// ║ Byte Offset  ║ Bit Usage (within byte)                      ║
+/// ╠══════════════╬══════════════════════════════════════════════╣
+/// ║ -1           ║ [0..7] → Next record pointer (low byte)      ║
+/// ║ -2           ║ [0..7] → Next record pointer (high byte)     ║
+/// ║ -3           ║ [7]    → Short flag                          ║
+/// ║              ║ [0..6] → Number of fields (bits 0–6)         ║
+/// ║ -4           ║ [6..7] → Number of fields (bits 6–7)         ║
+/// ║              ║ [0..5] → Heap number (bits 0–5)              ║
+/// ║ -5           ║ [0..7] → Heap number (bits 5–12)             ║
+/// ║ -6           ║ [4..7] → Number of records owned (n_owned)   ║
+/// ║              ║ [0..3] → Info bits (e.g., delete mark, etc.) ║
+/// ╚══════════════╩══════════════════════════════════════════════╝
+/// ```
+/// Read the table upwards.
+///
+/// [ info_bits (4) | n_owned (4) | heap_no (13) | n_fields (10) | short_flag (1) | next_rec_ptr (16) ]
 
 pub const REC_NEXT: usize = 2;
 pub const REC_NEXT_MASK: usize = 0xFFFF;
@@ -223,10 +226,24 @@ impl fmt::Display for Record {
 }
 
 impl Record {
+    /// Creates a new Record instance with the given pointer.
+    ///
+    /// # Arguments
+    ///
+    /// * `ptr` - A pointer to the beginning of the record data.
+    ///
+    /// # Returns
+    ///
+    /// * A new Record instance.
     pub fn new(ptr: *mut u8) -> Self {
         Record { ptr }
     }
 
+    /// Returns the pointer to the beginning of the record data.
+    ///
+    /// # Returns
+    ///
+    /// * A pointer to the beginning of the record data.
     pub fn get_ptr(&self) -> *const u8 {
         self.ptr
     }
@@ -307,6 +324,11 @@ impl Record {
         aligned_addr as *mut u8
     }
 
+    /// Returns the page that contains this record.
+    ///
+    /// # Returns
+    ///
+    /// * A Page instance representing the page that contains this record.
     pub fn get_page(&self) -> Page {
         Page::new(self.page_align())
     }
@@ -486,11 +508,11 @@ impl Record {
     /// * The number of fields in the current record.
     ///
     pub fn rec_get_n_fields(&self) -> usize {
-        unsafe {
-            let p = self.ptr.sub(REC_N_FIELDS) as *const u16;
-            let val = p.read_unaligned();
-            (val as usize & REC_N_FIELDS_MASK) >> REC_N_FIELDS_SHIFT
-        }
+        self.rec_get_bit_field_2(
+            REC_N_FIELDS,
+            REC_N_FIELDS_MASK,
+            REC_N_FIELDS_SHIFT,
+        )
     }
 
     /// Sets the number of fields in the current record.
@@ -498,21 +520,18 @@ impl Record {
     /// # Arguments
     ///
     /// * `n_fields`: The number of fields to set.
-    ///
-    /// # Returns
-    ///
-    /// * `None` if the operation was successful, or an error if it failed.
     pub fn rec_set_n_fields(&self, n_fields: usize) {
-        unsafe {
-            info!(
-                "rec_set_n_fields: n_fields={} at={}",
-                n_fields, self.ptr as usize
-            );
-            let p = self.ptr.sub(REC_N_FIELDS) as *mut u16;
-            let val = (p.read_unaligned() as usize & !REC_N_FIELDS_MASK)
-                | (n_fields << REC_N_FIELDS_SHIFT);
-            p.write_unaligned(val as u16);
-        }
+        info!(
+            "rec_set_n_fields: n_fields={} at={}",
+            n_fields, self.ptr as usize
+        );
+
+        self.rec_set_bit_field_2(
+            n_fields,
+            REC_N_FIELDS,
+            REC_N_FIELDS_MASK,
+            REC_N_FIELDS_SHIFT,
+        );
     }
 
     /// Gets the number of records owned by the current directory record.
@@ -522,11 +541,11 @@ impl Record {
     /// * The number of records owned by the current directory record.
     ///
     pub fn rec_get_n_owned(&self) -> usize {
-        unsafe {
-            let p = self.ptr.sub(REC_N_OWNED);
-            (p.read_unaligned() as usize & REC_N_OWNED_MASK)
-                >> REC_N_OWNED_SHIFT
-        }
+        self.rec_get_bit_field_1(
+            REC_N_OWNED,
+            REC_N_OWNED_MASK,
+            REC_N_OWNED_SHIFT,
+        )
     }
 
     /// Get the info bits of the current record.
@@ -536,10 +555,11 @@ impl Record {
     /// * The info bits of the current record.
     ///     
     pub fn rec_get_info_bits(&self) -> usize {
-        unsafe {
-            let p = self.ptr.sub(REC_INFO_BITS).read_unaligned();
-            (p as usize & REC_INFO_BITS_MASK) >> REC_INFO_BITS_SHIFT
-        }
+        self.rec_get_bit_field_1(
+            REC_INFO_BITS,
+            REC_INFO_BITS_MASK,
+            REC_INFO_BITS_SHIFT,
+        )
     }
 
     /// Sets the info bits of the current record.
@@ -547,19 +567,13 @@ impl Record {
     /// # Arguments
     ///
     /// * `info_bits`: The info bits to set.
-    ///
-    /// # Returns
-    ///
-    /// * `None` if the operation was successful, or an error if it failed.
-    ///
     pub fn rec_set_info_bits(&self, info_bits: usize) {
-        unsafe {
-            let p = self.ptr.sub(REC_INFO_BITS);
-            let prev_val = p.read_unaligned();
-            let val = (prev_val as usize & !REC_INFO_BITS_MASK)
-                | (info_bits << REC_INFO_BITS_SHIFT);
-            p.write_unaligned(val as u8);
-        }
+        self.rec_set_bit_field_1(
+            info_bits,
+            REC_INFO_BITS,
+            REC_INFO_BITS_MASK,
+            REC_INFO_BITS_SHIFT,
+        )
     }
 
     /// Sets the number of records owned by the current directory record.
@@ -567,19 +581,13 @@ impl Record {
     /// # Arguments
     ///
     /// * `n_owned`: The number of records owned to set.
-    ///
-    /// # Returns
-    ///
-    /// * `None` if the operation was successful, or an error if it failed.
-    ///
     pub fn rec_set_n_owned(&self, n_owned: usize) {
-        unsafe {
-            let p = self.ptr.sub(REC_N_OWNED);
-            let prev_val = p.read_unaligned();
-            let val = (prev_val as usize & !REC_N_OWNED_MASK)
-                | (n_owned << REC_N_OWNED_SHIFT);
-            p.write_unaligned(val as u8);
-        }
+        self.rec_set_bit_field_1(
+            n_owned,
+            REC_N_OWNED,
+            REC_N_OWNED_MASK,
+            REC_N_OWNED_SHIFT,
+        );
     }
 
     /// Sets the heap number of the current record.
@@ -587,18 +595,13 @@ impl Record {
     /// # Arguments
     ///
     /// * `heap_no`: The heap number to set.
-    ///
-    /// # Returns
-    ///     
-    /// * `None` if the operation was successful, or an error if it failed.
     pub fn rec_set_heap_no(&self, heap_no: usize) {
-        unsafe {
-            let p = self.ptr.sub(REC_HEAP_NO) as *mut u16;
-            let prev_val = p.read_unaligned();
-            let val = (prev_val as usize & !REC_HEAP_NO_MASK)
-                | (heap_no << REC_HEAP_NO_SHIFT);
-            p.write_unaligned(val as u16);
-        }
+        self.rec_set_bit_field_2(
+            heap_no,
+            REC_HEAP_NO,
+            REC_HEAP_NO_MASK,
+            REC_HEAP_NO_SHIFT,
+        );
     }
 
     /// Gets the heap number of the current record.
@@ -608,10 +611,11 @@ impl Record {
     /// * The heap number of the current record.
     ///
     pub fn rec_get_heap_no(&self) -> usize {
-        unsafe {
-            let p = (self.ptr.sub(REC_HEAP_NO) as *const u16).read_unaligned();
-            (p as usize & REC_HEAP_NO_MASK) >> REC_HEAP_NO_SHIFT
-        }
+        self.rec_get_bit_field_2(
+            REC_HEAP_NO,
+            REC_HEAP_NO_MASK,
+            REC_HEAP_NO_SHIFT,
+        )
     }
 
     /// Sets the offset of the next record in a physical record.
@@ -619,15 +623,13 @@ impl Record {
     /// # Arguments
     ///
     /// * `next`: The offset of the next record.
-    ///
-    /// # Returns
-    ///
-    /// * `None` if the operation was successful, or an error if it failed.
     pub fn rec_set_next_offs(&self, next: usize) {
-        unsafe {
-            let next_ptr = self.ptr.sub(REC_NEXT);
-            ptr::write_unaligned(next_ptr as *mut u16, next as u16)
-        }
+        self.rec_set_bit_field_2(
+            next,
+            REC_NEXT,
+            REC_NEXT_MASK,
+            REC_NEXT_SHIFT,
+        );
     }
 
     /// Gets the offset of the next record in a physical record.
@@ -637,10 +639,7 @@ impl Record {
     /// * The offset of the next record.
     ///
     pub fn rec_get_next_offs(&self) -> usize {
-        unsafe {
-            let next_ptr = self.ptr.sub(REC_NEXT) as *const u16;
-            next_ptr.read_unaligned() as usize
-        }
+        self.rec_get_bit_field_2(REC_NEXT, REC_NEXT_MASK, REC_NEXT_SHIFT)
     }
 
     /// Reads the start offset of the data field in the record.
@@ -809,7 +808,7 @@ impl Record {
     ///
     /// # Returns
     ///
-    /// * A value representing the field (currently always returns 0).
+    /// * A tuple containing the offset and size of the field.
     ///
     /// # Panics
     ///
@@ -931,10 +930,8 @@ impl Record {
     /// True, if the format is 1 byte.
     /// False, otherwise (2 byte).
     pub fn rec_get_1byte_offs_flag(&self) -> bool {
-        unsafe {
-            let byte = self.ptr.sub(REC_SHORT).read_unaligned();
-            (byte & REC_SHORT_MASK as u8) >> REC_SHORT_SHIFT == 0
-        }
+        self.rec_get_bit_field_1(REC_SHORT, REC_SHORT_MASK, REC_SHORT_SHIFT)
+            == 1
     }
 
     /// Set the value for 1-byte offset flag.
@@ -945,11 +942,13 @@ impl Record {
     /// `flag`: A boolean specifying if it is a 1-byte format or not.
     ///
     pub fn rec_set_1byte_offs_flag(&self, flag: bool) {
-        unsafe {
-            let byte = self.ptr.sub(REC_SHORT).read_unaligned();
-            let val = (byte & REC_SHORT_MASK as u8) >> REC_SHORT_SHIFT;
-            self.ptr.sub(REC_SHORT).write_unaligned(val);
-        }
+        let val = if flag { 1 } else { 0 };
+        self.rec_set_bit_field_1(
+            val,
+            REC_SHORT,
+            REC_SHORT_MASK,
+            REC_SHORT_SHIFT,
+        );
     }
 
     /// Returns true if the extern bit is set on the nth field.
@@ -1007,11 +1006,28 @@ impl Record {
         dtuple
     }
 
+    /// Gets the size of the nth field in the record.
+    ///
+    /// # Arguments
+    ///
+    /// * `n` - The field number to get the size for.
+    ///
+    /// # Returns
+    ///
+    /// * The size of the field in bytes.
     pub fn rec_get_nth_field_size(&self, n: usize) -> usize {
         let (offset, size) = self.rec_get_nth_field_offs(n);
         size
     }
 
+    /// Validates the record structure.
+    ///
+    /// This method checks if the record has a valid number of fields and if the sum of field lengths
+    /// matches the total data size.
+    ///
+    /// # Returns
+    ///
+    /// * `true` if the record is valid, `false` otherwise.
     pub fn rec_validate(&self) -> bool {
         let n_fields = self.rec_get_n_fields();
 
@@ -1068,5 +1084,109 @@ impl Record {
 
         let (field_offset, _size) = self.rec_get_nth_field_offs(n_field);
         unsafe { self.ptr.add(field_offset + offset).read_unaligned() }
+    }
+
+    /// Sets a bit field in a 1-byte field of the record.
+    ///
+    /// # Arguments
+    ///
+    /// * `val`: The value to set.
+    /// * `offset`: The offset from the record pointer.
+    /// * `mask`: The bit mask for the field.
+    /// * `shift`: The bit shift for the field.
+    pub fn rec_set_bit_field_1(
+        &self,
+        val: usize,
+        offset: usize,
+        mask: usize,
+        shift: usize,
+    ) {
+        ut_ad!(offset <= REC_N_EXTRA_BYTES);
+        ut_ad!((mask >> shift) << shift == mask);
+        ut_ad!((val << shift) & mask == (val << shift));
+
+        let buf =
+            unsafe { slice::from_raw_parts_mut(self.ptr.sub(offset), 1) };
+
+        let val =
+            (mach_read_from_1(buf) & !(mask as u8)) | (val << shift) as u8;
+        mach_write_to_1(buf, val);
+    }
+
+    /// Gets a bit field from a 1-byte field of the record.
+    ///
+    /// # Arguments
+    ///
+    /// * `offset`: The offset from the record pointer.
+    /// * `mask`: The bit mask for the field.
+    /// * `shift`: The bit shift for the field.
+    ///
+    /// # Returns
+    ///
+    /// The value of the bit field.
+    pub fn rec_get_bit_field_1(
+        &self,
+        offset: usize,
+        mask: usize,
+        shift: usize,
+    ) -> usize {
+        ut_ad!(offset <= REC_N_EXTRA_BYTES);
+        ut_ad!((mask >> shift) << shift == mask);
+
+        let buf = unsafe { slice::from_raw_parts(self.ptr.sub(offset), 1) };
+        let val = mach_read_from_1(buf);
+        (val as usize & mask) >> shift
+    }
+
+    /// Sets a bit field in a 2-byte field of the record.
+    ///
+    /// # Arguments
+    ///
+    /// * `val`: The value to set.
+    /// * `offset`: The offset from the record pointer.
+    /// * `mask`: The bit mask for the field.
+    /// * `shift`: The bit shift for the field.
+    pub fn rec_set_bit_field_2(
+        &self,
+        val: usize,
+        offset: usize,
+        mask: usize,
+        shift: usize,
+    ) {
+        ut_ad!(offset <= REC_N_EXTRA_BYTES);
+        ut_ad!((mask >> shift) << shift == mask);
+        ut_ad!((val << shift) & mask == (val << shift));
+
+        let buf =
+            unsafe { slice::from_raw_parts_mut(self.ptr.sub(offset), 2) };
+
+        let val =
+            (mach_read_from_2(buf) & !(mask as u16)) | (val << shift) as u16;
+        mach_write_to_2(buf, val);
+    }
+
+    /// Gets a bit field from a 2-byte field of the record.
+    ///
+    /// # Arguments
+    ///
+    /// * `offset`: The offset from the record pointer.
+    /// * `mask`: The bit mask for the field.
+    /// * `shift`: The bit shift for the field.
+    ///
+    /// # Returns
+    ///
+    /// The value of the bit field.
+    pub fn rec_get_bit_field_2(
+        &self,
+        offset: usize,
+        mask: usize,
+        shift: usize,
+    ) -> usize {
+        ut_ad!(offset <= REC_N_EXTRA_BYTES);
+        ut_ad!((mask >> shift) << shift == mask);
+
+        let buf = unsafe { slice::from_raw_parts(self.ptr.sub(offset), 2) };
+        let val = mach_read_from_2(buf);
+        (val as usize & mask) >> shift
     }
 }
