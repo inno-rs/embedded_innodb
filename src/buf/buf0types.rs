@@ -1,4 +1,5 @@
 use std::{
+    alloc::Layout,
     cmp::PartialEq,
     sync::{Arc, RwLock, Weak, atomic::AtomicU64},
 };
@@ -6,6 +7,7 @@ use std::{
 use intrusive_collections::{LinkedListLink, UnsafeRef, intrusive_adapter};
 use parking_lot::{RwLock as ParkingLotRwLock, lock_api::RawRwLock};
 use strum_macros::Display;
+use tracing::info;
 
 use crate::{
     buf::{buf0flu::BufFlushType, buf0types::BufIoFix::BufIoNone},
@@ -680,9 +682,37 @@ pub enum BufPageState {
     BufBlockRemoveHash,
 }
 
+/// Represents a chunk of memory that contains multiple buffer pages.
+///
+/// A BufChunk is a contiguous block of memory that is allocated to store multiple
+/// buffer pages. It manages the lifecycle of this memory block and the buffer pages
+/// contained within it.
 pub struct BufChunk {
+    /// The memory layout used for allocation and deallocation
+    pub layout: Layout,
+    /// The total size of the memory block in bytes
     pub mem_size: usize,
+    /// The number of buffer pages that can fit in this chunk
     pub size: usize,
+    /// Pointer to the allocated memory block
     pub mem: *mut u8,
+    /// Vector of buffer blocks contained in this chunk
     pub buf_pages: Vec<Arc<RwLock<BufBlock>>>,
+}
+
+/// Implements the Drop trait for BufChunk to ensure proper memory deallocation.
+///
+/// When a BufChunk is dropped, this implementation ensures that the memory
+/// allocated for the chunk is properly deallocated, preventing memory leaks.
+impl Drop for BufChunk {
+    fn drop(&mut self) {
+        info!(
+            "releasing BufChunk with page: {}, mem_size: {}",
+            self.size, self.mem_size
+        );
+        ut_ad!(self.mem.is_null() == false);
+        unsafe {
+            std::alloc::dealloc(self.mem, self.layout);
+        }
+    }
 }

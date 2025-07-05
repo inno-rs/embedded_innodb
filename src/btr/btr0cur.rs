@@ -12,10 +12,11 @@ use crate::{
     },
     data::data0types::DTuple,
     dict::dict0types::Index,
+    fsp::fsp0types::Direction,
     innodb::innodb0types::{
         DbErr,
         DbErr::{DbFail, DbSuccess, DbTooBigRecord},
-        PageId,
+        PageId, PageNo,
     },
     lock::lock0lock::LockSys,
     mtr::{
@@ -50,6 +51,10 @@ pub struct Path {
     pub nth_rec: usize,
     /// Number of records on the page.
     pub n_recs: usize,
+    /// Page of the page containing the record.
+    pub page_no: PageNo,
+    /// Level of the page, if later we fetch the page with page_no, and its page_no is not different, then we know that the page not been re-organized.
+    pub page_level: usize,
 }
 
 /// A cursor for navigating and manipulating B-tree structures.
@@ -72,6 +77,8 @@ pub struct BTreeCursor<'a> {
     buf_pool: Arc<Mutex<BufPool>>,
     /// Reference to LockSys.
     lock_sys: Arc<Mutex<LockSys>>,
+    /// Path vector to remember the path to the current page from root.
+    paths: Vec<Path>,
 }
 
 impl<'a> BTreeCursor<'a> {
@@ -98,6 +105,7 @@ impl<'a> BTreeCursor<'a> {
             index,
             buf_pool,
             lock_sys,
+            paths: vec![],
         }
     }
 
@@ -150,7 +158,7 @@ impl<'a> BTreeCursor<'a> {
             mtr.memo_contains(&MemoSlot::PageFix(page_id, FixMode::Exclusive))
         );
 
-        let max_size = page.page_get_max_insert_size_after_reorganize(1);
+        // let max_size = page.page_get_max_insert_size_after_reorganize(1);
         let mut rec_size = dtuple.rec_get_converted_size(n_ext);
 
         if Page::page_rec_needs_ext(rec_size) {
@@ -387,6 +395,7 @@ impl<'a> BTreeCursor<'a> {
 
             let block = some_or_panic!(block);
             let page = block.read().unwrap().get_page();
+            ut_ad!(page.page_validate());
 
             // Verify that the page belongs to the correct index
             ut_ad!(
@@ -506,15 +515,11 @@ impl<'a> BTreeCursor<'a> {
         if let Some(split_rec) = rec
             && incl_data + insert_size < free_space
         {
-            return if split_rec == insert_rec {
-                let next_rec = split_rec.rec_get_next();
-                if let Some(rec) = next_rec
-                    && page.page_rec_is_supremum(rec) == false
-                {
-                    Some(rec)
-                } else {
-                    next_rec
-                }
+            return if split_rec == insert_rec
+                && let Some(rec) = split_rec.rec_get_next()
+                && page.page_rec_is_supremum(rec) == false
+            {
+                Some(rec)
             } else {
                 Some(split_rec)
             };
@@ -542,5 +547,100 @@ impl<'a> BTreeCursor<'a> {
         );
 
         cmp_dtuple_rec(dtuple, first_rec) == Ordering::Less
+    }
+
+    /// Splits an index page to two halves and inserts the tuple.
+    ///
+    /// This function handles the process of splitting a B-tree index page when it becomes too full
+    /// to accommodate a new record. It determines the optimal split point, allocates a new page,
+    /// and redistributes records between the original and new pages.
+    ///
+    /// # Arguments
+    /// * `dtuple` - The data tuple to be inserted
+    /// * `n_ext` - The number of externally stored fields in the tuple
+    /// * `mtr` - The mini-transaction that logs this operation
+    ///
+    /// # Note
+    /// This function is part of the B-tree page management system and is crucial for maintaining
+    /// the balance and performance of the B-tree index structure.
+    pub fn page_split_and_insert(
+        &self,
+        dtuple: &DTuple,
+        n_ext: usize,
+        mtr: &mut Mtr,
+    ) {
+        let split_rec = self.page_get_split_rec(dtuple, n_ext);
+        let page = self.page_cur.as_ref().unwrap().page_cur_get_page();
+
+        let level = BTree::page_get_level(&page);
+
+        let hint_page_no: PageNo = 1;
+        let direction = Direction::FspDown;
+
+        let new_block =
+            self.btree.page_alloc(hint_page_no, direction, level, mtr);
+        if let Some(block) = new_block {
+            self.btree.page_create(block, level, mtr)
+        }
+    }
+
+    /// Raises the root level of the B-tree and inserts a new record.
+    ///
+    /// This function is called when the root page of a B-tree needs to be raised to a higher level,
+    /// typically during a page split operation. It allocates a new page at the same level as the
+    /// current root, and prepares for the insertion of a new record.
+    ///
+    /// # Arguments
+    /// * `page_no` - The page number of the page being operated on
+    /// * `root` - The current root page of the B-tree
+    /// * `dtuple` - The data tuple to be inserted
+    /// * `n_ext` - The number of externally stored fields
+    /// * `mtr` - The mini-transaction that logs this operation
+    pub fn root_raise_and_insert(
+        &self,
+        dtuple: &DTuple,
+        n_ext: usize,
+        mtr: &mut Mtr,
+    ) {
+        let PageId { space_id: root_space_id, page_no: root_page_no } =
+            self.index.get_page_id();
+
+        let root_page = self.page_cur.as_ref().unwrap().page_cur_get_page();
+
+        let space_id = root_space_id;
+        let page_no = root_page_no;
+
+        ut_ad!(mtr.memo_contains(&MemoSlot::PageFix(
+            PageId { space_id, page_no },
+            FixMode::Exclusive,
+        )));
+
+        // ut_ad!(mtr.memo_contains(&MemoSlot::Latch(
+        //     LatchHandle(),
+        //     LockMode::Exclusive,
+        // )));
+
+        let level = BTree::page_get_level(&root_page);
+
+        // 1. Create a new page at the same level as the root.
+        let buf_block =
+            self.btree.page_alloc(0, Direction::FspDown, level, mtr);
+
+        // let dest_block = some_or_panic!(buf_block);
+        //
+        // // 2. Move records from the root to the new page.
+        // ut_ad!(root_page.page_get_n_recs() > 0);
+        //
+        // root_page.page_move_rec_list_end(
+        //     dest_block,
+        //     root_page.page_get_infimum_rec(),
+        //     self.index.clone(),
+        //     mtr,
+        // );
+
+        // ut_ad!(root_page.page_get_n_recs() == 0);
+
+        // 3. We moved all the records from the root to the new page. Now, split the new record.
+        // self.page_split_and_insert(dtuple, n_ext, mtr);
     }
 }

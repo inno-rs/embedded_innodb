@@ -13,24 +13,27 @@ use crate::{
     },
     buf::{
         buf0buf::BufPool,
-        buf0types::{BufBlock, Request},
+        buf0types::{BUF_GET_ALWAYS, BufBlock, Request},
     },
     data::data0types::DTuple,
     dict::dict0types::Index,
-    fil::fil0types::{FIL_PAGE_NEXT, FILL_NULL},
-    fsp::fsp0fsp::Fsp,
-    innodb::innodb0types::{PageId, PageNo},
+    fil::fil0types::{FIL_PAGE_DATA, FIL_PAGE_NEXT, FILL_NULL},
+    fsp::{fsp0fsp::Fsp, fsp0types::Direction},
+    innodb::innodb0types::{PageId, PageNo, SpaceId},
     lock::lock0lock::LockSys,
-    mach::mach0data::{mach_read_from_2, mach_read_from_8},
+    mach::mach0data::{mach_read_from_2, mach_read_from_4, mach_read_from_8},
     mtr::{
-        mtr0mtr::{LatchHandle, LockMode, MemoSlot, Mtr},
+        mtr0mtr::{MemoSlot, Mtr},
         mtr0types::{FixMode, MlogType},
     },
     page::{
         page0cur::PAGE_CUR_LE,
-        page0page::{PAGE_HEADER, PAGE_INDEX_ID, PAGE_LEVEL, Page},
+        page0page::{
+            PAGE_BTR_SEG_LEAF, PAGE_HEADER, PAGE_INDEX_ID, PAGE_LEVEL, Page,
+        },
     },
     rem::rem0rec::Record,
+    some_or_panic,
     sync::sync0rw::ReadWriteLatch,
     ut::ut0dbg::ut_ad,
     ut_panic,
@@ -309,6 +312,8 @@ impl BTree {
             level as u32,
             MlogType::MLOG_2BYTES,
         );
+
+        ut_ad!(Self::page_get_level(page) == level);
     }
 
     /// Gets the child page number from a node pointer record.
@@ -337,8 +342,58 @@ impl BTree {
     ///
     /// # Returns
     /// A reference to the newly allocated buffer block
-    pub fn page_alloc(level: usize, mtr: &mut Mtr) -> Arc<RwLock<BufBlock>> {
-        todo!("implement")
+    pub fn page_alloc(
+        &self,
+        hint: PageNo,
+        direction: Direction,
+        level: usize,
+        mtr: &mut Mtr,
+    ) -> Option<Arc<RwLock<BufBlock>>> {
+        let root_block = self.root_get(mtr);
+        let root_page = root_block.read().unwrap().get_page();
+
+        let new_page_no =
+            self.fsp.lock().unwrap().fseg_alloc_free_page_general(
+                root_page.page_get_space_id(),
+                hint,
+                direction,
+                true,
+                mtr,
+            );
+
+        if new_page_no == FILL_NULL {
+            return None;
+        }
+
+        let buf_block = self.buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId {
+                space_id: root_page.page_get_space_id(),
+                page_no: new_page_no,
+            },
+            mode: BUF_GET_ALWAYS,
+            mtr,
+        });
+
+        if let Some(buf_block) = buf_block.clone() {
+            let buf_block = buf_block.write().unwrap();
+            let page = buf_block.get_page();
+
+            // Initialize the page
+            let created_page =
+                Page::page_create(self.index.deref(), &buf_block, Some(mtr));
+
+            // // Set the next page pointer to FILL_NULL
+            // Self::page_set_next(&page, FILL_NULL, mtr);
+            //
+            // // Set the index ID for the page
+            // Self::page_set_index_id(&mut page, self.index.get_index_id(), mtr);
+            //
+            // // Set the level of the page
+            // Self::page_set_level(&mut page, level, mtr);
+        };
+
+        buf_block
     }
 
     /// Sets the next page pointer in the given page.
@@ -354,44 +409,6 @@ impl BTree {
         mtr.write_u32(page, FIL_PAGE_NEXT, next as u32, MlogType::MLOG_4BYTES);
     }
 
-    /// Raises the root level of the B-tree and inserts a new record.
-    ///
-    /// This function is called when the root page of a B-tree needs to be raised to a higher level,
-    /// typically during a page split operation. It allocates a new page at the same level as the
-    /// current root, and prepares for the insertion of a new record.
-    ///
-    /// # Arguments
-    /// * `page_no` - The page number of the page being operated on
-    /// * `root` - The current root page of the B-tree
-    /// * `dtuple` - The data tuple to be inserted
-    /// * `n_ext` - The number of externally stored fields
-    /// * `mtr` - The mini-transaction that logs this operation
-    pub fn root_raise_and_insert(
-        &self,
-        page_no: PageNo,
-        root: &Page,
-        dtuple: &DTuple,
-        n_ext: usize,
-        mtr: &mut Mtr,
-    ) {
-        let space_id = root.page_get_space_id();
-        let page_no = page_no;
-
-        ut_ad!(mtr.memo_contains(&MemoSlot::PageFix(
-            PageId { space_id, page_no },
-            FixMode::Exclusive,
-        )));
-
-        ut_ad!(mtr.memo_contains(&MemoSlot::Latch(
-            LatchHandle(),
-            LockMode::Exclusive,
-        )));
-
-        let level = Self::page_get_level(root);
-
-        let new_block = Self::page_alloc(level, mtr);
-    }
-
     /// Creates and initializes a B-tree page.
     ///
     /// This function creates a new page for use in a B-tree structure. It initializes
@@ -404,8 +421,8 @@ impl BTree {
     /// * `level` - The level in the B-tree where the page will be used
     /// * `mtr` - The mini-transaction that logs this operation
     pub fn page_create(
+        &self,
         buf_block: Arc<RwLock<BufBlock>>,
-        index: Arc<Index>,
         level: usize,
         mtr: &mut Mtr,
     ) {
@@ -416,11 +433,14 @@ impl BTree {
             FixMode::Exclusive
         )));
 
-        let mut page =
-            Page::page_create(index.deref(), buf_block.deref(), Some(mtr));
+        let mut page = Page::page_create(
+            self.index.deref(),
+            buf_block.deref(),
+            Some(mtr),
+        );
 
         BTree::page_set_level(&mut page, level, mtr);
-        BTree::page_set_index_id(&mut page, index.get_index_id(), mtr);
+        BTree::page_set_index_id(&mut page, self.index.get_index_id(), mtr);
     }
 
     /// Creates an empty page in a B-tree at the specified level.
@@ -451,5 +471,45 @@ impl BTree {
         };
 
         Self::page_set_level(&mut page, level, mtr);
+    }
+
+    /// Retrieves the root page of a B-tree index.
+    ///
+    /// This function fetches the buffer block containing the root page of the B-tree index.
+    /// It uses the index's page ID to locate the root page in the buffer pool and performs
+    /// validation on the root file segment.
+    ///
+    /// # Arguments
+    /// * `mtr` - The mini-transaction that will log this operation
+    ///
+    /// # Returns
+    /// A reference-counted, thread-safe buffer block containing the root page
+    pub fn root_get(&self, mtr: &mut Mtr) -> Arc<RwLock<BufBlock>> {
+        let root_page_id = self.index.get_page_id();
+        let mut buf_pool = self.buf_pool.lock().unwrap();
+        let block = buf_pool.get(Request {
+            rw_latch: ReadWriteLatch::NoLatch, /*todo: use x latch*/
+            page_id: root_page_id,
+            mode: BUF_GET_ALWAYS,
+            mtr,
+        });
+
+        let block = some_or_panic!(block);
+        let page = block.read().unwrap().get_page();
+        ut_ad!(self.root_fseg_validate(&page, root_page_id.space_id));
+
+        block
+    }
+
+    /// Validate the root file segment.
+    fn root_fseg_validate(&self, page: &Page, space_id: SpaceId) -> bool {
+        let fseg_header_offset = FIL_PAGE_DATA + PAGE_BTR_SEG_LEAF;
+
+        ut_ad!(
+            mach_read_from_4(&page.to_page_frame().0[fseg_header_offset..])
+                == space_id as u32
+        );
+
+        true
     }
 }

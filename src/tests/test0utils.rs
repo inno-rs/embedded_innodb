@@ -5,13 +5,11 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 
-use tracing::info;
-
 use crate::{
     btr::{btr0btr::BTree, btr0cur::BTreeCursor},
     buf::{
         buf0buf::BufPool,
-        buf0types::{BUF_GET_IF_IN_POOL, BufBlock, BufPage, Request},
+        buf0types::{BUF_GET_ALWAYS, BufBlock, BufPage, Request},
     },
     data::data0types::{
         DATA_NOT_NULL, DField, DFieldBuilder, DTYPE_DECIMAL, DTYPE_DOUBLE,
@@ -19,7 +17,7 @@ use crate::{
         DTupleBuilder, DType,
     },
     dict::dict0types::{Column, Field, Index},
-    innodb::innodb0types::{PageId, SpaceId, UNIV_PAGE_SIZE, UNIV_SQL_NULL},
+    innodb::innodb0types::{PageId, PageNo, UNIV_PAGE_SIZE, UNIV_SQL_NULL},
     lock::lock0lock::LockSys,
     mtr::{
         mtr0mtr::Mtr,
@@ -511,21 +509,33 @@ pub fn create_blocks_in_buf_pool(buf_pool: Arc<Mutex<BufPool>>, count: usize) {
     let _result = buf_pool.chunk_init(count * UNIV_PAGE_SIZE);
     ut_ad!(buf_pool.get_free_list_size() == count);
 
-    for i in 0..count as SpaceId {
-        let resp = buf_pool.create(i, i, &mut mtr);
+    for i in 0..count as PageNo {
+        let resp = buf_pool.create(0, i, &mut mtr);
         ut_ad!(resp.is_some());
     }
 
-    for i in 1..count as SpaceId {
-        let page = buf_pool.get(Request {
+    let mut prev_frame_address: Option<usize> = None;
+    for i in 0..count as PageNo {
+        let buf_block = buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
-            page_id: PageId { space_id: i, page_no: i },
-            mode: BUF_GET_IF_IN_POOL,
+            page_id: PageId { space_id: 0, page_no: i },
+            mode: BUF_GET_ALWAYS,
             mtr: &mut mtr,
         });
 
+        if let Some(frame_address) = prev_frame_address {
+            let current_address =
+                buf_block.as_ref().unwrap().read().unwrap().get_frame()
+                    as usize;
+            ut_ad!(current_address == frame_address + UNIV_PAGE_SIZE);
+        }
+
+        prev_frame_address
+            .replace(buf_block.as_ref().unwrap().read().unwrap().get_frame()
+                as usize);
+
         ut_ad!(
-            page.is_some(),
+            buf_block.is_some(),
             "Failed to get page for space_id: {}, page_no: {}",
             i,
             i
@@ -556,6 +566,8 @@ pub fn fill_block_with_uniform_data(
     let page: Page = buf_block.read().unwrap().get_page();
     let record = page.page_get_infimum_rec();
 
+    ut_ad!(page.page_validate());
+
     let btree = btree.deref();
     let mut btr_cur =
         BTreeCursor::new(btree, btree.get_index().clone(), buf_pool, lock_sys);
@@ -566,7 +578,6 @@ pub fn fill_block_with_uniform_data(
     let mut input: Vec<[FieldType; 1]> = vec![];
     for _ in low_limit..up_limit {
         let str = random_string_with_seed(15, 42);
-        info!("{}", str);
         input.push([FieldType::String(Some(str))]);
     }
 

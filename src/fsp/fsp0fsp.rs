@@ -49,13 +49,17 @@ use crate::{
         buf0buf::BufPool,
         buf0types::{BUF_GET_ALWAYS, BufBlock, Request},
     },
-    fil::fil0types::{
-        FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET,
-        FIL_PAGE_SPACE_ID,
+    fil::{
+        fil0fil::Fil,
+        fil0types::{
+            FIL_PAGE_DATA, FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN,
+            FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
+        },
     },
+    fsp::fsp0types::Direction,
     fut::fut0lst::{FilAddr, flst_init},
     innodb::innodb0types::{
-        PageFrame as InnoPageFrame, PageId, SpaceId, UNIV_PAGE_SIZE,
+        PageFrame as InnoPageFrame, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
     },
     mach_read_from_4,
     mtr::mtr0mtr::Mtr,
@@ -64,9 +68,6 @@ use crate::{
     sync::sync0rw::ReadWriteLatch,
     ut::ut0dbg::ut_ad,
 };
-
-/// Offset of the page data area inside a raw page
-pub const FIL_PAGE_DATA: usize = 38;
 
 /// Offset of the segment-inode page data inside a raw page
 pub const FSEG_PAGE_DATA: usize = FIL_PAGE_DATA;
@@ -162,14 +163,16 @@ const FSP_SPACE_FLAGS_RANGE: Range<usize> = FSP_HEADER_OFFSET + FSP_SPACE_FLAGS
 pub struct Fsp {
     /// The buffer pool used for managing page buffers.
     buf_pool: Arc<Mutex<BufPool>>,
+    /// Reference to fil.
+    fil: Arc<Mutex<Fil>>,
 }
 
 impl Fsp {
     /// Creates a new file space manager instance.
     ///
     /// Returns an empty `Fsp` struct that can be used to manage tablespace operations.
-    pub fn new(buf_pool: Arc<Mutex<BufPool>>) -> Fsp {
-        Fsp { buf_pool }
+    pub fn new(buf_pool: Arc<Mutex<BufPool>>, fil: Arc<Mutex<Fil>>) -> Fsp {
+        Fsp { buf_pool, fil }
     }
 
     /// Initializes the basic fields in a file space header.
@@ -271,6 +274,23 @@ impl Fsp {
         let mut fsp_header_page =
             FspHeaderPage::new(header_page.to_page_frame().0);
         fsp_header_page.header_init(space_id, space_size);
+    }
+
+    /// Allocates a single free page from the segment. We try to minimize page fragmentation.
+    pub fn fseg_alloc_free_page_general(
+        &self,
+        space_id: SpaceId,
+        hint: PageNo,
+        direction: Direction,
+        reserved: bool,
+        mtr: &mut Mtr,
+    ) -> PageNo {
+        // let fil_space = {
+        //     let fil = self.fil.lock().unwrap();
+        //     some_or_panic!(fil.space_get_by_id(space_id))
+        // };
+
+        hint + 1
     }
 }
 

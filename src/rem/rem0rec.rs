@@ -263,7 +263,11 @@ impl Record {
         index: &Index,
         n_fields: usize,
     ) -> Vec<u8> {
-        let area_start = REC_N_EXTRA_BYTES + n_fields;
+        let area_start = if self.rec_get_1byte_offs_flag() {
+            REC_N_EXTRA_BYTES + n_fields
+        } else {
+            REC_N_EXTRA_BYTES + 2 * n_fields
+        };
         let area_end = self.rec_get_field_start_offs(n_fields);
 
         let prefix_length = area_start + area_end;
@@ -292,7 +296,7 @@ impl Record {
     /// * `()` - This function does not return a value.
     pub fn rec_copy(&self, copy_to: &mut Record) {
         let data_size = self.rec_get_data_size();
-        let extra_len = REC_N_EXTRA_BYTES + self.rec_get_n_fields();
+        let extra_len = self.rec_get_extra_size();
 
         unsafe {
             copy_to
@@ -345,6 +349,8 @@ impl Record {
                 // There is no next record
                 return None;
             }
+
+            ut_ad!(offset < UNIV_PAGE_SIZE, "offset={}", offset);
 
             let page_ptr = self.page_align();
             let next_ptr = page_ptr.add(offset);
@@ -456,7 +462,7 @@ impl Record {
                 ut_ad!(ret.rec_1_get_field_end_info(i) == ored_offset)
             }
         } else {
-            self.rec_set_1byte_offs_flag(true);
+            self.rec_set_1byte_offs_flag(false);
 
             for i in 0..n_fields {
                 let field = dtuple.dtuple_get_nth_field(i);
@@ -658,8 +664,10 @@ impl Record {
     pub fn rec_get_field_start_offs(&self, field_no: usize) -> usize {
         if field_no == 0 {
             0
-        } else {
+        } else if self.rec_get_1byte_offs_flag() {
             self.rec_1_get_field_start_offs(field_no)
+        } else {
+            self.rec_2_get_field_start_offs(field_no)
         }
     }
 
@@ -727,12 +735,26 @@ impl Record {
     ///
     /// * The offset of the (n-1)th field end in the physical record.
     pub fn rec_1_get_prev_field_end_info(&self, field_no: usize) -> usize {
-        if field_no == 0 {
-            return 0;
-        }
-
         unsafe {
             let p = self.ptr.sub(REC_N_EXTRA_BYTES + field_no);
+            p.read_unaligned() as usize
+        }
+    }
+
+    /// Returns the offset of the (n-1)th field end in the physical record in the 2-byte offset format.
+    ///
+    /// # Arguments
+    ///
+    /// * `field_no`: The field number to get the offset for.
+    ///
+    /// # Returns
+    ///
+    /// * The offset of the (n-1)th field end in the physical record.
+    ///
+    pub fn rec_2_get_prev_field_end_info(&self, field_no: usize) -> usize {
+        unsafe {
+            let p =
+                self.ptr.sub(REC_N_EXTRA_BYTES + field_no * 2) as *const u16;
             p.read_unaligned() as usize
         }
     }
@@ -752,6 +774,24 @@ impl Record {
         }
 
         self.rec_1_get_prev_field_end_info(field_no) & !REC_1BYTE_SQL_NULL_MASK
+    }
+
+    /// Gets the offset of the nth field start in the physical record in the 2-Byte offset form.
+    ///
+    /// # Arguments
+    ///
+    /// * `field_no`: The field number to get the offset for.
+    ///
+    /// # Returns
+    ///
+    /// * The offset of the nth field starts in the physical record.
+    ///
+    pub fn rec_2_get_field_start_offs(&self, field_no: usize) -> usize {
+        if field_no == 0 {
+            return 0;
+        }
+
+        self.rec_2_get_prev_field_end_info(field_no) & !REC_2BYTE_SQL_NULL_MASK
     }
 
     /// Returns the offset of the nth field end if the record is stored in a 1-byte format.
@@ -784,16 +824,27 @@ impl Record {
     pub fn rec_get_nth_field_offs(&self, n_field: usize) -> (usize, usize) {
         let fields_count = self.rec_get_n_fields();
         if n_field >= fields_count {
-            panic!(
+            ut_panic!(
                 "rec_get_nth_field_offs: n_field out of range. fields_count={}",
                 fields_count
             );
         }
 
-        let offset = self.rec_1_get_field_start_offs(n_field);
-        let next_offset = self.rec_1_get_field_end_info(n_field);
+        if self.rec_get_1byte_offs_flag() {
+            let offset = self.rec_1_get_field_start_offs(n_field);
+            let next_offset = self.rec_1_get_field_end_info(n_field);
 
-        if next_offset & REC_1BYTE_SQL_NULL_MASK != 0 {
+            if next_offset & REC_1BYTE_SQL_NULL_MASK != 0 {
+                return (offset, UNIV_SQL_NULL);
+            }
+
+            return (offset, next_offset - offset);
+        }
+
+        let offset = self.rec_2_get_field_start_offs(n_field);
+        let next_offset = self.rec_2_get_field_end_info(n_field);
+
+        if next_offset & REC_2BYTE_SQL_NULL_MASK != 0 {
             return (offset, UNIV_SQL_NULL);
         }
 
@@ -816,7 +867,7 @@ impl Record {
     pub fn rec_get_nth_field(&self, n_field: usize) -> (usize, usize) {
         let fields_count = self.rec_get_n_fields();
         if n_field >= fields_count {
-            panic!("rec_get_nth_field: n_field out of range");
+            ut_panic!("rec_get_nth_field: n_field out of range");
         }
 
         self.rec_get_nth_field_offs(n_field)
@@ -831,7 +882,7 @@ impl Record {
     ///
     /// * The total data size of the record in bytes.
     pub fn rec_get_data_size(&self) -> usize {
-        self.rec_1_get_field_start_offs(self.rec_get_n_fields())
+        self.rec_get_field_start_offs(self.rec_get_n_fields())
     }
 
     /// Gets the data of the nth field in the physical record.

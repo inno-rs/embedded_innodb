@@ -2,6 +2,7 @@
 mod tests {
     use std::alloc::{Layout, alloc, dealloc};
 
+    use pretty_assertions::assert_eq;
     use tracing::info;
 
     use crate::{
@@ -10,6 +11,7 @@ mod tests {
         rem::rem0rec::*,
         some_or_panic,
         tests::test0utils::{FieldType, create_records},
+        ut::ut0ut::random_string_with_seed,
     };
 
     fn get_new_rec() -> (Record, Layout, *mut u8) {
@@ -358,15 +360,41 @@ mod tests {
 
     #[test]
     fn test_rec_set_1byte_offs_flag() {
-        {
-            let owning_page = create_records(
-                1,
-                vec![
-                    FieldType::String(Some("Hello World".to_string())),
-                    FieldType::String(Some("Mario".to_string())),
-                    FieldType::String(Some("Mushroom".to_string())),
-                ],
-            );
-        }
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello World".to_string())),
+                FieldType::String(Some("Mario".to_string())),
+                FieldType::String(Some("Mushroom".to_string())),
+            ],
+        );
+
+        assert_eq!(
+            owning_page.page.page_get_user_records()[0]
+                .rec_get_1byte_offs_flag(),
+            true
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn test_rec_set_2byte_offs_flag() {
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello World".to_string())),
+                FieldType::String(Some("Mario".to_string())),
+                FieldType::String(Some("Mushroom".to_string())),
+                FieldType::String(Some("Donut".to_string())),
+                FieldType::String(Some("Star Wars".to_string())),
+                FieldType::String(Some(random_string_with_seed(127, 42))),
+            ],
+        );
+
+        assert_eq!(
+            owning_page.page.page_get_user_records()[0]
+                .rec_get_1byte_offs_flag(),
+            false
+        );
     }
 }
