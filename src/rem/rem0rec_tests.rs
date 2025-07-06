@@ -377,7 +377,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_rec_set_2byte_offs_flag() {
         let owning_page = create_records(
             1,
@@ -396,5 +395,52 @@ mod tests {
                 .rec_get_1byte_offs_flag(),
             false
         );
+    }
+
+    #[test]
+    fn test_rec_offs_size_with_1byte_flag() {
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello World".to_string())),
+                FieldType::String(Some("Mario".to_string())),
+                FieldType::String(Some("Mushroom".to_string())),
+                FieldType::String(Some("Donut".to_string())),
+                FieldType::String(Some("Star Wars".to_string())),
+            ],
+        );
+
+        let rec = owning_page.page.page_get_user_records()[0];
+
+        assert_eq!(rec.rec_get_1byte_offs_flag(), true);
+        // REC_N_EXTRA_BYTES = 6
+        // Content of the record: Sum all bytes: 38
+        // Field metadata = 5 * 1
+        // Total = 6 + 38 + 5 = 49
+        assert_eq!(rec.rec_offs_size(), 49);
+    }
+
+    #[test]
+    fn test_rec_offs_size_with_2byte_flag() {
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello World".to_string())),
+                FieldType::String(Some("Mario".to_string())),
+                FieldType::String(Some("Mushroom".to_string())),
+                FieldType::String(Some("Donut".to_string())),
+                FieldType::String(Some("Star Wars".to_string())),
+                FieldType::String(Some(random_string_with_seed(127, 42))),
+            ],
+        );
+
+        let rec = owning_page.page.page_get_user_records()[0];
+
+        assert_eq!(rec.rec_get_1byte_offs_flag(), false);
+        // REC_N_EXTRA_BYTES = 6
+        // Content of the record: Sum all bytes: 38 + 127 = 165
+        // Field metadata = 6 * 2
+        // Total = 6 + 165 + 12 = 183
+        assert_eq!(rec.rec_offs_size(), 183);
     }
 }

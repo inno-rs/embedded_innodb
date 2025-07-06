@@ -959,17 +959,36 @@ impl Record {
     pub fn rec_offs_size(&self) -> usize {
         // n_fields is the total number of fields.
         let n_fields = self.rec_get_n_fields();
-        let mut end_offset_n_field =
-            self.rec_1_get_field_end_info(n_fields - 1);
+        let (end_offset_n_field, n_fields) =
+            match self.rec_get_1byte_offs_flag() {
+                true => {
+                    let mut end_offset_n_field =
+                        self.rec_1_get_field_end_info(n_fields - 1);
 
-        if end_offset_n_field & REC_1BYTE_SQL_NULL_MASK
-            == REC_1BYTE_SQL_NULL_MASK
-        {
-            end_offset_n_field &= !REC_1BYTE_SQL_NULL_MASK;
-        }
+                    if end_offset_n_field & REC_1BYTE_SQL_NULL_MASK
+                        == REC_1BYTE_SQL_NULL_MASK
+                    {
+                        end_offset_n_field &= !REC_1BYTE_SQL_NULL_MASK;
+                    }
+
+                    (end_offset_n_field, n_fields)
+                }
+                false => {
+                    let mut end_offset_n_field =
+                        self.rec_2_get_field_end_info(n_fields - 1);
+
+                    if end_offset_n_field & REC_2BYTE_SQL_NULL_MASK
+                        == REC_2BYTE_SQL_NULL_MASK
+                    {
+                        end_offset_n_field &= !REC_2BYTE_SQL_NULL_MASK;
+                    }
+
+                    (end_offset_n_field, n_fields * 2)
+                }
+            };
 
         // The offset of the n-field end is measured from the record start.
-        // Before the record starts
+        // Before the record starts,
         // we have metadata about the record.
         REC_N_EXTRA_BYTES + n_fields + end_offset_n_field
     }
