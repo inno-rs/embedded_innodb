@@ -20,9 +20,9 @@ jobs:
         toolchain: 1.88
         override: true
     - name: Build
-      run: cargo build --verbose
+      run: cargo build
     - name: Run tests
-      run: cargo test --verbose
+      run: RUST_BACKTRACE=1 cargo test -- --nocapture --test-threads=1
 
   coverage:
     runs-on: ubuntu-latest

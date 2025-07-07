@@ -94,10 +94,7 @@ mod tests {
             page.page_header_get_field(PAGE_HEAP_TOP),
             PAGE_SUPREMUM_END
         );
-        assert_eq!(
-            page.page_header_get_field(PAGE_N_HEAP),
-            PAGE_HEAP_NO_USER_LOW
-        );
+        assert_eq!(page.page_dir_get_n_heap(), PAGE_HEAP_NO_USER_LOW);
         assert_eq!(page.page_header_get_field(PAGE_FREE), 0);
         assert_eq!(page.page_header_get_field(PAGE_GARBAGE), 0);
         assert_eq!(
@@ -213,12 +210,11 @@ mod tests {
         }
 
         {
-            let field_offset: usize = PAGE_N_HEAP;
             let value = 46;
 
-            page.page_header_set_field(field_offset, value);
+            page.page_dir_set_n_heap(value);
 
-            let retrieved_value = page.page_header_get_field(field_offset);
+            let retrieved_value = page.page_dir_get_n_heap();
             assert_eq!(retrieved_value, value);
         }
 

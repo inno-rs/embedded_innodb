@@ -861,7 +861,7 @@ impl Page {
         /* 4. INITIALIZE THE PAGE */
         page.page_header_set_field(PAGE_N_DIR_SLOTS, 2);
         page.page_header_set_field(PAGE_HEAP_TOP, PAGE_SUPREMUM_END);
-        page.page_header_set_field(PAGE_N_HEAP, PAGE_HEAP_NO_USER_LOW);
+        page.page_dir_set_n_heap(PAGE_HEAP_NO_USER_LOW);
         page.page_header_set_field(PAGE_FREE, 0);
         page.page_header_set_field(PAGE_GARBAGE, 0);
         page.page_header_set_field(PAGE_LAST_INSERT, u16::MAX as usize);
@@ -1727,7 +1727,7 @@ Page last insert {}, direction {}, n direction {}\n",
                 self.page_get_n_recs(),
                 self.page_header_get_field(PAGE_N_DIR_SLOTS),
                 self.page_header_get_field(PAGE_HEAP_TOP),
-                self.page_header_get_field(PAGE_N_HEAP),
+                self.page_dir_get_n_heap(),
                 self.page_header_get_field(PAGE_FREE),
                 self.page_header_get_field(PAGE_GARBAGE),
                 self.page_header_get_field(PAGE_LAST_INSERT),

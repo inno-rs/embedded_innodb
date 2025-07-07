@@ -229,9 +229,21 @@ mod tests {
         }
     }
 
-    #[ignore]
     #[test]
-    fn test_rec_field_external_2byte_format() {}
+    #[ignore]
+    fn test_rec_field_external_2byte_format() {
+        let owning_page = create_records(
+            10,
+            vec![FieldType::String(Some(random_string_with_seed(127, 42)))],
+        );
+        let page = owning_page.page;
+
+        for rec in page.page_get_user_records() {
+            if page.page_rec_is_user_rec(rec) {
+                assert!(!rec.rec_get_1byte_offs_flag());
+            }
+        }
+    }
 
     #[test]
     fn test_rec_get_converted_extra_size() {
@@ -396,5 +408,53 @@ mod tests {
                 .rec_get_1byte_offs_flag(),
             false
         );
+    }
+
+    #[test]
+    fn test_rec_offs_size_with_1byte_flag() {
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello World".to_string())),
+                FieldType::String(Some("Mario".to_string())),
+                FieldType::String(Some("Mushroom".to_string())),
+                FieldType::String(Some("Donut".to_string())),
+                FieldType::String(Some("Star Wars".to_string())),
+            ],
+        );
+
+        let rec = owning_page.page.page_get_user_records()[0];
+
+        assert_eq!(rec.rec_get_1byte_offs_flag(), true);
+        // REC_N_EXTRA_BYTES = 6
+        // Content of the record: Sum all bytes: 38
+        // Field metadata = 5 * 1
+        // Total = 6 + 38 + 5 = 49
+        assert_eq!(rec.rec_offs_size(), 49);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_rec_offs_size_with_2byte_flag() {
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello World".to_string())),
+                FieldType::String(Some("Mario".to_string())),
+                FieldType::String(Some("Mushroom".to_string())),
+                FieldType::String(Some("Donut".to_string())),
+                FieldType::String(Some("Star Wars".to_string())),
+                FieldType::String(Some(random_string_with_seed(127, 42))),
+            ],
+        );
+
+        let rec = owning_page.page.page_get_user_records()[0];
+
+        assert_eq!(rec.rec_get_1byte_offs_flag(), false);
+        // REC_N_EXTRA_BYTES = 6
+        // Content of the record: Sum all bytes: 38 + 127 = 165
+        // Field metadata = 6 * 2
+        // Total = 6 + 165 + 12 = 183
+        assert_eq!(rec.rec_offs_size(), 183);
     }
 }
