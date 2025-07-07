@@ -210,7 +210,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore]
     fn test_create_btr_page(fixture: BTreeFixture) {
         let btree = fixture.btree.clone();
         let mut btr_cur = BTreeCursor::new(
@@ -264,7 +263,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore]
     fn test_page_set_level(fixture_with_page: (BTreeFixture, Page)) {
         let mut page: Page = fixture_with_page.1;
         let mut mtr = Mtr::new();
@@ -279,7 +277,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore]
     fn test_page_set_index_id(fixture_with_page: (BTreeFixture, Page)) {
         let mut page: Page = fixture_with_page.1;
         let seed = 42;
@@ -298,7 +295,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore]
     fn test_page_tuple_smaller(
         fixture_with_data: (BTreeFixture, Page, Vec<DTuple>),
     ) {
@@ -384,7 +380,6 @@ mod tests {
     #[case(8, PAGE_CUR_LE, "hello world 9")]
     #[case(8, PAGE_CUR_GE, "hello world 9")]
     #[case(8, PAGE_CUR_G, "supremumr")]
-    #[ignore]
     fn test_search_in_btree_page(
         fixture: BTreeFixture,
         #[case] dtuple_to_find: usize,
@@ -465,7 +460,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore]
     fn test_optimistic_insert_returns_none(fixture: BTreeFixture) {
         let btree = fixture.btree.clone();
         let mut btr_cur = BTreeCursor::new(
@@ -522,7 +516,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_optimistic_insert_in_btree_page() {
         let seed = 1234u64;
         let mut rng = StdRng::seed_from_u64(seed);
@@ -601,7 +594,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore]
     fn test_page_empty(fixture_with_data: (BTreeFixture, Page, Vec<DTuple>)) {
         let btree = &fixture_with_data.0.btree;
         let page = &fixture_with_data.1;
@@ -642,7 +634,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore]
     fn test_page_get_split_rec_with_full_page(
         fixture_with_full_page_and_small_data: (
             BTreeFixture,
@@ -701,7 +692,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore]
     fn test_page_get_split_rec_with_full_page_at_every_rec(
         fixture_with_full_page_and_small_data: (
             BTreeFixture,
@@ -763,7 +753,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore]
     fn test_page_get_split_rec_with_full_page_and_very_large_dtuple(
         fixture_with_full_page_and_small_data: (
             BTreeFixture,
@@ -822,7 +811,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore]
     fn test_page_alloc(fixture: BTreeFixture) {
         let buf_pool = &fixture.buf_pool;
         let btree = &fixture.btree;
@@ -849,7 +837,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore]
     fn test_page_create(fixture: BTreeFixture) {
         let buf_pool = &fixture.buf_pool;
         let btree = &fixture.btree;
@@ -881,7 +868,6 @@ mod tests {
     }
 
     #[rstest]
-    #[ignore]
     fn test_page_get_split_rec_with_empty_page(
         fixture_with_page: (BTreeFixture, Page),
     ) {
@@ -928,7 +914,6 @@ mod tests {
 
     /* Start Root Split Operations */
     #[rstest]
-    #[ignore]
     fn test_page_root_split_with_full_page(
         fixture_with_full_page_and_small_data: (
             BTreeFixture,

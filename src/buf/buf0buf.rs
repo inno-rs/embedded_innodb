@@ -555,7 +555,7 @@ impl BufPool {
     ///
     /// # Panic
     /// Panics in debug mode if the memory size is not a multiple of the page size
-    pub fn chunk_init(&mut self, mem_size: usize) -> Arc<RwLock<BufChunk>> {
+    fn chunk_init(&mut self, mem_size: usize) -> Arc<RwLock<BufChunk>> {
         ut_ad!(mem_size % UNIV_PAGE_SIZE == 0);
 
         let layout =
@@ -619,6 +619,15 @@ impl BufPool {
         self.chunks.push(chunk);
 
         self.curr_size = pool_size;
+    }
+
+    /// Gets the current size of the buffer pool.
+    ///
+    /// # Returns
+    ///
+    ///
+    pub fn get_curr_size(&self) -> usize {
+        self.curr_size
     }
 
     /// Sets the first access time of the page and potentially makes it young in the LRU list.

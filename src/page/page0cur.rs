@@ -336,7 +336,7 @@ impl PageCur {
     ///
     /// # Returns
     ///
-    /// * `Option<Record>`: The newly created record if enough space available on the page.
+    /// * `Option<Record>`: The newly created record if enough space is available on the page.
     /// None, otherwise.
     ///
     /// # Note
