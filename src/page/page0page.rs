@@ -1265,8 +1265,6 @@ impl Page {
 
         let dest_page = dest.write().unwrap().get_page();
 
-        ut_ad!(dest_page.page_is_leaf() == self.page_is_leaf());
-
         if dest_page.page_dir_get_n_heap() == PAGE_HEAP_NO_USER_LOW {
             self.page_copy_rec_list_end_to_created_page(
                 dest_page,
@@ -1590,9 +1588,12 @@ impl Page {
         // Uncomment
         // page_copy_rec_list_to_created_page_write_log
 
-        let dest_page_cur = PageCur::new(index, None, buf_block, dest_page);
+        let mut dest_page_cur =
+            PageCur::new(index, None, buf_block, dest_page);
         while self.page_rec_is_supremum(rec) == false {
             dest_page_cur.page_cur_insert_rec_low(rec, mtr);
+            dest_page_cur.page_cur_move_to_next();
+
             rec = some_or_panic!(rec.rec_get_next());
         }
     }

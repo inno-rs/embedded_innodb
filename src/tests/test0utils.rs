@@ -24,12 +24,13 @@ use crate::{
         mtr0types::{FixMode, MemoSlot},
     },
     page::{
-        page0cur::PageCur,
+        page0cur::{PAGE_CUR_LE, PageCur},
         page0page::{Page, PageDebug},
     },
     sync::sync0rw::ReadWriteLatch,
     ut::{
         ut0dbg::{ut_a, ut_ad},
+        ut0rnd::ut_next_seed,
         ut0ut::random_string_with_seed,
     },
 };
@@ -577,9 +578,12 @@ pub fn fill_block_with_uniform_data(
     let low_limit = 0;
     let up_limit = 725;
     let mut input: Vec<[FieldType; 1]> = vec![];
+    let mut current_seed = seed;
     for _ in low_limit..up_limit {
-        let str = random_string_with_seed(15, 42);
+        let str = random_string_with_seed(15, current_seed);
         input.push([FieldType::String(Some(str))]);
+
+        current_seed = ut_next_seed(current_seed);
     }
 
     let mut dtuples = create_dtuples_from_input_data_chunk(input);
@@ -592,6 +596,15 @@ pub fn fill_block_with_uniform_data(
     ));
 
     for dtuple in dtuples.iter_mut() {
+        btr_cur.search_to_nth_level(
+            vec![],
+            0,
+            dtuple,
+            PAGE_CUR_LE,
+            0,
+            &mut mtr,
+        );
+
         btr_cur.optimistic_insert(0, dtuple, 0, &mut mtr);
     }
 

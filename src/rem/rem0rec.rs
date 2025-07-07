@@ -1,6 +1,6 @@
 use std::{fmt, ptr, slice};
 
-use tracing::{error, info};
+use tracing::{debug, error};
 
 use crate::{
     data::data0types::DTuple,
@@ -527,7 +527,7 @@ impl Record {
     ///
     /// * `n_fields`: The number of fields to set.
     pub fn rec_set_n_fields(&self, n_fields: usize) {
-        info!(
+        debug!(
             "rec_set_n_fields: n_fields={} at={}",
             n_fields, self.ptr as usize
         );
@@ -899,7 +899,7 @@ impl Record {
         ut_ad!(self.rec_get_n_fields() > n_field);
 
         let (offset, length) = self.rec_get_nth_field_offs(n_field);
-        info!(
+        debug!(
             "rec_get_data: ptr={} offset={}, length={}",
             self.ptr as usize, offset, length
         );

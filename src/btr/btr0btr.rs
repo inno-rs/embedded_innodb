@@ -380,17 +380,17 @@ impl BTree {
             let page = buf_block.get_page();
 
             // Initialize the page
-            let created_page =
+            let mut page =
                 Page::page_create(self.index.deref(), &buf_block, Some(mtr));
 
-            // // Set the next page pointer to FILL_NULL
-            // Self::page_set_next(&page, FILL_NULL, mtr);
-            //
-            // // Set the index ID for the page
-            // Self::page_set_index_id(&mut page, self.index.get_index_id(), mtr);
-            //
-            // // Set the level of the page
-            // Self::page_set_level(&mut page, level, mtr);
+            // Set the next page pointer to FILL_NULL
+            Self::page_set_next(&page, FILL_NULL, mtr);
+
+            // Set the index ID for the page
+            Self::page_set_index_id(&mut page, self.index.get_index_id(), mtr);
+
+            // Set the level of the page
+            Self::page_set_level(&mut page, level, mtr);
         };
 
         buf_block
