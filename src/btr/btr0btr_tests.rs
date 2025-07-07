@@ -173,15 +173,15 @@ mod tests {
 
     #[fixture]
     fn fixture_with_full_page_and_small_data(
-        fixture_with_data: (BTreeFixture, Page, Vec<DTuple>),
-    ) -> (BTreeFixture, Page, Vec<DTuple>) {
+        fixture: BTreeFixture,
+    ) -> BTreeFixture {
         let seed = 42;
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let btree = fixture_with_data.0.btree.clone();
-        let buf_pool = fixture_with_data.0.buf_pool.clone();
-        let lock_sys = fixture_with_data.0.lock_sys.clone();
+        let btree = fixture.btree.clone();
+        let buf_pool = fixture.buf_pool.clone();
+        let lock_sys = fixture.lock_sys.clone();
 
         let buf_block = buf_pool.lock().unwrap().get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
@@ -190,23 +190,30 @@ mod tests {
             mtr: &mut mtr,
         });
 
-        assert!(buf_block.is_some());
+        let buf_block = some_or_panic!(buf_block);
+        let page = buf_block.read().unwrap().get_page();
+
+        {
+            let buf_block = buf_block.read().unwrap();
+            Page::page_create(
+                fixture.index.deref(),
+                buf_block.deref(),
+                Some(&mut mtr),
+            );
+        }
 
         fill_block_with_uniform_data(
             btree.clone(),
-            some_or_panic!(&buf_block).clone(),
+            buf_block.clone(),
             buf_pool.clone(),
             lock_sys.clone(),
             seed,
         );
 
-        let buf_block = some_or_panic!(buf_block);
-
-        let page = buf_block.read().unwrap().get_page();
         assert!(page.page_validate());
-        // assert_eq!(page.page_get_data_size(), 15820);
+        assert_eq!(page.page_get_data_size(), 15818);
 
-        fixture_with_data
+        fixture
     }
 
     #[rstest]
@@ -635,19 +642,15 @@ mod tests {
 
     #[rstest]
     fn test_page_get_split_rec_with_full_page(
-        fixture_with_full_page_and_small_data: (
-            BTreeFixture,
-            Page,
-            Vec<DTuple>,
-        ),
+        fixture_with_full_page_and_small_data: BTreeFixture,
     ) {
         let fixture = &fixture_with_full_page_and_small_data;
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let btree = &fixture.0.btree;
-        let buf_pool = &fixture.0.buf_pool;
-        let lock_sys = &fixture.0.lock_sys;
+        let btree = &fixture.btree;
+        let buf_pool = &fixture.buf_pool;
+        let lock_sys = &fixture.lock_sys;
 
         let buf_block = buf_pool.lock().unwrap().get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
@@ -659,11 +662,11 @@ mod tests {
         let buf_block = some_or_panic!(buf_block);
 
         let page = buf_block.read().unwrap().get_page();
-        assert_eq!(page.page_get_data_size(), 15820);
+        assert_eq!(page.page_get_data_size(), 15818);
 
         let mut btr_cur = BTreeCursor::new(
             btree.deref(),
-            fixture.0.index.clone(),
+            fixture.index.clone(),
             buf_pool.clone(),
             lock_sys.clone(),
         );
@@ -693,19 +696,15 @@ mod tests {
 
     #[rstest]
     fn test_page_get_split_rec_with_full_page_at_every_rec(
-        fixture_with_full_page_and_small_data: (
-            BTreeFixture,
-            Page,
-            Vec<DTuple>,
-        ),
+        fixture_with_full_page_and_small_data: BTreeFixture,
     ) {
         let fixture = &fixture_with_full_page_and_small_data;
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let btree = &fixture.0.btree;
-        let buf_pool = &fixture.0.buf_pool;
-        let lock_sys = &fixture.0.lock_sys;
+        let btree = &fixture.btree;
+        let buf_pool = &fixture.buf_pool;
+        let lock_sys = &fixture.lock_sys;
 
         let buf_block = buf_pool.lock().unwrap().get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
@@ -717,11 +716,11 @@ mod tests {
         let buf_block = some_or_panic!(buf_block);
 
         let page = buf_block.read().unwrap().get_page();
-        assert_eq!(page.page_get_data_size(), 15820);
+        assert_eq!(page.page_get_data_size(), 15818);
 
         let mut btr_cur = BTreeCursor::new(
             btree.deref(),
-            fixture.0.index.clone(),
+            fixture.index.clone(),
             buf_pool.clone(),
             lock_sys.clone(),
         );
@@ -754,19 +753,15 @@ mod tests {
 
     #[rstest]
     fn test_page_get_split_rec_with_full_page_and_very_large_dtuple(
-        fixture_with_full_page_and_small_data: (
-            BTreeFixture,
-            Page,
-            Vec<DTuple>,
-        ),
+        fixture_with_full_page_and_small_data: BTreeFixture,
     ) {
         let fixture = &fixture_with_full_page_and_small_data;
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let btree = &fixture.0.btree;
-        let buf_pool = &fixture.0.buf_pool;
-        let lock_sys = &fixture.0.lock_sys;
+        let btree = &fixture.btree;
+        let buf_pool = &fixture.buf_pool;
+        let lock_sys = &fixture.lock_sys;
 
         let buf_block = buf_pool.lock().unwrap().get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
@@ -778,11 +773,11 @@ mod tests {
         let buf_block = some_or_panic!(buf_block);
 
         let page = buf_block.read().unwrap().get_page();
-        assert_eq!(page.page_get_data_size(), 15820);
+        assert_eq!(page.page_get_data_size(), 15818);
 
         let mut btr_cur = BTreeCursor::new(
             btree.deref(),
-            fixture.0.index.clone(),
+            fixture.index.clone(),
             buf_pool.clone(),
             lock_sys.clone(),
         );
@@ -833,6 +828,12 @@ mod tests {
             assert_eq!(page.page_get_n_recs(), 0);
 
             btree.page_alloc(i, Direction::FspDown, 0, &mut mtr);
+
+            assert_eq!(BTree::page_get_level(&page), 0);
+            assert_eq!(
+                BTree::page_get_index_id(&page),
+                btree.get_index().get_index_id()
+            );
         }
     }
 
@@ -915,11 +916,7 @@ mod tests {
     /* Start Root Split Operations */
     #[rstest]
     fn test_page_root_split_with_full_page(
-        fixture_with_full_page_and_small_data: (
-            BTreeFixture,
-            Page,
-            Vec<DTuple>,
-        ),
+        fixture_with_full_page_and_small_data: BTreeFixture,
     ) {
         let fixture = &fixture_with_full_page_and_small_data;
         let mut mtr = Mtr::new();
@@ -930,9 +927,9 @@ mod tests {
             FixMode::Exclusive,
         ));
 
-        let btree = &fixture.0.btree;
-        let buf_pool = &fixture.0.buf_pool;
-        let lock_sys = &fixture.0.lock_sys;
+        let btree = &fixture.btree;
+        let buf_pool = &fixture.buf_pool;
+        let lock_sys = &fixture.lock_sys;
 
         let buf_block = buf_pool.lock().unwrap().get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
@@ -943,25 +940,85 @@ mod tests {
 
         let buf_block = some_or_panic!(buf_block);
 
-        let page = buf_block.read().unwrap().get_page();
-        // assert_eq!(page.page_get_data_size(), 15820);
+        let root_page = buf_block.read().unwrap().get_page();
+
+        let root_n_recs = root_page.page_get_n_recs();
+        let root_recs = root_page
+            .page_get_user_records()
+            .iter()
+            .map(|rec| rec.rec_get_data(0).unwrap().data_or_panic())
+            .collect::<Vec<_>>();
+
+        assert_eq!(root_n_recs, 719);
+        assert!(root_recs.is_sorted());
 
         let mut btr_cur = BTreeCursor::new(
             btree.deref(),
-            fixture.0.index.clone(),
+            fixture.index.clone(),
             buf_pool.clone(),
             lock_sys.clone(),
         );
 
-        btr_cur.position(page.page_get_infimum_rec(), buf_block);
+        btr_cur.position(root_page.page_get_infimum_rec(), buf_block);
 
         // New record size same as other rows.
         let dtuple_size = 100;
         let dtuple = create_dtuple(&[FieldType::String(Some(
-            random_string_with_seed(dtuple_size, 42),
+            random_string_with_seed(dtuple_size, 420),
         ))]);
 
         btr_cur.root_raise_and_insert(&dtuple, 0, &mut mtr);
+
+        assert_eq!(root_page.page_get_n_recs(), 0);
+
+        let left_block = buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 1 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        let left_block = some_or_panic!(left_block);
+        let left_page = left_block.read().unwrap().get_page();
+        let left_page_recs: Vec<String> = left_page
+            .page_get_user_records()
+            .iter()
+            .map(|rec| rec.rec_get_data(0).unwrap().data_or_panic())
+            .collect();
+
+        assert_eq!(left_page.page_get_n_recs(), 349);
+        assert!(left_page_recs.is_sorted());
+
+        let right_block = buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 2 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        let right_block = some_or_panic!(right_block);
+        let right_page = right_block.read().unwrap().get_page();
+        let right_page_recs = right_page
+            .page_get_user_records()
+            .iter()
+            .map(|rec| rec.rec_get_data(0).unwrap().data_or_panic())
+            .collect::<Vec<_>>();
+
+        assert_eq!(right_page.page_get_n_recs(), 370);
+        assert!(right_page_recs.is_sorted());
+
+        assert_eq!(
+            root_n_recs,
+            left_page.page_get_n_recs() + right_page.page_get_n_recs()
+        );
+
+        let root_level = BTree::page_get_level(&root_page);
+        let left_page_level = BTree::page_get_level(&left_page);
+        let right_page_level = BTree::page_get_level(&right_page);
+
+        assert_eq!(root_level, 1);
+        assert_eq!(left_page_level, 0);
+        assert_eq!(right_page_level, 0);
     }
     /* End Root Split Operations */
 }

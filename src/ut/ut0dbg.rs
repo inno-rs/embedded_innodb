@@ -12,6 +12,7 @@ use ctor::ctor;
 /// This is used for assertions that are important for debugging but might impact performance
 /// in release builds. These assertions are only checked in debug builds and are no-ops in release builds.
 pub(crate) use debug_assert as ut_ad;
+use tracing_subscriber::EnvFilter;
 
 /// Macro for triggering a panic with a custom error message.
 ///
@@ -103,8 +104,11 @@ static INIT: Once = Once::new();
 fn init_tracing() {
     INIT.call_once(|| {
         tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| EnvFilter::new("info")),
+            )
             .with_test_writer()
-            .with_max_level(tracing::Level::TRACE)
             .init();
     });
 }

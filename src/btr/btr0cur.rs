@@ -572,6 +572,8 @@ impl<'a> BTreeCursor<'a> {
         mtr: &mut Mtr,
     ) {
         let split_rec = self.page_get_split_rec(dtuple, n_ext);
+        info!("split_rec: {}", some_or_panic!(split_rec));
+
         let page = self.page_cur.as_ref().unwrap().page_cur_get_page();
 
         let level = BTree::page_get_level(&page);
@@ -581,8 +583,21 @@ impl<'a> BTreeCursor<'a> {
 
         let new_block =
             self.btree.page_alloc(hint_page_no, direction, level, mtr);
+
         if let Some(block) = new_block {
-            self.btree.page_create(block, level, mtr)
+            mtr.memo_push(MemoSlot::PageFix(
+                block.read().unwrap().get_page_id(),
+                FixMode::Exclusive,
+            ));
+
+            self.btree.page_create(block.clone(), level, mtr);
+
+            page.page_move_rec_list_end(
+                block,
+                some_or_panic!(split_rec),
+                self.index.clone(),
+                mtr,
+            );
         }
     }
 
@@ -599,7 +614,7 @@ impl<'a> BTreeCursor<'a> {
     /// * `n_ext` - The number of externally stored fields
     /// * `mtr` - The mini-transaction that logs this operation
     pub fn root_raise_and_insert(
-        &self,
+        &mut self,
         dtuple: &DTuple,
         n_ext: usize,
         mtr: &mut Mtr,
@@ -607,7 +622,8 @@ impl<'a> BTreeCursor<'a> {
         let PageId { space_id: root_space_id, page_no: root_page_no } =
             self.index.get_page_id();
 
-        let root_page = self.page_cur.as_ref().unwrap().page_cur_get_page();
+        let mut root_page =
+            self.page_cur.as_ref().unwrap().page_cur_get_page();
 
         let space_id = root_space_id;
         let page_no = root_page_no;
@@ -623,26 +639,34 @@ impl<'a> BTreeCursor<'a> {
         // )));
 
         let level = BTree::page_get_level(&root_page);
+        BTree::page_set_level(&mut root_page, level + 1, mtr);
 
         // 1. Create a new page at the same level as the root.
         let buf_block =
             self.btree.page_alloc(0, Direction::FspDown, level, mtr);
 
-        // let dest_block = some_or_panic!(buf_block);
-        //
-        // // 2. Move records from the root to the new page.
-        // ut_ad!(root_page.page_get_n_recs() > 0);
-        //
-        // root_page.page_move_rec_list_end(
-        //     dest_block,
-        //     root_page.page_get_infimum_rec(),
-        //     self.index.clone(),
-        //     mtr,
-        // );
+        let dest_block = some_or_panic!(buf_block);
+        let mut dest_page = dest_block.read().unwrap().get_page();
 
-        // ut_ad!(root_page.page_get_n_recs() == 0);
+        ut_ad!(BTree::page_get_level(&dest_page) == level);
+
+        // 2. Move records from the root to the new page.
+        ut_ad!(root_page.page_get_n_recs() > 0);
+
+        root_page.page_move_rec_list_end(
+            dest_block.clone(),
+            root_page.page_get_infimum_rec(),
+            self.index.clone(),
+            mtr,
+        );
+
+        // Move the cursor to the new page.
+        self.position(dest_page.page_get_infimum_rec(), dest_block.clone());
+        BTree::page_set_level(&mut dest_page, level, mtr);
+
+        ut_ad!(root_page.page_get_n_recs() == 0);
 
         // 3. We moved all the records from the root to the new page. Now, split the new record.
-        // self.page_split_and_insert(dtuple, n_ext, mtr);
+        self.page_split_and_insert(dtuple, n_ext, mtr);
     }
 }

@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::{
     buf::buf0types::BufBlock,
@@ -372,7 +372,7 @@ impl PageCur {
                 let rec =
                     self.page.page_get_rec(heap_location.add(extra_size));
 
-                info!("creating new record at: {}", rec.get_ptr() as usize);
+                debug!("creating new record at: {}", rec.get_ptr() as usize);
                 insert_rec_opt.replace(rec);
             }
         }
@@ -473,7 +473,7 @@ impl PageCur {
 
         let mut low = 0;
         let mut up = page.page_dir_get_n_slots() - 1;
-        // info!("bin_search low={} up={}", low, up);
+        debug!("bin_search low={} up={}", low, up);
 
         // Perform binary search until the lower and upper limit directory slots come to a distance of 1 of each other.
         while up - low > 1 {
@@ -560,8 +560,8 @@ impl PageCur {
             }
         }
 
-        info!("finished low_rec={}", low_rec);
-        info!("finished up_rec={}", up_rec);
+        debug!("finished low_rec={}", low_rec);
+        debug!("finished up_rec={}", up_rec);
 
         if mode == PAGE_CUR_G || mode == PAGE_CUR_GE {
             self.page_cur_position(up_rec);

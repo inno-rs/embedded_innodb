@@ -109,6 +109,11 @@ impl Mtr {
             self.mtr_state == MtrState::MtrActive,
             "memo push is only allowed in the ACTIVE state"
         );
+        ut_ad!(
+            self.memo.contains(&slot) == false,
+            "memo_push: slot already exists in memo"
+        );
+
         self.memo.push(slot);
     }
 
