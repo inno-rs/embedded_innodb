@@ -67,10 +67,10 @@ pub(super) mod tests {
     fn test_free_list_returns_some(buf_pool_fixture: BufPoolFixture) {
         let mut buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
 
-        let result = buf_pool.chunk_init(10 * UNIV_PAGE_SIZE);
+        buf_pool.open(10 * UNIV_PAGE_SIZE);
 
         assert_eq!(buf_pool.get_free_list_size(), 10);
-        assert_eq!(result.read().unwrap().size, 10);
+        assert_eq!(buf_pool.get_curr_size(), 10 * UNIV_PAGE_SIZE);
     }
 
     #[rstest]
@@ -86,8 +86,9 @@ pub(super) mod tests {
         assert!(result.is_none());
 
         // Add some pages, and then retry creating.
-        let _result = buf_pool.chunk_init(10 * UNIV_PAGE_SIZE);
+        buf_pool.open(10 * UNIV_PAGE_SIZE);
         assert_eq!(buf_pool.get_free_list_size(), 10);
+        assert_eq!(buf_pool.get_curr_size(), 10 * UNIV_PAGE_SIZE);
 
         let resp = buf_pool.create(0, 0, &mut mtr);
         assert!(resp.is_some());
@@ -111,8 +112,9 @@ pub(super) mod tests {
         mtr.set_mtr_state(MtrActive);
 
         // Initialize a chunk to have some pages.
-        let _result = buf_pool.chunk_init(10 * UNIV_PAGE_SIZE);
+        buf_pool.open(10 * UNIV_PAGE_SIZE);
         assert_eq!(buf_pool.get_free_list_size(), 10);
+        assert_eq!(buf_pool.get_curr_size(), 10 * UNIV_PAGE_SIZE);
 
         let resp = buf_pool.create(0, 0, &mut mtr);
         assert!(resp.is_some());
@@ -135,8 +137,9 @@ pub(super) mod tests {
         mtr.set_mtr_state(MtrActive);
 
         // Add some pages, and then retry creating.
-        let _result = buf_pool.chunk_init(10 * UNIV_PAGE_SIZE);
+        buf_pool.open(10 * UNIV_PAGE_SIZE);
         assert_eq!(buf_pool.get_free_list_size(), 10);
+        assert_eq!(buf_pool.get_curr_size(), 10 * UNIV_PAGE_SIZE);
 
         for i in 0..10 {
             let resp = buf_pool.create(i, i, &mut mtr);

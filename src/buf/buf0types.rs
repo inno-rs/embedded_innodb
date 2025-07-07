@@ -17,7 +17,7 @@ use crate::{
     mtr::mtr0mtr::Mtr,
     page::page0page::Page,
     sync::sync0rw::ReadWriteLatch,
-    ut::ut0dbg::ut_ad,
+    ut::{ut0dbg::ut_ad, ut0math::ut_align_down},
 };
 
 /// Magic number used to identify buffer pool pages that do not have a checksum.
@@ -498,6 +498,10 @@ impl BufBlock {
     /// # Returns
     /// A new BufBlock instance
     pub fn new(buf_page: BufPage, frame: Frame) -> Self {
+        ut_ad!(
+            ut_align_down(frame as usize, UNIV_PAGE_SIZE) == frame as usize
+        );
+
         BufBlock {
             modify_clock: 0,
             buf_page,

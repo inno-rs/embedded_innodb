@@ -506,8 +506,9 @@ pub fn create_blocks_in_buf_pool(buf_pool: Arc<Mutex<BufPool>>, count: usize) {
     mtr.start();
 
     // Add some pages, and then retry creating.
-    let _result = buf_pool.chunk_init(count * UNIV_PAGE_SIZE);
+    buf_pool.open(count * UNIV_PAGE_SIZE);
     ut_ad!(buf_pool.get_free_list_size() == count);
+    ut_ad!(buf_pool.get_curr_size() == count * UNIV_PAGE_SIZE);
 
     for i in 0..count as PageNo {
         let resp = buf_pool.create(0, i, &mut mtr);
