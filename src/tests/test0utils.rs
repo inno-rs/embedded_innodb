@@ -5,6 +5,8 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 
+use tracing::info;
+
 use crate::{
     btr::{btr0btr::BTree, btr0cur::BTreeCursor},
     buf::{
@@ -19,6 +21,7 @@ use crate::{
     dict::dict0types::{Column, Field, Index},
     innodb::innodb0types::{PageId, PageNo, UNIV_PAGE_SIZE, UNIV_SQL_NULL},
     lock::lock0lock::LockSys,
+    mach::mach0data::mach_write_to_4,
     mtr::{
         mtr0mtr::Mtr,
         mtr0types::{FixMode, MemoSlot},
@@ -60,6 +63,7 @@ impl Drop for OwningPage {
 ///
 /// This enum is used to specify the type of field to create when generating
 /// test data structures.
+#[derive(Debug, Clone)]
 pub enum FieldType {
     /// Signed 32-bit integer
     Int(Option<i32>),
@@ -282,8 +286,14 @@ pub fn create_dfield(field_type: &FieldType) -> DField {
             // INT (signed 32-bit), value = 0x12345678 = 305419896
 
             let data = i
-                .map(|a| a.to_le_bytes().to_vec())
-                .unwrap_or(vec![0x12, 0x34, 0x56, 0x78]);
+                .or(Some(305419896))
+                .map(|a| {
+                    let mut buf = vec![0u8; a.to_le_bytes().len()];
+                    mach_write_to_4(&mut buf, a as u32);
+                    buf
+                })
+                .unwrap();
+
             let len = data.len();
             let mut typ = DTYPE_INT.clone();
             typ.pr_type |= DATA_NOT_NULL;
@@ -296,10 +306,17 @@ pub fn create_dfield(field_type: &FieldType) -> DField {
                 .unwrap()
         }
         FieldType::IntNullable(ni) => {
-            let data = ni.map(|a| a.to_le_bytes().to_vec()).unwrap_or(vec![]);
+            let data = ni
+                .map(|a| {
+                    let mut buf = vec![0u8; a.to_le_bytes().len()];
+                    mach_write_to_4(&mut buf, a as u32);
+                    buf
+                })
+                .unwrap_or(vec![]);
+
             let len = if data.len() == 0 { UNIV_SQL_NULL } else { data.len() };
             let mut typ = DTYPE_INT.clone();
-            if len != 0 {
+            if len != UNIV_SQL_NULL {
                 typ.pr_type |= DATA_NOT_NULL;
             }
 
@@ -409,7 +426,7 @@ pub fn create_dfield(field_type: &FieldType) -> DField {
 
             let len = if data.len() == 0 { UNIV_SQL_NULL } else { data.len() };
             let mut typ = DTYPE_FLOAT.clone();
-            if len != 0 {
+            if len != UNIV_SQL_NULL {
                 typ.pr_type |= DATA_NOT_NULL;
             }
 
