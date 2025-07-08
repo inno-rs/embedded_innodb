@@ -20,7 +20,7 @@ use crate::{
 /// * `a_length` - Length of the first field.
 /// * `b` - Pointer to the second field.
 /// * `b_length` - Length of the second field.
-///     
+///
 /// # Returns
 ///
 /// * `Ordering::Less` if the first field is less than the second field.
@@ -35,14 +35,14 @@ fn cmp_whole_field(
 ) -> Ordering {
     match m_type {
         DATA_FLOAT => {
-            let d1 = f32::from_be_bytes(a.try_into().unwrap());
-            let d2 = f32::from_be_bytes(b.try_into().unwrap());
+            let d1 = f32::from_le_bytes(a.try_into().unwrap());
+            let d2 = f32::from_le_bytes(b.try_into().unwrap());
             d1.total_cmp(&d2)
         }
 
         DATA_DOUBLE => {
-            let d1 = f64::from_be_bytes(a.try_into().unwrap());
-            let d2 = f64::from_be_bytes(b.try_into().unwrap());
+            let d1 = f64::from_le_bytes(a.try_into().unwrap());
+            let d2 = f64::from_le_bytes(b.try_into().unwrap());
             d1.total_cmp(&d2)
         }
 
@@ -263,6 +263,8 @@ pub fn cmp_dtuple_rec_with_match(
 
     // Match fields in a loop. We stop if we run out of fields in dtuple or find an externally stored field.
 
+    let mut result = Ordering::Equal;
+
     while cur_field < dtuple_n_fields {
         // If we have matched 0 bytes, it may be the case that both fields are SQL NULL, or the record or the dtuple may be a predefined minimum.
 
@@ -279,9 +281,11 @@ pub fn cmp_dtuple_rec_with_match(
 
             if dtuple_f_len == UNIV_SQL_NULL {
                 if rec_f_len == UNIV_SQL_NULL {
+                    result = Ordering::Equal;
                     // We need to move to the next field.
                     cur_field += 1;
                     cur_bytes = 0;
+                    continue;
                 } else {
                     return Ordering::Less;
                 }
@@ -294,16 +298,19 @@ pub fn cmp_dtuple_rec_with_match(
                 some_or_panic!(rec.rec_get_data(cur_field)).data_or_panic();
 
             if dtuple_field.dtype.m_type >= DATA_FLOAT as u16 {
-                let ret = cmp_whole_field(
+                result = cmp_whole_field(
                     dtuple_field.dtype.m_type as usize,
                     dtuple_field.dtype.pr_type,
-                    rec_data.as_bytes(),
                     dfield_data.as_slice(),
+                    rec_data.as_bytes(),
                 );
 
-                if ret != Ordering::Equal {
-                    return ret;
+                if result != Ordering::Equal {
+                    return result;
                 }
+                cur_field += 1;
+                cur_bytes = 0;
+                continue;
             }
         }
 
@@ -351,7 +358,7 @@ pub fn cmp_dtuple_rec_with_match(
         }
     }
 
-    Ordering::Equal
+    result
 }
 
 #[cfg(test)]

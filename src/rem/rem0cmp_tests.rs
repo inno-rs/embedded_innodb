@@ -2,8 +2,9 @@
 mod tests {
     use std::cmp::Ordering;
 
+    use pretty_assertions::assert_eq;
     use rstest::rstest;
-    use tracing::info;
+    use tracing::{debug, info};
 
     use crate::{
         dict::dict0types::Index,
@@ -14,6 +15,13 @@ mod tests {
             FieldType, create_dtuples, create_new_fields, create_records,
         },
     };
+
+    #[derive(Debug)]
+    struct ComparisonInput<const N: usize> {
+        pub left: [FieldType; N],
+        pub right: [FieldType; N],
+        pub expected: Ordering,
+    }
 
     #[rstest]
     #[case("", "", Ordering::Equal)]
@@ -90,7 +98,7 @@ mod tests {
     #[case(vec![s("a"), s("c")],vec![s("a"), s("b")],Ordering::Greater)]
     #[case(vec![FieldType::StringNullable, s("a")],vec![s("a"), s("a")],Ordering::Less)]
     #[case(vec![s("a"), FieldType::StringNullable],vec![s("a"), s("a")],Ordering::Less)]
-    // #[case(vec![FieldType::StringNull, FieldType::StringNull],vec![FieldType::StringNull, FieldType::StringNull],Ordering::Equal
+    // #[case(vec![FieldType::StringNullable, FieldType::StringNullable],vec![FieldType::StringNullable, FieldType::StringNullable],Ordering::Equal
     // )]
     #[case(vec![s("a"), s("a")],vec![FieldType::StringNullable, s("a")],Ordering::Greater)]
     #[case(vec![s(""), s("a")],vec![s(""), s("a")],Ordering::Equal)]
@@ -113,8 +121,8 @@ mod tests {
             index.add_field(field);
         }
 
-        info!("rec1={}", rec1);
-        info!("rec2={}", rec2);
+        debug!("rec1={}", rec1);
+        debug!("rec2={}", rec2);
 
         let result = cmp_rec_rec(rec1, rec2, &index);
 
@@ -215,7 +223,15 @@ mod tests {
     }
 
     #[rstest]
+    #[case(vec![FieldType::Int(Some(i32::MAX)), FieldType::Int(Some(20))], vec![FieldType::Int(Some(10)), FieldType::Int(Some(20))], Ordering::Greater
+    )]
+    #[case(vec![FieldType::Int(Some(i32::MAX)), FieldType::Int(Some(20))], vec![FieldType::Int(Some(i32::MAX)), FieldType::Int(Some(i32::MAX))], Ordering::Less
+    )]
+    #[case(vec![FieldType::Int(Some(312910472)), FieldType::Int(Some(170239484))], vec![FieldType::Int(Some(289174102)), FieldType::Int(Some(754120931))], Ordering::Greater
+    )]
     #[case(vec![FieldType::Int(Some(10)), FieldType::Int(Some(20))], vec![FieldType::Int(Some(10)), FieldType::Int(Some(20))], Ordering::Equal
+    )]
+    #[case(vec![FieldType::Int(Some(i32::MAX)), FieldType::Int(Some(20))], vec![FieldType::Int(Some(10)), FieldType::Int(Some(20))], Ordering::Greater
     )]
     #[case(vec![FieldType::Int(Some(5)), FieldType::Int(Some(100))], vec![FieldType::Int(Some(10)), FieldType::Int(Some(100))], Ordering::Less
     )]
@@ -226,10 +242,12 @@ mod tests {
     #[case(vec![FieldType::IntNullable(None), FieldType::Int(Some(20))], vec![FieldType::Int(Some(10)), FieldType::Int(Some(20))], Ordering::Less
     )]
     // todo: Handle nulls
-    // #[case(vec![FieldType::Int(Some(10)), FieldType::IntNull(None)], vec![FieldType::Int(Some(10)), FieldType::Int(Some(10))], Ordering::Less
+    // #[case(vec![FieldType::Int(Some(10)), FieldType::IntNullable(None)], vec![FieldType::Int(Some(10)), FieldType::Int(Some(10))], Ordering::Less
     // )]
-    // #[case(vec![FieldType::IntNull(None), FieldType::IntNull(None)], vec![FieldType::IntNull(None), FieldType::IntNull(None)], Ordering::Equal
-    // )]
+    #[case(vec![FieldType::Int(Some(10)), FieldType::Int(Some(10))], vec![FieldType::Int(Some(10)), FieldType::IntNullable(None)], Ordering::Greater
+    )]
+    #[case(vec![FieldType::IntNullable(None), FieldType::IntNullable(None)], vec![FieldType::IntNullable(None), FieldType::IntNullable(None)], Ordering::Equal
+    )]
     #[case(vec![FieldType::Int(Some(42)), FieldType::Int(Some(0))], vec![FieldType::Int(Some(42)), FieldType::Int(Some(1))], Ordering::Less
     )]
     fn test_cmp_dtuple_rec_match_with_multiple_int_fields(
@@ -260,6 +278,254 @@ mod tests {
         );
 
         assert_eq!(result, out);
+    }
+
+    #[test]
+    fn test_cmp_dtuple_rec_match_with_multiple_float_fields() {
+        let input = Vec::from([
+            ComparisonInput {
+                left: [
+                    FieldType::Float(Some(1.0e30)),
+                    FieldType::Float(Some(2.0)),
+                ],
+                right: [
+                    FieldType::Float(Some(1.0e30)),
+                    FieldType::Float(Some(2.0)),
+                ],
+                expected: Ordering::Equal,
+            },
+            ComparisonInput {
+                left: [
+                    FieldType::Float(Some(1.0e38)), // near max f32
+                    FieldType::Float(Some(0.0)),
+                ],
+                right: [
+                    FieldType::Float(Some(1.0e37)),
+                    FieldType::Float(Some(0.0)),
+                ],
+                expected: Ordering::Greater,
+            },
+            ComparisonInput {
+                left: [
+                    FieldType::Float(Some(-1.0e30)),
+                    FieldType::Float(Some(5.0)),
+                ],
+                right: [
+                    FieldType::Float(Some(-1.0e30)),
+                    FieldType::Float(Some(10.0)),
+                ],
+                expected: Ordering::Less,
+            },
+            ComparisonInput {
+                left: [
+                    FieldType::Float(Some(1.0e-30)),
+                    FieldType::Float(Some(0.0)),
+                ],
+                right: [
+                    FieldType::Float(Some(1.0e-30)),
+                    FieldType::Float(Some(0.1)),
+                ],
+                expected: Ordering::Less,
+            },
+            ComparisonInput {
+                left: [
+                    FieldType::Float(Some(0.0)),
+                    FieldType::Float(Some(0.0)),
+                ],
+                right: [
+                    FieldType::Float(Some(0.0)),
+                    FieldType::Float(Some(-1.0e-38)),
+                ],
+                expected: Ordering::Greater,
+            },
+            ComparisonInput {
+                left: [
+                    FieldType::Float(Some(-3.4e38)), // near min f32
+                    FieldType::Float(Some(0.0)),
+                ],
+                right: [
+                    FieldType::Float(Some(-3.0e38)),
+                    FieldType::Float(Some(0.0)),
+                ],
+                expected: Ordering::Less,
+            },
+            ComparisonInput {
+                left: [
+                    FieldType::FloatNullable(None),
+                    FieldType::Float(Some(10.0)),
+                ],
+                right: [
+                    FieldType::Float(Some(1.0e5)),
+                    FieldType::Float(Some(10.0)),
+                ],
+                expected: Ordering::Less,
+            },
+            ComparisonInput {
+                left: [
+                    FieldType::FloatNullable(None),
+                    FieldType::FloatNullable(None),
+                ],
+                right: [
+                    FieldType::FloatNullable(None),
+                    FieldType::FloatNullable(None),
+                ],
+                expected: Ordering::Equal,
+            },
+        ]);
+
+        for comp_input in input {
+            let dtuples = create_dtuples(1, comp_input.left.to_vec());
+            let dtuple = &dtuples[0];
+
+            let owning_page = create_records(1, comp_input.right.to_vec());
+            let user_records = owning_page.page.page_get_user_records();
+            let rec2 = user_records[0];
+
+            let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
+            let fields = create_new_fields(8);
+            for field in fields {
+                index.add_field(field);
+            }
+
+            let mut matched_fields = 0;
+            let mut matched_bytes = 0;
+            let result = cmp_dtuple_rec_with_match(
+                dtuple,
+                rec2,
+                &mut matched_fields,
+                &mut matched_bytes,
+            );
+
+            assert_eq!(
+                result, comp_input.expected,
+                "Failed for input: {:?}",
+                comp_input
+            );
+        }
+    }
+
+    #[test]
+    fn test_cmp_dtuple_rec_match_with_multiple_double_fields() {
+        let input = Vec::from([
+            ComparisonInput {
+                left: [
+                    FieldType::Double(Some(1.0e300)),
+                    FieldType::Double(Some(2.0)),
+                ],
+                right: [
+                    FieldType::Double(Some(1.0e300)),
+                    FieldType::Double(Some(2.0)),
+                ],
+                expected: Ordering::Equal,
+            },
+            ComparisonInput {
+                left: [
+                    FieldType::Double(Some(1.0e308)), // near max f64
+                    FieldType::Double(Some(0.0)),
+                ],
+                right: [
+                    FieldType::Double(Some(1.0e307)),
+                    FieldType::Double(Some(0.0)),
+                ],
+                expected: Ordering::Greater,
+            },
+            ComparisonInput {
+                left: [
+                    FieldType::Double(Some(-1.0e300)),
+                    FieldType::Double(Some(5.0)),
+                ],
+                right: [
+                    FieldType::Double(Some(-1.0e300)),
+                    FieldType::Double(Some(10.0)),
+                ],
+                expected: Ordering::Less,
+            },
+            ComparisonInput {
+                left: [
+                    FieldType::Double(Some(1.0e-300)),
+                    FieldType::Double(Some(0.0)),
+                ],
+                right: [
+                    FieldType::Double(Some(1.0e-300)),
+                    FieldType::Double(Some(0.1)),
+                ],
+                expected: Ordering::Less,
+            },
+            ComparisonInput {
+                left: [
+                    FieldType::Double(Some(0.0)),
+                    FieldType::Double(Some(0.0)),
+                ],
+                right: [
+                    FieldType::Double(Some(0.0)),
+                    FieldType::Double(Some(-1.0e-308)),
+                ],
+                expected: Ordering::Greater,
+            },
+            ComparisonInput {
+                left: [
+                    FieldType::Double(Some(-1.7e308)), // near min f64
+                    FieldType::Double(Some(0.0)),
+                ],
+                right: [
+                    FieldType::Double(Some(-1.5e308)),
+                    FieldType::Double(Some(0.0)),
+                ],
+                expected: Ordering::Less,
+            },
+            ComparisonInput {
+                left: [
+                    FieldType::DoubleNullable(None),
+                    FieldType::Double(Some(10.0)),
+                ],
+                right: [
+                    FieldType::Double(Some(1.0e5)),
+                    FieldType::Double(Some(10.0)),
+                ],
+                expected: Ordering::Less,
+            },
+            ComparisonInput {
+                left: [
+                    FieldType::DoubleNullable(None),
+                    FieldType::DoubleNullable(None),
+                ],
+                right: [
+                    FieldType::DoubleNullable(None),
+                    FieldType::DoubleNullable(None),
+                ],
+                expected: Ordering::Equal,
+            },
+        ]);
+
+        for comp_input in input {
+            let dtuples = create_dtuples(1, comp_input.left.to_vec());
+            let dtuple = &dtuples[0];
+
+            let owning_page = create_records(1, comp_input.right.to_vec());
+            let user_records = owning_page.page.page_get_user_records();
+            let rec2 = user_records[0];
+
+            let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
+            let fields = create_new_fields(8);
+            for field in fields {
+                index.add_field(field);
+            }
+
+            let mut matched_fields = 0;
+            let mut matched_bytes = 0;
+            let result = cmp_dtuple_rec_with_match(
+                dtuple,
+                rec2,
+                &mut matched_fields,
+                &mut matched_bytes,
+            );
+
+            assert_eq!(
+                result, comp_input.expected,
+                "Failed for input: {:?}",
+                comp_input
+            );
+        }
     }
 
     fn s(value: &str) -> FieldType {
