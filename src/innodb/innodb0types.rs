@@ -1,4 +1,7 @@
-use std::alloc::{Layout, alloc, dealloc};
+use std::{
+    alloc::{Layout, alloc, dealloc},
+    fmt::Display,
+};
 
 use strum_macros::Display;
 
@@ -102,6 +105,16 @@ pub struct PageId {
     pub space_id: SpaceId,
     /// The page number of the page.
     pub page_no: PageNo,
+}
+
+impl Display for PageId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PageId(space_id={}, page_no={})",
+            self.space_id, self.page_no
+        )
+    }
 }
 
 impl PageId {

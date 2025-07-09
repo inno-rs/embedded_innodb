@@ -4,11 +4,12 @@ use tracing::error;
 
 use crate::{
     data::data0types::{
-        BigRec, DATA_CHAR, DATA_CLIENT, DATA_INT, DATA_VARCHAR, DField,
-        DTuple, DType,
+        BigRec, DATA_CHAR, DATA_CLIENT, DATA_INT, DATA_NOT_NULL, DATA_VARCHAR,
+        DField, DFieldBuilder, DTYPE_VARCHAR, DTuple, DTupleBuilder, DType,
+        UNIV_SMALLEST_REC_DATA,
     },
     innodb::innodb0types::UNIV_SQL_NULL,
-    rem::rem0rec::Record,
+    rem::rem0rec::{REC_INFO_MIN_REC_FLAG, Record},
     ut::ut0dbg::{ut_a, ut_ad},
     ut_panic,
 };
@@ -117,7 +118,7 @@ impl DTuple {
     /// * `info_bits` - The info bits to set.
     ///
     /// # Returns
-    ///     
+    ///
     /// * `None` if the operation was successful, or an error if it failed.
     pub fn dtuple_set_info_bits(&mut self, info_bits: usize) {
         self.info_bits = self.info_bits;
@@ -130,7 +131,7 @@ impl DTuple {
     /// * `n_fields_cmp` - The number of fields to use during comparison.
     ///
     /// # Returns
-    ///     
+    ///
     /// * `None` if the operation was successful, or an error if it failed.
     pub fn dtuple_set_n_fields_cmp(&mut self, n_fields_cmp: usize) {
         self.n_fields_cmp = n_fields_cmp;
@@ -186,7 +187,7 @@ impl DTuple {
     /// Gets the number of fields in the tuple.
     ///
     /// # Returns
-    ///     
+    ///
     /// * The number of fields in the tuple.
     ///
     pub fn dtuple_get_n_fields(&self) -> usize {
@@ -196,7 +197,7 @@ impl DTuple {
     /// Gets the number of fields in the tuple to be used for comparison.
     ///
     /// # Returns
-    ///     
+    ///
     /// * The number of fields in the tuple.
     ///
     pub fn dtuple_get_n_fields_cmp(&self) -> usize {
@@ -272,6 +273,41 @@ impl DTuple {
         }
 
         true
+    }
+
+    /// Creates a DTuple representing the smallest record in the universe.
+    /// Any record created by the user should be larger than this.
+    ///
+    /// # Returns
+    ///
+    /// * A DTuple instance representing the smallest record.
+    pub fn dtuple_get_smallest(fields: Vec<DField>) -> DTuple {
+        let data = UNIV_SMALLEST_REC_DATA.bytes().collect::<Vec<u8>>();
+        let len = data.len();
+        let mut typ = DTYPE_VARCHAR.clone();
+        typ.pr_type |= DATA_NOT_NULL;
+
+        let fields_len = fields.len() + 1 /* One for UNIV_SMALLEST_REC_DATA*/;
+
+        let dfield = DFieldBuilder::default()
+            .data(data)
+            .len(len)
+            .dtype(typ)
+            .build()
+            .unwrap();
+
+        DTupleBuilder::default()
+            .fields(
+                std::iter::once(dfield)
+                    .into_iter()
+                    .chain(fields)
+                    .collect::<Vec<DField>>(),
+            )
+            .n_fields(fields_len)
+            .info_bits(REC_INFO_MIN_REC_FLAG)
+            .n_fields_cmp(1)
+            .build()
+            .unwrap()
     }
 }
 

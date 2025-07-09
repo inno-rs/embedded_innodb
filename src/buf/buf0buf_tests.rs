@@ -57,7 +57,7 @@ pub(super) mod tests {
 
     #[rstest]
     fn test_free_list_returns_none(buf_pool_fixture: BufPoolFixture) {
-        let mut buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
+        let buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
 
         let r = buf_pool.get_free_block();
         assert!(r.is_none());
@@ -142,14 +142,14 @@ pub(super) mod tests {
         assert_eq!(buf_pool.get_curr_size(), 10 * UNIV_PAGE_SIZE);
 
         for i in 0..10 {
-            let resp = buf_pool.create(i, i, &mut mtr);
+            let resp = buf_pool.create(0, i, &mut mtr);
             assert!(resp.is_some());
         }
 
         for i in 1..10 {
             let page = buf_pool.get(Request {
                 rw_latch: ReadWriteLatch::SLatch,
-                page_id: PageId { space_id: i, page_no: i },
+                page_id: PageId { space_id: 0, page_no: i },
                 mode: BUF_GET_IF_IN_POOL,
                 mtr: &mut mtr,
             });

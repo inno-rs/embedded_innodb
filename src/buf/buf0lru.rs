@@ -4,13 +4,12 @@ use std::{
     sync::{Arc, Mutex, RwLock, Weak, atomic::Ordering::Relaxed},
 };
 
-use intrusive_collections::{LinkedList, UnsafeRef, linked_list::CursorMut};
+use intrusive_collections::{LinkedList, UnsafeRef};
 use tracing::info;
 
-use crate::buf::buf0buf::BufPoolInner;
 use crate::{
     buf::{
-        buf0buf::BufPool,
+        buf0buf::{BufPool, BufPoolInner},
         buf0types::{
             BufBlock, BufIoFix, BufPage, BufPageState,
             BufPageState::{BufBlockNotUsed, BufBlockReadyForUse},
@@ -584,7 +583,7 @@ impl BufLRU {
 
         // Get the page from the buffer pool hashmap.
         let buf_pool = self.buf_pool.upgrade().unwrap();
-        let mut buf_pool_ref = buf_pool.lock().unwrap();
+        let buf_pool_ref = buf_pool.lock().unwrap();
         buf_pool_ref.hash_remove_page(space_id, page_no);
 
         match buf_page.get_state() {

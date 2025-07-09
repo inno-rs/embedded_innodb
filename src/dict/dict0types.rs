@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use crate::{
-    data::data0types::{DATA_NOT_NULL, DATA_SYS_CHILD, DTuple, DType},
+    data::data0types::{
+        DATA_NOT_NULL, DATA_SYS_CHILD, DFieldBuilder, DTuple, DType,
+    },
     innodb::innodb0types::{PageId, PageNo},
     rem::rem0rec::{REC_STATUS_NODE_PTR, Record},
     some_or_panic,
@@ -36,7 +38,7 @@ pub struct Index {
     id: usize,
     /// The page ID of the root page of this index in the B-tree structure.
     page_id: PageId,
-    /// Inner struct with requires mutability.
+    /// Inner struct which requires mutability.
     inner: Arc<Mutex<IndexInner>>,
 }
 
@@ -115,38 +117,113 @@ impl Index {
         self.page_id.page_no
     }
 
+    /// Returns the page identifier for this index.
+    ///
+    /// The page ID consists of a space ID and a page number, uniquely identifying
+    /// the page where this index is stored.
+    ///
+    /// # Returns
+    /// The page ID of this index
     pub fn get_page_id(&self) -> PageId {
         self.page_id
     }
 
+    /// Returns the type of this index.
+    ///
+    /// The index type can be clustered, unique, or universal, which determines
+    /// how the index is structured and used.
+    ///
+    /// # Returns
+    /// The type of this index as an IndexType enum
     pub fn index_type(&self) -> IndexType {
         self.inner.lock().unwrap().index_type.clone()
     }
 
+    /// Returns the number of user-defined columns in this index.
+    ///
+    /// User-defined columns are those explicitly specified by the user when
+    /// creating the index, as opposed to system-generated columns.
+    ///
+    /// # Returns
+    /// The number of user-defined columns
     pub fn n_user_defined_cols(&self) -> usize {
         self.inner.lock().unwrap().n_user_defined_cols
     }
 
+    /// Returns the number of columns that form the unique key for this index.
+    ///
+    /// This value represents how many columns are needed to uniquely identify
+    /// a record in this index.
+    ///
+    /// # Returns
+    /// The number of columns forming the unique key
     pub fn n_uniq(&self) -> usize {
         self.inner.lock().unwrap().n_uniq
     }
 
+    /// Sets the number of columns that form the unique key for this index.
+    ///
+    /// This method updates the number of columns needed to uniquely identify
+    /// a record in this index.
+    ///
+    /// # Parameters
+    /// * `n_uniq` - The new number of columns forming the unique key
+    pub fn set_n_uniq(&self, n_uniq: usize) {
+        self.inner.lock().unwrap().n_uniq = n_uniq;
+    }
+
+    /// Returns the number of defined columns in this index.
+    ///
+    /// Defined columns are those that have been explicitly defined with a data type
+    /// and other attributes in the index schema.
+    ///
+    /// # Returns
+    /// The number of defined columns in the index
     pub fn n_defined(&self) -> usize {
         self.inner.lock().unwrap().n_defined
     }
 
+    /// Returns the number of nullable columns in this index.
+    ///
+    /// Nullable columns are those that can contain NULL values. This count is important
+    /// for index operations and storage optimizations.
+    ///
+    /// # Returns
+    /// The number of nullable columns in the index
     pub fn n_nullable(&self) -> usize {
         self.inner.lock().unwrap().n_nullable
     }
 
+    /// Returns the page identifier for this index.
+    ///
+    /// This is an alias for get_page_id() that provides the same functionality.
+    /// The page ID uniquely identifies the page where this index is stored.
+    ///
+    /// # Returns
+    /// The page ID of this index
     pub fn page_id(&self) -> PageId {
         self.page_id
     }
 
-    pub fn add_field(&mut self, field: Field) {
+    /// Adds a new field to this index.
+    ///
+    /// This method appends a field to the list of fields in the index.
+    /// Fields represent the columns that make up the index.
+    ///
+    /// # Parameters
+    /// * `field` - The field to add to the index
+    pub fn add_field(&self, field: Field) {
         self.inner.lock().unwrap().fields.push(field);
     }
 
+    /// Determines if this index is a clustered index.
+    ///
+    /// A clustered index is one where the data rows are stored in the same order
+    /// as the index. This is in contrast to secondary indexes, which point to the
+    /// primary key.
+    ///
+    /// # Returns
+    /// `true` if this is a clustered index, `false` otherwise
     pub fn is_clustered(&self) -> bool {
         match self.inner.lock().unwrap().index_type {
             IndexType::DictClustered => true,
@@ -161,8 +238,9 @@ impl Index {
     /// `n_uniq` if clustered.
     /// Otherwise, all fields.
     pub fn get_n_unique_in_tree(&self) -> usize {
+        let is_clustered = self.is_clustered();
         let inner = self.inner.lock().unwrap();
-        match self.is_clustered() {
+        match is_clustered {
             true => inner.n_uniq,
             false => inner.fields.len(),
         }
@@ -197,7 +275,7 @@ impl Index {
     /// # Returns
     ///
     /// `DTuple` containing the contents of the record and the child page number in addition.
-    pub fn build_node_ptr(&self, rec: Record, page_no: PageNo) -> DTuple {
+    pub fn build_inner_node(&self, rec: Record, page_no: PageNo) -> DTuple {
         let n_unique = self.get_n_unique_in_tree();
         // We are creating a non-leaf node.
         // The last field is the page no to the child nodes of the btree.
@@ -219,13 +297,47 @@ impl Index {
         dtype.pr_type = DATA_NOT_NULL;
         dtype.len = 4;
 
-        rec.rec_copy_prefix_to_dtuple(n_unique);
+        rec.rec_copy_prefix_to_dtuple(n_unique, &mut dtuple);
 
         dtuple.dtuple_set_info_bits(
             dtuple.dtuple_get_info_bits() | REC_STATUS_NODE_PTR,
         );
 
         ut_ad!(dtuple.dtuple_type_checked());
+
+        dtuple
+    }
+
+    /// Builds the smallest possible inner node for a B-tree index.
+    ///
+    /// This method creates a data tuple that represents the smallest possible
+    /// inner node in a B-tree, containing only a reference to a child page.
+    /// It's typically used when creating new index pages or during page splits.
+    ///
+    /// # Parameters
+    /// * `page_no` - The page number of the child page to reference
+    ///
+    /// # Returns
+    /// A data tuple representing the smallest inner node
+    pub fn build_smallest_inner_node(&self, page_no: PageNo) -> DTuple {
+        let dfield = DFieldBuilder::default()
+            .data(page_no.to_le_bytes().to_vec())
+            .len(4)
+            .ext(false)
+            .dtype(DType {
+                m_type: DATA_SYS_CHILD as u16,
+                pr_type: DATA_NOT_NULL,
+                len: 4,
+                mb_min_len: 0,
+                mb_max_len: 0,
+            })
+            .build()
+            .unwrap();
+
+        let mut dtuple = DTuple::dtuple_get_smallest(vec![dfield]);
+        dtuple.dtuple_set_info_bits(
+            REC_STATUS_NODE_PTR | dtuple.dtuple_get_info_bits(),
+        );
 
         dtuple
     }
@@ -247,7 +359,7 @@ impl Index {
 
         self.copy_types(&mut dtuple, n_fields);
 
-        rec.rec_copy_prefix_to_dtuple(n_fields);
+        rec.rec_copy_prefix_to_dtuple(n_fields, &mut dtuple);
 
         ut_ad!(dtuple.dtuple_type_checked());
 

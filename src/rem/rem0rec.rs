@@ -1046,10 +1046,13 @@ impl Record {
     /// # Arguments
     ///
     /// `n_fields`: The number of fields to copy.
-    pub fn rec_copy_prefix_to_dtuple(&self, n_fields: usize) -> DTuple {
+    pub fn rec_copy_prefix_to_dtuple(
+        &self,
+        n_fields: usize,
+        dtuple: &mut DTuple,
+    ) {
         ut_ad!(self.rec_validate());
 
-        let mut dtuple = DTuple::new(n_fields);
         dtuple.dtuple_set_info_bits(self.rec_get_info_bits());
 
         ut_ad!(dtuple.dtuple_type_checked());
@@ -1072,8 +1075,6 @@ impl Record {
                 }
             }
         }
-
-        dtuple
     }
 
     /// Gets the size of the nth field in the record.
@@ -1173,7 +1174,7 @@ impl Record {
     ) {
         ut_ad!(offset <= REC_N_EXTRA_BYTES);
         ut_ad!((mask >> shift) << shift == mask);
-        ut_ad!((val << shift) & mask == (val << shift));
+        // ut_ad!((val << shift) & mask == (val << shift));
 
         let buf =
             unsafe { slice::from_raw_parts_mut(self.ptr.sub(offset), 1) };

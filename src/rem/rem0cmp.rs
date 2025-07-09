@@ -254,9 +254,9 @@ pub fn cmp_dtuple_rec_with_match(
         let rec_info = rec.rec_get_info_bits();
         let tup_info = dtuple.dtuple_get_info_bits();
 
-        if rec_info & REC_INFO_MIN_REC_FLAG == REC_INFO_MIN_REC_FLAG {
+        if tup_info & REC_INFO_MIN_REC_FLAG == REC_INFO_MIN_REC_FLAG {
             return Ordering::Less;
-        } else if tup_info & REC_INFO_MIN_REC_FLAG == REC_INFO_MIN_REC_FLAG {
+        } else if rec_info & REC_INFO_MIN_REC_FLAG == REC_INFO_MIN_REC_FLAG {
             return Ordering::Greater;
         }
     }

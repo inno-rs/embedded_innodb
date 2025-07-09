@@ -3,21 +3,16 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 
+use tracing::info;
+
 use crate::{
-    btr::{
-        btr0cur::{
-            BTR_KEEP_SYS_FLAG, BTR_NO_LOCKING_FLAG, BTR_NO_UNDO_LOG,
-            BTreeCursor,
-        },
-        btr0types::BtrLatchMode::BtrContModifyTree,
-    },
+    btr::btr0cur::BTreeCursor,
     buf::{
         buf0buf::BufPool,
         buf0types::{BUF_GET_ALWAYS, BufBlock, Request},
     },
-    data::data0types::DTuple,
     dict::dict0types::Index,
-    fil::fil0types::{FIL_PAGE_DATA, FIL_PAGE_NEXT, FILL_NULL},
+    fil::fil0types::{FIL_PAGE_DATA, FIL_PAGE_NEXT, FIL_PAGE_PREV, FILL_NULL},
     fsp::{fsp0fsp::Fsp, fsp0types::Direction},
     innodb::innodb0types::{PageId, PageNo, SpaceId},
     lock::lock0lock::LockSys,
@@ -26,16 +21,13 @@ use crate::{
         mtr0mtr::{MemoSlot, Mtr},
         mtr0types::{FixMode, MlogType},
     },
-    page::{
-        page0cur::PAGE_CUR_LE,
-        page0page::{
-            PAGE_BTR_SEG_LEAF, PAGE_HEADER, PAGE_INDEX_ID, PAGE_LEVEL, Page,
-        },
+    page::page0page::{
+        PAGE_BTR_SEG_LEAF, PAGE_HEADER, PAGE_INDEX_ID, PAGE_LEVEL, Page,
     },
     rem::rem0rec::Record,
     some_or_panic,
     sync::sync0rw::ReadWriteLatch,
-    ut::ut0dbg::ut_ad,
+    ut::ut0dbg::{ut_a, ut_ad},
     ut_panic,
 };
 
@@ -52,6 +44,8 @@ pub struct BTree {
     lock_sys: Arc<Mutex<LockSys>>,
     /// Reference to index.
     index: Arc<Index>,
+    /// Fill factor for the B-tree. If a page is more than this percentage full, we will split it.
+    fill_factor: usize,
 }
 
 impl BTree {
@@ -68,12 +62,25 @@ impl BTree {
         fsp: Arc<Mutex<Fsp>>,
         lock_sys: Arc<Mutex<LockSys>>,
         index: Arc<Index>,
+        fill_factor: usize,
     ) -> Self {
-        BTree { buf_pool, fsp, lock_sys, index }
+        BTree { buf_pool, fsp, lock_sys, index, fill_factor }
     }
 
     pub fn get_index(&self) -> &Arc<Index> {
         &self.index
+    }
+
+    /// Returns the fill factor for the B-tree.
+    ///
+    /// The fill factor determines how full pages should be when
+    /// operations like splits are performed. It's expressed as a percentage
+    /// of the maximum page capacity.
+    ///
+    /// # Returns
+    /// The fill factor value as a percentage (0-100)
+    pub fn get_fill_factor(&self) -> usize {
+        self.fill_factor
     }
 
     /// Retrieves the previous user record in the B-tree.
@@ -138,53 +145,19 @@ impl BTree {
         None
     }
 
-    /// Inserts a data tuple into the B-tree at a non-leaf level.
+    /// Utility function to create a new B-tree cursor for the current btree.
     ///
-    /// This method is used during page splits and tree structure modifications
-    /// to insert index entries at non-leaf levels of the B-tree. It creates a
-    /// cursor, positions it at the appropriate location in the specified level,
-    /// and performs a pessimistic insert operation.
+    /// # Returns
     ///
-    /// # Arguments
+    /// A new instance of `BTreeCursor` initialized with the current B-tree
     ///
-    /// * `level` - The level at which to insert (must be > 0, where 0 is leaf level)
-    /// * `index` - The index structure being modified
-    /// * `dtuple` - The data tuple to insert
-    /// * `mtr` - Mini transaction for logging the operation
-    ///
-    /// # Note
-    ///
-    /// It is assumed that the mini-transaction (mtr) holds an exclusive latch (x-latch)
-    /// on the tree during this operation.
-    pub fn insert_on_non_leaf_level(
-        &mut self,
-        level: usize,
-        index: Arc<Index>,
-        dtuple: &mut DTuple,
-        mtr: &mut Mtr,
-    ) {
-        ut_ad!(level > 0);
-
-        let mut btr_cursor = BTreeCursor::new(
+    pub fn create_btr_cursor(&self) -> BTreeCursor {
+        BTreeCursor::new(
             self,
             self.index.clone(),
             self.buf_pool.clone(),
             self.lock_sys.clone(),
-        );
-
-        btr_cursor.search_to_nth_level(
-            vec![],
-            level,
-            dtuple,
-            PAGE_CUR_LE,
-            BtrContModifyTree as usize,
-            mtr,
-        );
-
-        let flag = BTR_NO_LOCKING_FLAG | BTR_KEEP_SYS_FLAG | BTR_NO_UNDO_LOG;
-        let result = btr_cursor.pessimistic_insert(flag, dtuple, 0, mtr);
-
-        ut_ad!(result.is_ok());
+        )
     }
 
     /// Retrieves the next user record in the B-tree.
@@ -352,6 +325,12 @@ impl BTree {
         let root_block = self.root_get(mtr);
         let root_page = root_block.read().unwrap().get_page();
 
+        info!(
+            "page_alloc: Allocating page for index {} at level {}",
+            self.index.get_index_id(),
+            level
+        );
+
         let new_page_no =
             self.fsp.lock().unwrap().fseg_alloc_free_page_general(
                 root_page.page_get_space_id(),
@@ -379,12 +358,11 @@ impl BTree {
             let buf_block = buf_block.write().unwrap();
             let page = buf_block.get_page();
 
+            // todo: Remove this from here.
+
             // Initialize the page
             let mut page =
                 Page::page_create(self.index.deref(), &buf_block, Some(mtr));
-
-            // Set the next page pointer to FILL_NULL
-            Self::page_set_next(&page, FILL_NULL, mtr);
 
             // Set the index ID for the page
             Self::page_set_index_id(&mut page, self.index.get_index_id(), mtr);
@@ -407,6 +385,19 @@ impl BTree {
     /// * `mtr` - The mini-transaction that logs this operation
     pub fn page_set_next(page: &Page, next: PageNo, mtr: &mut Mtr) {
         mtr.write_u32(page, FIL_PAGE_NEXT, next as u32, MlogType::MLOG_4BYTES);
+    }
+
+    /// Sets the previous page pointer in the given page.
+    ///
+    /// This function updates the page's previous page pointer to point to the specified page number.
+    ///
+    /// # Arguments
+    ///
+    /// * `page` - The page whose previous pointer will be updated
+    /// * `prev` - The page number to set as the previous page
+    /// * `mtr` - The mini-transaction that logs this operation
+    pub fn page_set_prev(page: &Page, prev: PageNo, mtr: &mut Mtr) {
+        mtr.write_u32(page, FIL_PAGE_PREV, prev as u32, MlogType::MLOG_4BYTES);
     }
 
     /// Creates and initializes a B-tree page.
@@ -511,5 +502,33 @@ impl BTree {
         );
 
         true
+    }
+
+    /// Retrieves the child page number from an inner node record.
+    ///
+    /// This function extracts the child page number from the last field of the record,
+    /// which is expected to be a 4-byte big-endian integer.
+    ///
+    /// # Arguments
+    ///
+    /// * `rec` - The record from which to extract the child page number
+    ///
+    /// # Returns
+    ///
+    /// The child page number as a `PageNo`.
+    pub fn inner_node_get_child_page_no(&self, rec: &Record) -> PageNo {
+        let n_fields = rec.rec_get_n_fields();
+        ut_a!(rec.rec_get_n_fields() == self.index.get_n_unique_in_tree() + 1);
+
+        let nth_field = rec.rec_get_data(n_fields - 1);
+        ut_ad!(nth_field.is_some());
+
+        let nth_field = nth_field.unwrap();
+        let data = nth_field.data_or_panic();
+
+        ut_ad!(data.len() == 4);
+
+        // todo: Start writing child page no using mach_write_to_4
+        u32::from_le_bytes(data.as_bytes().try_into().unwrap()) as PageNo
     }
 }

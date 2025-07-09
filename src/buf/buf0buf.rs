@@ -1,17 +1,16 @@
 use std::{
     alloc::{Layout, alloc_zeroed},
-    cmp::min,
     collections::HashMap,
     ops::DerefMut,
     sync::{Arc, Mutex, RwLock, atomic::Ordering::Relaxed},
 };
 
-use crate::buf::buf0flu::{BufFlush, BufFlushType};
 use intrusive_collections::{LinkedList, UnsafeRef};
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{
     buf::{
+        buf0flu::{BufFlush, BufFlushType},
         buf0lru::BufLRU,
         buf0rea::BufRea,
         buf0types::{
@@ -255,7 +254,7 @@ impl BufPool {
             inner.page_hash.get(&request.page_id).cloned()
         };
 
-        match block_opt {
+        match block_opt.clone() {
             // 2. The page is not in the buffer pool, and the request mode is BUF_GET_NO_LATCH.
             // Return None.
             None => {
@@ -273,24 +272,23 @@ impl BufPool {
                 let b = match result {
                     Ok(Some(block)) => {
                         // Successfully initialized the page for read.
+                        info!(
+                            "page initialized for read: {}",
+                            request.page_id
+                        );
                         Some(block)
                     }
                     Ok(None) => {
                         ut_panic!(
                             "Failed to initialize page for read: Page not found in tablespace"
                         );
-                        None
                     }
                     Err(err) => {
-                        tracing::error!(
-                            "Failed to initialize page for read: {}",
-                            err
-                        );
+                        error!("Failed to initialize page for read: {}", err);
                         ut_panic!(
                             "Failed to initialize page for read: {}",
                             err
                         );
-                        None
                     }
                 };
 
@@ -312,7 +310,14 @@ impl BufPool {
                     n_retries += 1;
                 }
             }
-            Some(_) => {}
+            Some(block) => {
+                ut_ad!(
+                    block.read().unwrap().get_page_id() == request.page_id,
+                    "Block page_id={} does not match request page_id={}",
+                    block.read().unwrap().get_page_id(),
+                    request.page_id
+                );
+            }
         }
 
         let block =
@@ -407,7 +412,15 @@ impl BufPool {
     ) -> Option<Arc<RwLock<BufBlock>>> {
         let page_id = PageId { space_id, page_no };
         let inner = self.inner.lock().unwrap();
-        inner.page_hash.get(&page_id).cloned()
+        let ret = inner.page_hash.get(&page_id).cloned();
+
+        ut_ad!(
+            ret.is_none()
+                || ret.as_ref().unwrap().read().unwrap().get_page_id()
+                    == page_id
+        );
+
+        ret
     }
 
     /// Removes a page from the buffer pool's hash table.
@@ -793,7 +806,7 @@ impl BufPool {
 
         let mut buf_frame_ptr = mem_ptr;
         for index in 0..no_of_pages {
-            let buf_page = BufPage::new(index as SpaceId, index as PageNo);
+            let buf_page = BufPage::new(0, index as PageNo);
             let buf_block =
                 Arc::new(RwLock::new(BufBlock::new(buf_page, buf_frame_ptr)));
 
@@ -846,7 +859,6 @@ impl BufPool {
         let mut inner = self.inner.lock().unwrap();
         inner.chunks.push(chunk);
         inner.curr_size = pool_size;
-        // inner lock is released here
     }
 
     // ——————————————————————————————————————————————————
