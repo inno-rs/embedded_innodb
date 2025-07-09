@@ -1,19 +1,20 @@
 use std::{
     cmp::min,
     ops::Deref,
-    sync::{Arc, Mutex, RwLock, Weak},
+    sync::{Arc, Mutex, RwLock, Weak, atomic::Ordering::Relaxed},
 };
 
-use intrusive_collections::{LinkedList, UnsafeRef};
+use intrusive_collections::{LinkedList, UnsafeRef, linked_list::CursorMut};
 use tracing::info;
 
+use crate::buf::buf0buf::BufPoolInner;
 use crate::{
     buf::{
         buf0buf::BufPool,
         buf0types::{
             BufBlock, BufIoFix, BufPage, BufPageState,
             BufPageState::{BufBlockNotUsed, BufBlockReadyForUse},
-            FreeListAdapter, LruAdapter, Request,
+            BufPoolStats, FreeListAdapter, LruAdapter, Request,
         },
     },
     innodb::innodb0types::PageId,
@@ -536,7 +537,7 @@ impl BufLRU {
     /// the page from the buffer pool's hash table.
     ///
     /// # Parameters
-    /// * `buf_page` - The buffer page to remove
+    /// * `buf_page` - The  buffer page to remove
     ///
     /// # Returns
     /// * `BufPageState` - The new state of the buffer page after removal (typically BufBlockMemory)
@@ -598,5 +599,288 @@ impl BufLRU {
         }
 
         BufPageState::BufBlockMemory
+    }
+
+    /// Attempts to evict (“free”) one cold page from the LRU list, scanning up to
+    /// `n_iterations` frames before giving up.
+    ///
+    /// # Safety / Locking
+    ///
+    /// This helper **assumes** that the caller has already:
+    /// 1. Locked the **BufPool** mutex, yielding a `&mut BufPool` reference.  
+    /// 2. Locked the **BufLRU** mutex (i.e. has exclusive access to `self`).  
+    ///
+    /// By taking `pool: &mut BufPool` as an argument, the Rust type system
+    /// ensures at compile time that the pool‐wide lock is held.  Inside, we
+    /// only ever mutate global lists or stats via that `&mut BufPool`, and we
+    /// acquire each per‐page latch (*after* these checks) to safely call
+    /// `free_block(page_mut)`, which will unlink the page from the LRU on
+    /// success.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Compute a “budget” = `100 + (n_iterations * pool.current_size()) / 10`.  
+    /// 2. **Phase 1**: collect up to `budget` pointers (`UnsafeRef<BufPage>`) by
+    ///    iterating the tail of the intrusive LRU list.  This only reads under
+    ///    the pool lock and avoids any conflicting `&mut self` borrows.  
+    /// 3. **Phase 2**: for each candidate:
+    ///    - Assert that its `is_in_lru_list` and `in_file` flags are still true  
+    ///      (safe because the pool lock is still held).  
+    ///    - Atomically upgrade its `Weak` back‐pointer to an `Arc<RwLock<BufBlock>>`.  
+    ///    - Lock the block’s latch (`write()`), then call `self.free_block(page_mut)`.  
+    ///      On `BlockStatus::Freed` it will remove the node from the LRU and
+    ///      publish it to the free list.  
+    ///    - Drop the per‐block latch, update stats if needed, and return `true` on
+    ///      success.  Otherwise continue to the next candidate.  
+    ///
+    /// Returns `true` if any page was evicted, else `false`.
+    /// TODO this is not efficient yet because we are copying the candidates into the temp Vec.
+    /// Need to figure out O(1) solution using intrusive list
+    fn free_from_common_lru_list(
+        &mut self,
+        pool: &mut BufPoolInner,
+        stats: &Arc<BufPoolStats>,
+        n_iterations: usize,
+    ) -> bool {
+        // 1) Compute our scan budget
+        let curr_size = pool.curr_size();
+        let budget = 100 + (n_iterations * curr_size) / 10;
+
+        // ─────────────────────────────────────────────────────────
+        // PHASE 1: collect up to `budget` cold-page *pointers*
+        let mut candidates = Vec::with_capacity(budget);
+        for page_ref in self.lru_list.iter().rev().take(budget) {
+            candidates.push(page_ref.clone()); // just an UnsafeRef<BufPage> pointer
+        }
+        // Now we've dropped the borrow of self.lru_list
+
+        // ─────────────────────────────────────────────────────────
+        // PHASE 2: attempt eviction on each candidate in turn
+        for buf_page in candidates {
+            // Sanity checks (we still have pool lock)
+            // These flags (`is_in_lru_list`, `in_file`)
+            // are only ever mutated while the pool lock is held,
+            // so reading them under the same lock is race-free:
+            ut_a!(buf_page.is_in_lru_list());
+            ut_a!(buf_page.in_file());
+
+            // Record first‐access timestamp
+            let accessed = buf_page.buf_page_is_accessed();
+
+            // Lock the actual block and call free_block
+            let block_arc = buf_page
+                .buf_page_get_buf_block()
+                .upgrade()
+                .expect("BufBlock was dropped");
+            let mut block_guard = block_arc.write().unwrap();
+
+            let status = {
+                let page_mut = block_guard.buf_block_get_page_mut();
+                // free_block will unlink from the LRU list on FREED,
+                // leave it in place on NOT_FREED
+                self.free_block(page_mut)
+            };
+
+            drop(block_guard);
+
+            match status {
+                BlockStatus::Freed => {
+                    // bump readahead‐eviction stat if untouched
+                    if accessed == 0 {
+                        stats.n_ra_pages_evicted.fetch_add(1, Relaxed);
+                    }
+                    return true;
+                }
+                BlockStatus::NotFreed => {
+                    // page stayed in LRU exactly where it was—try next
+                    continue;
+                }
+                BlockStatus::CannotRelocate => {
+                    unreachable!("Cannot relocate compressed page");
+                }
+            }
+        }
+
+        // no page could be evicted in our budget
+        false
+    }
+
+    /// Searches for a buffer block to free and removes it from the LRU list.
+    ///
+    /// This method scans the LRU list for a buffer block that can be freed,
+    /// and if found, removes it from the list and returns it to the free list.
+    /// It performs a limited number of iterations to avoid excessive scanning.
+    ///
+    /// # Parameters
+    /// * `pool` - A mutable reference to the buffer pool inner state
+    /// * `stats` - A reference to the buffer pool statistics
+    /// * `n_iterations` - The maximum number of iterations to perform while searching
+    ///
+    /// # Returns
+    /// * `bool` - `true` if a page was successfully freed, `false` otherwise
+    ///
+    /// # Safety
+    /// Assumes the caller holds both the pool-wide lock (so `pool` is stable)
+    /// and the LRU lock (so `self` is stable).
+    pub(crate) fn search_and_free_block(
+        &mut self,
+        pool: &mut BufPoolInner,
+        stats: &Arc<BufPoolStats>,
+        n_iterations: usize,
+    ) -> bool {
+        // 1) Try to free one page
+
+        let freed = self.free_from_common_lru_list(pool, stats, n_iterations);
+
+        // 2) Update the LRU‐flush counter just like the C++ does
+        if !freed {
+            pool.set_lru_flush_ended(0)
+        } else if pool.lru_flush_ended() > 0 {
+            pool.set_lru_flush_ended(pool.lru_flush_ended() - 1);
+        }
+
+        freed
+    }
+
+    /// Gets a reference to the buffer pool.
+    ///
+    /// This method returns a weak reference to the buffer pool that this LRU manager
+    /// is associated with. The weak reference prevents circular dependencies.
+    ///
+    /// # Returns
+    /// * `&Weak<Mutex<BufPool>>` - A weak reference to the buffer pool
+    pub fn buf_pool(&self) -> &Weak<Mutex<BufPool>> {
+        &self.buf_pool
+    }
+
+    /// Gets the old ratio value.
+    ///
+    /// The old ratio determines what proportion of the buffer pool is reserved
+    /// for "old" pages. It's expressed as a value between OLD_RATIO_MIN and OLD_RATIO_MAX,
+    /// where the actual percentage is calculated as (old_ratio / OLD_RATIO_DIV) * 100.
+    ///
+    /// # Returns
+    /// * `usize` - The current old ratio value
+    pub fn old_ratio(&self) -> usize {
+        self.old_ratio
+    }
+
+    /// Gets a reference to the LRU list.
+    ///
+    /// The LRU (Least Recently Used) list contains all buffer pages that are
+    /// currently in use, ordered by their recency of access. Pages at the front
+    /// of the list are the most recently used, while pages at the end are candidates
+    /// for eviction when the buffer pool needs to free space.
+    ///
+    /// # Returns
+    /// * `&LinkedList<LruAdapter>` - A reference to the LRU list
+    pub fn lru_list(&self) -> &LinkedList<LruAdapter> {
+        &self.lru_list
+    }
+
+    /// Gets a reference to the LRU old head.
+    ///
+    /// The LRU old head is a pointer that divides the LRU list into two sections:
+    /// the "new" section (before the pointer) and the "old" section (from the pointer
+    /// to the end). Pages in the old section are candidates for early eviction.
+    ///
+    /// # Returns
+    /// * `&Option<UnsafeRef<BufPage>>` - A reference to the LRU old head, or None if not set
+    pub fn lru_old_head(&self) -> &Option<UnsafeRef<BufPage>> {
+        &self.lru_old_head
+    }
+
+    /// Gets the length of the old section in the LRU list.
+    ///
+    /// This method returns the number of pages in the "old" section of the LRU list,
+    /// which are candidates for early eviction when the buffer pool needs to free space.
+    ///
+    /// # Returns
+    /// * `usize` - The number of pages in the old section of the LRU list
+    pub fn lru_old_len(&self) -> usize {
+        self.lru_old_len
+    }
+
+    /// Gets a reference to the free list.
+    ///
+    /// The free list contains buffer blocks that are not currently in use and are
+    /// available for immediate allocation. When a page is evicted from the buffer pool,
+    /// its block is added to the free list.
+    ///
+    /// # Returns
+    /// * `&LinkedList<FreeListAdapter>` - A reference to the free list
+    pub fn free_list(&self) -> &LinkedList<FreeListAdapter> {
+        &self.free_list
+    }
+
+    /// Sets the buffer pool reference.
+    ///
+    /// This method updates the weak reference to the buffer pool that this LRU manager
+    /// is associated with. It's typically called during initialization or when
+    /// reconfiguring the buffer pool.
+    ///
+    /// # Parameters
+    /// * `buf_pool` - The new weak reference to the buffer pool
+    pub fn set_buf_pool(&mut self, buf_pool: Weak<Mutex<BufPool>>) {
+        self.buf_pool = buf_pool;
+    }
+
+    /// Sets the old ratio value.
+    ///
+    /// This method updates the proportion of the buffer pool that is reserved
+    /// for "old" pages. The value should be between OLD_RATIO_MIN and OLD_RATIO_MAX.
+    ///
+    /// # Parameters
+    /// * `old_ratio` - The new old ratio value
+    pub fn set_old_ratio(&mut self, old_ratio: usize) {
+        self.old_ratio = old_ratio;
+    }
+
+    /// Sets the LRU list.
+    ///
+    /// This method replaces the current LRU list with a new one. It's typically
+    /// called during initialization or when resetting the buffer pool.
+    ///
+    /// # Parameters
+    /// * `lru_list` - The new LRU list
+    pub fn set_lru_list(&mut self, lru_list: LinkedList<LruAdapter>) {
+        self.lru_list = lru_list;
+    }
+
+    /// Sets the LRU old head.
+    ///
+    /// This method updates the pointer that divides the LRU list into "new" and "old"
+    /// sections. It's called when adjusting the size of the old section based on
+    /// the old ratio.
+    ///
+    /// # Parameters
+    /// * `lru_old_head` - The new LRU old head pointer, or None to clear it
+    pub fn set_lru_old_head(
+        &mut self,
+        lru_old_head: Option<UnsafeRef<BufPage>>,
+    ) {
+        self.lru_old_head = lru_old_head;
+    }
+
+    /// Sets the length of the old section in the LRU list.
+    ///
+    /// This method updates the count of pages in the "old" section of the LRU list.
+    /// It's called when adjusting the size of the old section based on the old ratio.
+    ///
+    /// # Parameters
+    /// * `lru_old_len` - The new length of the old section
+    pub fn set_lru_old_len(&mut self, lru_old_len: usize) {
+        self.lru_old_len = lru_old_len;
+    }
+
+    /// Sets the free list.
+    ///
+    /// This method replaces the current free list with a new one. It's typically
+    /// called during initialization or when resetting the buffer pool.
+    ///
+    /// # Parameters
+    /// * `free_list` - The new free list
+    pub fn set_free_list(&mut self, free_list: LinkedList<FreeListAdapter>) {
+        self.free_list = free_list;
     }
 }
