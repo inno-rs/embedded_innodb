@@ -5,6 +5,7 @@ use std::{
 
 use intrusive_collections::LinkedList;
 
+use crate::buf::buf0flu::BufFlushType::BufFlushNTypes;
 use crate::{
     buf::{
         buf0dblwr::DoubleWriteBuffer,
@@ -59,6 +60,8 @@ pub struct BufFlush {
 }
 
 impl BufFlush {
+    pub const N_TYPES: usize = BufFlushNTypes as usize;
+
     /// Creates a new BufFlush instance with the specified components.
     ///
     /// # Parameters

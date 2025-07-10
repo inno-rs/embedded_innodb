@@ -138,6 +138,9 @@ pub struct BufPage {
     /// Indicates if the page is currently in the LRU list.
     is_in_lru_list: bool,
 
+    /// Timestamp (ms) of the **first** time this page was accessed (0 = not yet set).
+    access_time: u32,
+
     buf_block: Weak<RwLock<BufBlock>>,
 }
 
@@ -177,6 +180,7 @@ impl BufPage {
             is_in_flush_list: false,
             is_in_lru_list: false,
             buf_block: Default::default(),
+            access_time: 0,
         }
     }
 
@@ -468,6 +472,32 @@ impl BufPage {
         ut_ad!(self.is_in_lru_list());
 
         self.io_fix == BufIoNone && self.buf_fix_count == 0
+    }
+
+    /// Returns the (first) access timestamp, or 0 if never accessed yet.
+    pub fn access_time(&self) -> u32 {
+        self.access_time
+    }
+
+    /// Record the first access time (in ms). Subsequent calls do nothing.
+    ///
+    /// Panics if the page isn’t “in_file” (i.e. not on disk yet).
+    pub fn set_accessed(&mut self, time_ms: u32) {
+        // ut_a(bpage->in_file());
+        assert!(
+            self.in_file(),
+            "set_accessed: page must be in_file before recording access"
+        );
+
+        if self.access_time == 0 {
+            // first-ever access
+            self.access_time = time_ms;
+        }
+    }
+
+    pub fn buf_page_is_accessed(&self) -> u32 {
+        assert!(self.in_file(), "buf_page_is_accessed: page must be in_file");
+        self.access_time
     }
 }
 
