@@ -611,14 +611,7 @@ pub fn fill_block_with_uniform_data(
     ));
 
     for dtuple in dtuples.iter_mut() {
-        btr_cur.search_to_nth_level(
-            vec![],
-            0,
-            dtuple,
-            PAGE_CUR_LE,
-            0,
-            &mut mtr,
-        );
+        btr_cur.search_to_nth_level(0, dtuple, PAGE_CUR_LE, 0, &mut mtr);
 
         btr_cur.optimistic_insert(0, dtuple, 0, &mut mtr);
     }

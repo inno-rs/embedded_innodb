@@ -41,7 +41,7 @@
 
 use std::{
     ops::Range,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex, RwLock, atomic::AtomicU32},
 };
 
 use crate::{
@@ -165,6 +165,7 @@ pub struct Fsp {
     buf_pool: Arc<Mutex<BufPool>>,
     /// Reference to fil.
     fil: Arc<Mutex<Fil>>,
+    page_no: AtomicU32,
 }
 
 impl Fsp {
@@ -172,7 +173,7 @@ impl Fsp {
     ///
     /// Returns an empty `Fsp` struct that can be used to manage tablespace operations.
     pub fn new(buf_pool: Arc<Mutex<BufPool>>, fil: Arc<Mutex<Fil>>) -> Fsp {
-        Fsp { buf_pool, fil }
+        Fsp { buf_pool, fil, page_no: AtomicU32::new(1) }
     }
 
     /// Initializes the basic fields in a file space header.
@@ -290,7 +291,21 @@ impl Fsp {
         //     some_or_panic!(fil.space_get_by_id(space_id))
         // };
 
-        hint + 1
+        let page_no =
+            self.page_no.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        if let Some(buf_block) = self.buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id, page_no },
+            mode: BUF_GET_ALWAYS,
+            mtr,
+        }) {
+            let mut page = buf_block.write().unwrap().get_page();
+            page.page_set_space_id(space_id);
+            page.page_set_fil_offset(page_no as usize);
+        }
+
+        page_no
     }
 }
 

@@ -4,6 +4,8 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 
+use tracing::info;
+
 use crate::{
     btr::{
         btr0btr::BTree,
@@ -28,7 +30,7 @@ use crate::{
         mtr0types::{FixMode, MemoSlot},
     },
     page::{
-        page0cur::{MatchCache, PAGE_CUR_LE, PageCur},
+        page0cur::{MatchCache, PAGE_CUR_L, PAGE_CUR_LE, PageCur},
         page0page::Page,
     },
     rem::{rem0cmp::cmp_dtuple_rec, rem0rec::Record},
@@ -184,10 +186,31 @@ impl<'a> BTreeCursor<'a> {
 
         let is_clustered = self.index.is_clustered();
 
+        info!(
+            "fill_factor: {}, rec_size: {}, page size: {}, current fill factor: {}",
+            self.btree.get_fill_factor(),
+            rec_size,
+            page.page_get_data_size(),
+            page.page_get_current_fill_factor()
+        );
+
         // If there have been many consecutive inserts on the page, and we are on the leaf, check if we have to split the page to reserve enough free space for future updates of records.
         if is_clustered
             && page.page_n_get_recs() >= 2
             && Self::page_is_leaf(page)
+            && (page.page_get_max_insert_size(1) < rec_size
+                || page.page_get_current_fill_factor()
+                    >= self.btree.get_fill_factor())
+        {
+            return Err(DbFail(format!(
+                "Optimistic insert failed: too many records on the page, btree_fill_factor={}, current_fill_factor={}",
+                self.btree.get_fill_factor(),
+                page.page_get_current_fill_factor()
+            )));
+        }
+
+        if is_clustered
+            && page.page_n_get_recs() >= 2
             && (page.page_get_max_insert_size(1) < rec_size
                 || page.page_get_current_fill_factor()
                     >= self.btree.get_fill_factor())
@@ -381,9 +404,9 @@ impl<'a> BTreeCursor<'a> {
     /// * `mode` - Search mode (exact match, greater than, etc.)
     /// * `latch_mode` - Latching strategy to use during traversal
     /// * `mtr` - Mini-transaction for logging the operation
+    ///
     pub fn search_to_nth_level(
         &mut self,
-        paths: Vec<Path>,
         level: usize,
         dtuple: &DTuple,
         mode: usize,
@@ -491,8 +514,6 @@ impl<'a> BTreeCursor<'a> {
         let page = buf_block.read().unwrap().get_page();
         ut_ad!(page.is_page_record(rec));
 
-        let page_id = buf_block.read().unwrap().get_page_id();
-
         self.buf_block = Some(buf_block.clone());
         self.page_cur = Some(PageCur::new(
             self.index.clone(),
@@ -538,10 +559,14 @@ impl<'a> BTreeCursor<'a> {
         // We linearly keep on including records and keep on checking if the
         // total accumulated size is less than total_space / 2.
         let mut dtuple_included = false;
-        while incl_data + Page::page_dir_calc_reserved_space(total_n_recs)
-            < total_space / 2
+        while (incl_data + Page::page_dir_calc_reserved_space(total_n_recs)
+            < total_space / 2)
+            || (page.page_get_fill_factor_after_insert(
+                incl_data + Page::page_dir_calc_reserved_space(total_n_recs),
+            ) < self.btree.get_fill_factor())
         {
             if let Some(record) = rec {
+                info!("rec: {}", record);
                 if record == insert_rec && dtuple_included == false {
                     incl_data += insert_size;
                     dtuple_included = true;
@@ -703,17 +728,21 @@ impl<'a> BTreeCursor<'a> {
         let mut dest_page = dest_block.read().unwrap().get_page();
 
         // Initialize the page
-        let mut page = Page::page_create(
+        Page::page_create(
             self.index.deref(),
             dest_block.read().unwrap().deref(),
             Some(mtr),
         );
 
         // Set the index ID for the page
-        BTree::page_set_index_id(&mut page, self.index.get_index_id(), mtr);
+        BTree::page_set_index_id(
+            &mut dest_page,
+            self.index.get_index_id(),
+            mtr,
+        );
 
         // Set the level of the page
-        BTree::page_set_level(&mut page, level, mtr);
+        BTree::page_set_level(&mut dest_page, level, mtr);
 
         ut_ad!(BTree::page_get_level(&dest_page) == level);
 
@@ -729,10 +758,19 @@ impl<'a> BTreeCursor<'a> {
 
         ut_ad!(root_page.page_get_n_recs() == 0);
 
+        BTree::page_set_next(
+            &mut dest_page,
+            BTree::page_get_next(&root_page),
+            mtr,
+        );
+        BTree::page_set_prev(
+            &mut dest_page,
+            BTree::page_get_prev(&root_page),
+            mtr,
+        );
+
         // 3. Rebuild the root page to get free space.
         self.btree.page_empty(root_block.clone(), level + 1, mtr);
-        BTree::page_set_next(&mut root_page, FILL_NULL, mtr);
-        BTree::page_set_prev(&mut root_page, FILL_NULL, mtr);
 
         // 4. Create the smallest record on the new root page and make it point to the new page.
         let smallest =
@@ -752,12 +790,23 @@ impl<'a> BTreeCursor<'a> {
             mtr,
         );
 
-        // Move the cursor to the new page.
+        // Move the cursor to the new page, since we moved all the records from the root.
         self.position(dest_page.page_get_infimum_rec(), dest_block.clone());
+        self.page_cur.as_mut().unwrap().page_cur_search_with_match(
+            dtuple,
+            PAGE_CUR_L,
+            &mut MatchCache::default(),
+        );
+
+        ut_ad!(self.page_cur.as_ref().unwrap().positioned_at_user_rec());
+
         BTree::page_set_level(&mut dest_page, level, mtr);
 
         // 4. We moved all the records from the root to the new page. Now, split the new record.
         self.page_split_and_insert(dtuple, n_ext, mtr);
+
+        ut_ad!(BTree::page_get_next(&root_page) == FILL_NULL);
+        ut_ad!(BTree::page_get_prev(&root_page) == FILL_NULL);
     }
 
     /// Attaches a newly created page to the B-tree structure after a page split operation.
@@ -787,18 +836,104 @@ impl<'a> BTreeCursor<'a> {
                 todo!("Implement FspUp direction logic");
             }
             Direction::FspDown => {
-                let lower_page_id = new_block.read().unwrap().get_page_id();
+                let mut lower_page = buf_block.read().unwrap().get_page();
+                let lower_page_id = buf_block.read().unwrap().get_page_id();
                 let lower_page_no = lower_page_id.page_no;
 
-                let mut dtuple =
-                    self.index.build_inner_node(split_rec, lower_page_no);
+                let mut upper_page = new_block.read().unwrap().get_page();
+                let upper_page_id = new_block.read().unwrap().get_page_id();
+                let upper_page_no = upper_page_id.page_no;
 
-                self.insert_on_non_leaf_level(1, &mut dtuple, mtr);
+                let mut dtuple =
+                    self.index.build_inner_node(split_rec, upper_page_no);
+
+                let parent_block =
+                    some_or_panic!(self.page_get_parent_block(mtr));
+                let parent_page = parent_block.read().unwrap().get_page();
+                let level = BTree::page_get_level(&parent_page);
+
+                self.insert_on_non_leaf_level(level, &mut dtuple, mtr);
+
+                // Set the next and prev pointers for the pages.
+                let next_page_no = BTree::page_get_next(&lower_page);
+                BTree::page_set_next(&mut upper_page, next_page_no, mtr);
+                BTree::page_set_next(&mut lower_page, upper_page_no, mtr);
+
+                BTree::page_set_prev(&mut upper_page, lower_page_no, mtr);
+
+                if next_page_no != FILL_NULL {
+                    let next_block =
+                        self.buf_pool.lock().unwrap().get(Request {
+                            rw_latch: ReadWriteLatch::NoLatch,
+                            page_id: PageId {
+                                space_id: lower_page_id.space_id,
+                                page_no: next_page_no,
+                            },
+                            mode: BUF_GET_ALWAYS,
+                            mtr,
+                        });
+                    if let Some(next_block) = next_block {
+                        let mut next_page =
+                            next_block.read().unwrap().get_page();
+                        BTree::page_set_prev(
+                            &mut next_page,
+                            upper_page_no,
+                            mtr,
+                        );
+                    }
+                }
             }
             _ => {
                 ut_panic!("Unsupported direction for attaching half pages");
             }
         }
+    }
+
+    fn position_on_root(&mut self, mtr: &mut Mtr) {
+        let root_block = self.buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: self.index.get_page_id(),
+            mode: BUF_GET_ALWAYS,
+            mtr,
+        });
+        let root_block = some_or_panic!(root_block);
+        let root_page = root_block.read().unwrap().get_page();
+
+        self.position(root_page.page_get_infimum_rec(), root_block);
+    }
+
+    /// Retrieves the parent block of the current page in the B-tree.
+    ///
+    /// This method navigates up the B-tree structure to find the parent block
+    /// of the current page.
+    /// It uses the current page cursor to determine
+    /// the level of the current page and searches for the parent block
+    /// at that level.
+    ///
+    /// # Parameters
+    ///
+    /// * `mtr` - A mutable reference to the mini-transaction used for managing locks and logging.
+    ///
+    /// # Returns
+    ///
+    /// * `Option<RwLock<BufBlock>>` - An optional reference to the parent block if found, or `None` if not.
+    ///
+    pub fn page_get_parent_block(
+        &mut self,
+        mtr: &mut Mtr,
+    ) -> Option<Arc<RwLock<BufBlock>>> {
+        let block = some_or_panic!(self.buf_block.clone());
+        let level = BTree::page_get_level(&block.read().unwrap().get_page());
+
+        let rec = self.page_cur.as_ref().unwrap().page_cur_get_rec();
+        // ut_ad!(self.page_cur.as_ref().unwrap().positioned_at_user_rec());
+
+        let dtuple = self.index.build_inner_node(rec, 0);
+
+        self.position_on_root(mtr);
+        self.search_to_nth_level(level + 1, &dtuple, PAGE_CUR_LE, 0, mtr);
+
+        self.buf_block.clone()
     }
 
     /// Inserts a data tuple into the B-tree at a non-leaf level.
@@ -828,7 +963,6 @@ impl<'a> BTreeCursor<'a> {
         ut_ad!(level > 0);
 
         self.search_to_nth_level(
-            vec![],
             level,
             dtuple,
             PAGE_CUR_LE,

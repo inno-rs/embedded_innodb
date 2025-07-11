@@ -426,7 +426,7 @@ impl PageCur {
     /// the records owned by the identified directory slots.
     ///
     /// The function updates the match cache with information about how many fields and bytes
-    /// matched during the comparison, which helps avoid redundant comparisons in subsequent operations.
+    /// matched during the comparison, which helps avoid redundant comparisons in later operations.
     ///
     /// # Arguments
     ///
@@ -583,5 +583,18 @@ impl PageCur {
     /// This method doesn't return a value; it modifies the cursor's state directly.
     pub fn page_cur_position(&mut self, rec: Record) {
         self.rec = rec;
+    }
+
+    /// Checks if the cursor is positioned at a user record.
+    ///
+    /// This method determines whether the current record pointed to by the cursor is a user record
+    /// (as opposed to a system record like infimum or supremum). User records are the actual data
+    /// records stored in the database, while system records are used for internal page organization.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the cursor is positioned at a user record, `false` otherwise
+    pub fn positioned_at_user_rec(&self) -> bool {
+        self.page.page_rec_is_user_rec(self.rec)
     }
 }

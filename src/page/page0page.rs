@@ -220,7 +220,7 @@ impl Page {
     /// # Returns
     ///
     /// * `()`: This function does not return a value.
-    pub fn page_set_space_id(&self, space_id: SpaceId) {
+    pub fn page_set_space_id(&mut self, space_id: SpaceId) {
         let page = self.to_page_frame();
         mach_write_to_4(&mut page.0[FIL_PAGE_SPACE_ID..], space_id);
     }
@@ -1503,6 +1503,34 @@ impl Page {
     /// * The fill factor of the page as a `usize` percentage.
     pub fn page_get_current_fill_factor(&self) -> usize {
         let remaining_size = self.page_get_max_insert_size(1);
+        let empty_page_free_space = Self::page_get_free_space_of_empty();
+
+        ((empty_page_free_space - remaining_size) * 100)
+            / empty_page_free_space
+    }
+
+    /// Returns the fill factor of the page after inserting a record of the given size.
+    ///
+    /// # Parameters
+    ///
+    /// * `insert_size`: The size of the record to be inserted.
+    ///
+    /// # Returns
+    ///
+    /// * The fill factor of the page after the insertion as a `usize` percentage.
+    ///
+    pub fn page_get_fill_factor_after_insert(
+        &self,
+        insert_size: usize,
+    ) -> usize {
+        let max_insert_size = self.page_get_max_insert_size(1);
+        let (remaining_size, overflowed) =
+            max_insert_size.overflowing_sub(insert_size);
+
+        if overflowed {
+            return 100;
+        }
+
         let empty_page_free_space = Self::page_get_free_space_of_empty();
 
         ((empty_page_free_space - remaining_size) * 100)
