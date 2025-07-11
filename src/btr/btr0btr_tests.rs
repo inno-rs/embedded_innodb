@@ -18,8 +18,8 @@ mod tests {
             buf0rea::BufRea,
             buf0types::{BUF_GET_ALWAYS, Request},
         },
-        data::data0types::DTuple,
-        dict::dict0types::Index,
+        data::data0types::{DTYPE_INT, DTuple},
+        dict::dict0types::{Column, Field, Index},
         fil::fil0fil::Fil,
         fsp::{fsp0fsp::Fsp, fsp0types::Direction},
         innodb::innodb0types::PageId,
@@ -52,7 +52,12 @@ mod tests {
     }
 
     #[fixture]
-    fn fixture() -> BTreeFixture {
+    fn btree_fill_factor() -> usize {
+        100
+    }
+
+    #[fixture]
+    fn fixture(btree_fill_factor: usize) -> BTreeFixture {
         let runtime = create_runtime(1);
         let os_io = Arc::new(Mutex::new(OsIo::new(runtime.clone())));
         let fil = Arc::new(Mutex::new(Fil::new(1, os_io, runtime)));
@@ -69,9 +74,27 @@ mod tests {
         let index = Arc::new(Index::new(PageId { space_id: 0, page_no: 0 }));
         let fsp =
             Arc::new(Mutex::new(Fsp::new(buf_pool.clone(), fil.clone())));
-        let btree =
-            BTree::new(buf_pool.clone(), fsp, lock_sys.clone(), index.clone());
+        let btree = BTree::new(
+            buf_pool.clone(),
+            fsp,
+            lock_sys.clone(),
+            index.clone(),
+            btree_fill_factor,
+        );
         let page_count = 20;
+        let field_name = "test";
+        index.add_field(Field {
+            col: Arc::new(Mutex::new(Column {
+                name: field_name.to_string(),
+                index: 0,
+                ord_part: 0,
+                dtype: DTYPE_INT,
+            })),
+            name: field_name.to_string(),
+            prefix_length: 0,
+            fixed_length: 0,
+        });
+        index.set_n_uniq(1);
 
         create_blocks_in_buf_pool(buf_pool.clone(), page_count);
 
@@ -523,10 +546,105 @@ mod tests {
     }
 
     #[test]
+    fn test_pessimistic_insert_in_btree_page() {
+        let seed = 1234u64;
+        let mut rng = StdRng::seed_from_u64(seed);
+        let fixture = fixture(10);
+        let btree = fixture.btree.clone();
+        let btr_cur = BTreeCursor::new(
+            &fixture.btree,
+            fixture.index.clone(),
+            fixture.buf_pool.clone(),
+            fixture.lock_sys.clone(),
+        );
+        let btree = fixture.btree.clone();
+        let mut btr_cur = BTreeCursor::new(
+            &fixture.btree,
+            fixture.index.clone(),
+            fixture.buf_pool.clone(),
+            fixture.lock_sys.clone(),
+        );
+
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        ut_ad!(buf_block.is_some());
+
+        let buf_block = some_or_panic!(buf_block);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            buf_block.read().unwrap().get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        // Initialize the page.
+        btree.page_create(buf_block.clone(), 0, &mut mtr);
+
+        let page: Page = buf_block.read().unwrap().get_page();
+        let record = page.page_get_infimum_rec();
+
+        assert!(page.page_validate());
+
+        btr_cur.position(record, buf_block.clone());
+        let limit = 1;
+        let step_size = 9;
+        for chunk in (0..limit).step_by(step_size) {
+            let mut input: Vec<[FieldType; 1]> = vec![];
+
+            for c in chunk..chunk + step_size {
+                input.push([FieldType::String(Some(format!(
+                    "hello world {:05}",
+                    c
+                )))])
+            }
+
+            let mut dtuples = create_dtuples_from_input_data_chunk(input);
+
+            dtuples.shuffle(&mut rng);
+
+            for dtuple in dtuples.iter_mut() {
+                btr_cur.search_to_nth_level(
+                    vec![],
+                    0,
+                    dtuple,
+                    PAGE_CUR_LE,
+                    0,
+                    &mut mtr,
+                );
+
+                let positioned_block = btr_cur.get_block().unwrap();
+                let positioned_page =
+                    positioned_block.read().unwrap().get_page();
+
+                assert_eq!(BTree::page_get_level(&positioned_page), 0);
+
+                let result =
+                    btr_cur.pessimistic_insert(0, dtuple, 0, &mut mtr);
+                assert!(result.is_ok(), "Failed to insert: {:?}", dtuple);
+            }
+        }
+
+        let mut user_rec_data: Vec<String> = vec![];
+        for rec in page.page_get_user_records() {
+            info!("dd {}", rec);
+            user_rec_data.push(rec.rec_get_data(0).unwrap().data_or_panic());
+        }
+
+        assert!(user_rec_data.is_sorted());
+    }
+
+    #[test]
     fn test_optimistic_insert_in_btree_page() {
         let seed = 1234u64;
         let mut rng = StdRng::seed_from_u64(seed);
-        let fixture = fixture();
+        let fixture = fixture(100);
         let btree = fixture.btree.clone();
         let mut btr_cur = BTreeCursor::new(
             &fixture.btree,
@@ -969,7 +1087,26 @@ mod tests {
 
         btr_cur.root_raise_and_insert(&dtuple, 0, &mut mtr);
 
-        assert_eq!(root_page.page_get_n_recs(), 0);
+        // The first key is the smallest record that points to smaller keys.
+        // Second key points to keys than its own value.
+        assert_eq!(root_page.page_get_n_recs(), 2);
+        let left_most_page =
+            some_or_panic!(root_page.page_get_infimum_rec().rec_get_next());
+
+        assert_eq!(
+            left_most_page.rec_get_data(0).unwrap().data_or_panic(),
+            "UNIVERSAL SMALLEST RECORD"
+        );
+
+        let child_page = u32::from_le_bytes(
+            left_most_page
+                .rec_get_data(1)
+                .map(|d| d.data_or_panic().as_bytes().to_vec())
+                .unwrap()
+                .try_into()
+                .unwrap_or_else(|_| panic!("Failed to convert to u32")),
+        );
+        assert_eq!(child_page, 1);
 
         let left_block = buf_pool.lock().unwrap().get(Request {
             rw_latch: ReadWriteLatch::NoLatch,

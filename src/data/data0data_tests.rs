@@ -1,6 +1,13 @@
 #[cfg(test)]
 mod tests {
-    use crate::tests::test0utils::{FieldType, create_dtuples};
+    use std::cmp::Ordering;
+
+    use crate::{
+        data::data0types::DTuple,
+        page::page0page::PageDebug,
+        rem::rem0cmp::cmp_dtuple_rec,
+        tests::test0utils::{FieldType, create_dtuples, create_records},
+    };
 
     #[test]
     fn test_create_data_tuple() {
@@ -128,5 +135,17 @@ mod tests {
 
         assert_eq!(dtuple.dtuple_get_data_size(), 0);
         assert!(dtuple.dtuple_get_nth_field(0).dfield_is_null());
+    }
+
+    #[test]
+    fn test_dtuple_get_smallest() {
+        let smallest = DTuple::dtuple_get_smallest(vec![]);
+
+        let owning_page =
+            create_records(1, vec![FieldType::Int(Some(i32::MIN))]);
+
+        for record in owning_page.page.page_get_user_records() {
+            assert_eq!(cmp_dtuple_rec(&smallest, record), Ordering::Less);
+        }
     }
 }

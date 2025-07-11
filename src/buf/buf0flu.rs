@@ -5,11 +5,10 @@ use std::{
 
 use intrusive_collections::LinkedList;
 
-use crate::buf::buf0flu::BufFlushType::BufFlushNTypes;
 use crate::{
     buf::{
         buf0dblwr::DoubleWriteBuffer,
-        buf0flu::BufFlushType::{BufFlushList, BufFlushLru},
+        buf0flu::BufFlushType::{BufFlushList, BufFlushLru, BufFlushNTypes},
         buf0types::{
             BUF_NO_CHECKSUM_MAGIC, BufBlock, BufIoFix, BufPageState,
             FlushListAdapter,

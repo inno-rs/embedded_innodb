@@ -5,8 +5,6 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 
-use tracing::info;
-
 use crate::{
     btr::{btr0btr::BTree, btr0cur::BTreeCursor},
     buf::{

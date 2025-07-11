@@ -7,7 +7,7 @@ pub const SYS_TABLESPACE: usize = 0;
 
 /// Flags for inserting records in order.
 #[repr(usize)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
     /// Alphabetically Up.
     FspUp = 111,

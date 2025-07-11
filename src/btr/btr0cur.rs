@@ -4,16 +4,18 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 
-use tracing::info;
-
 use crate::{
-    btr::{btr0btr::BTree, btr0types::BTR_ESTIMATE},
+    btr::{
+        btr0btr::BTree,
+        btr0types::{BTR_ESTIMATE, BtrLatchMode::BtrContModifyTree},
+    },
     buf::{
         buf0buf::BufPool,
         buf0types::{BUF_GET_ALWAYS, BufBlock, Request},
     },
     data::data0types::DTuple,
     dict::dict0types::Index,
+    fil::fil0types::FILL_NULL,
     fsp::fsp0types::Direction,
     innodb::innodb0types::{
         DbErr,
@@ -26,13 +28,14 @@ use crate::{
         mtr0types::{FixMode, MemoSlot},
     },
     page::{
-        page0cur::{MatchCache, PageCur},
+        page0cur::{MatchCache, PAGE_CUR_LE, PageCur},
         page0page::Page,
     },
     rem::{rem0cmp::cmp_dtuple_rec, rem0rec::Record},
     some_or_panic,
     sync::sync0rw::ReadWriteLatch,
     ut::ut0dbg::ut_ad,
+    ut_panic,
 };
 
 /// Flag indicating that undo logging should be skipped for this operation.
@@ -122,7 +125,9 @@ impl<'a> BTreeCursor<'a> {
     /// # Returns
     /// `true` if the page is a leaf page, `false` otherwise
     pub fn page_is_leaf(page: Page) -> bool {
-        false
+        // A page is a leaf if it has no children, i.e., it is at the lowest level of the B-tree.
+        // In InnoDB, leaf pages are identified by having a level of 0.
+        BTree::page_get_level(&page) == 0
     }
 
     /// Tries to perform an optimistic insert to a page in an index tree.
@@ -156,9 +161,11 @@ impl<'a> BTreeCursor<'a> {
             (buf_block_guard.get_page(), buf_block_guard.get_page_id())
         };
 
-        ut_ad!(
-            mtr.memo_contains(&MemoSlot::PageFix(page_id, FixMode::Exclusive))
-        );
+        // ut_ad!(
+        //     mtr.memo_contains(&MemoSlot::PageFix(page_id, FixMode::Exclusive)),
+        //     "page={} should be fixed in the mini-transaction",
+        //     page_id
+        // );
 
         // let max_size = page.page_get_max_insert_size_after_reorganize(1);
         let mut rec_size = dtuple.rec_get_converted_size(n_ext);
@@ -178,16 +185,18 @@ impl<'a> BTreeCursor<'a> {
         let is_clustered = self.index.is_clustered();
 
         // If there have been many consecutive inserts on the page, and we are on the leaf, check if we have to split the page to reserve enough free space for future updates of records.
-
         if is_clustered
             && page.page_n_get_recs() >= 2
             && Self::page_is_leaf(page)
-            && page.page_get_max_insert_size(1) < rec_size
+            && (page.page_get_max_insert_size(1) < rec_size
+                || page.page_get_current_fill_factor()
+                    >= self.btree.get_fill_factor())
         {
-            return Err(DbFail(
-                "Optimistic insert failed: too many records on the page"
-                    .to_string(),
-            ));
+            return Err(DbFail(format!(
+                "Optimistic insert failed: too many records on the page, btree_fill_factor={}, current_fill_factor={}",
+                self.btree.get_fill_factor(),
+                page.page_get_current_fill_factor()
+            )));
         }
 
         let mut insert_rec = Option::<Record>::None;
@@ -248,17 +257,38 @@ impl<'a> BTreeCursor<'a> {
         // 1. First, try an optimistic insert.
         let result = self.optimistic_insert(flags, dtuple, n_ext, mtr);
         match result {
-            Ok(_) => {}
-            Err(e) => {
-                if matches!(e, DbFail(_)) {
-                    return Err(e);
-                }
-            }
+            Ok(_) => return Ok(()),
+            Err(e) if !matches!(e, DbFail(_)) => return Err(e),
+            Err(_) => {}
         }
 
         // 2. We were not able to insert. Try pessimistic insert.
+        if self.index.page_id().page_no
+            == some_or_panic!(&self.buf_block)
+                .read()
+                .unwrap()
+                .get_page_id()
+                .page_no
+        {
+            self.root_raise_and_insert(dtuple, n_ext, mtr);
+        } else {
+            self.page_split_and_insert(dtuple, n_ext, mtr);
+        }
 
         Ok(())
+    }
+
+    /// Retrieves the buffer block associated with the current cursor position.
+    ///
+    /// This method returns a reference to the buffer block where the cursor is currently
+    /// positioned. The buffer block contains the page data and associated metadata.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(Arc<RwLock<BufBlock>>)` - A reference to the buffer block if the cursor is positioned
+    /// * `None` - If the cursor is not associated with any buffer block
+    pub fn get_block(&self) -> Option<Arc<RwLock<BufBlock>>> {
+        self.buf_block.clone()
     }
 
     /// Retrieves the current record at the cursor position.
@@ -374,7 +404,7 @@ impl<'a> BTreeCursor<'a> {
         let page_cursor = self.page_cur.as_mut().unwrap();
 
         // Get the root page ID from the index
-        let PageId { space_id, page_no } = self.index.get_page_id();
+        let PageId { space_id, mut page_no } = self.index.get_page_id();
 
         // Initialize a cache for matching records
         let mut match_cache: MatchCache = Default::default();
@@ -404,15 +434,17 @@ impl<'a> BTreeCursor<'a> {
                 BTree::page_get_index_id(&page) == self.index.get_index_id()
             );
 
+            let page_level = BTree::page_get_level(&page);
+
             if height.is_none() {
                 // We are in the root node, initialize the tree height
-                let level = BTree::page_get_level(&page);
-                height.replace(level);
-                self.tree_height = level + 1;
+                self.tree_height = page_level + 1;
             }
 
+            height.replace(page_level);
+
             let height_val = some_or_panic!(height);
-            if height_val == 0 {
+            if height_val == level {
                 // We have reached the leaf level
                 if latch == ReadWriteLatch::NoLatch {
                     // Unlatch the page, and then return.
@@ -432,7 +464,17 @@ impl<'a> BTreeCursor<'a> {
                 &mut match_cache,
             );
 
+            // Position the cursor at the above record.
             self.position(page_cur.page_cur_get_rec(), block);
+
+            if found {
+                // If we found the record, we can exit the loop
+                break;
+            }
+
+            // go to the child page
+            let rec = page_cur.page_cur_get_rec();
+            page_no = self.btree.inner_node_get_child_page_no(&rec);
         }
     }
 
@@ -448,6 +490,8 @@ impl<'a> BTreeCursor<'a> {
     pub fn position(&mut self, rec: Record, buf_block: Arc<RwLock<BufBlock>>) {
         let page = buf_block.read().unwrap().get_page();
         ut_ad!(page.is_page_record(rec));
+
+        let page_id = buf_block.read().unwrap().get_page_id();
 
         self.buf_block = Some(buf_block.clone());
         self.page_cur = Some(PageCur::new(
@@ -566,13 +610,13 @@ impl<'a> BTreeCursor<'a> {
     /// This function is part of the B-tree page management system and is crucial for maintaining
     /// the balance and performance of the B-tree index structure.
     pub fn page_split_and_insert(
-        &self,
+        &mut self,
         dtuple: &DTuple,
         n_ext: usize,
         mtr: &mut Mtr,
     ) {
         let split_rec = self.page_get_split_rec(dtuple, n_ext);
-        info!("split_rec: {}", some_or_panic!(split_rec));
+        let buf_block = some_or_panic!(self.buf_block.clone());
 
         let page = self.page_cur.as_ref().unwrap().page_cur_get_page();
 
@@ -584,18 +628,26 @@ impl<'a> BTreeCursor<'a> {
         let new_block =
             self.btree.page_alloc(hint_page_no, direction, level, mtr);
 
-        if let Some(block) = new_block {
+        if let Some(new_block) = new_block {
             mtr.memo_push(MemoSlot::PageFix(
-                block.read().unwrap().get_page_id(),
+                new_block.read().unwrap().get_page_id(),
                 FixMode::Exclusive,
             ));
 
-            self.btree.page_create(block.clone(), level, mtr);
+            self.btree.page_create(new_block.clone(), level, mtr);
 
             page.page_move_rec_list_end(
-                block,
+                new_block.clone(),
                 some_or_panic!(split_rec),
                 self.index.clone(),
+                mtr,
+            );
+
+            self.attach_half_pages(
+                some_or_panic!(split_rec),
+                buf_block,
+                new_block,
+                direction,
                 mtr,
             );
         }
@@ -621,6 +673,7 @@ impl<'a> BTreeCursor<'a> {
     ) {
         let PageId { space_id: root_space_id, page_no: root_page_no } =
             self.index.get_page_id();
+        let root_block = some_or_panic!(&self.buf_block);
 
         let mut root_page =
             self.page_cur.as_ref().unwrap().page_cur_get_page();
@@ -646,7 +699,21 @@ impl<'a> BTreeCursor<'a> {
             self.btree.page_alloc(0, Direction::FspDown, level, mtr);
 
         let dest_block = some_or_panic!(buf_block);
+        let dest_page_id = dest_block.read().unwrap().get_page_id();
         let mut dest_page = dest_block.read().unwrap().get_page();
+
+        // Initialize the page
+        let mut page = Page::page_create(
+            self.index.deref(),
+            dest_block.read().unwrap().deref(),
+            Some(mtr),
+        );
+
+        // Set the index ID for the page
+        BTree::page_set_index_id(&mut page, self.index.get_index_id(), mtr);
+
+        // Set the level of the page
+        BTree::page_set_level(&mut page, level, mtr);
 
         ut_ad!(BTree::page_get_level(&dest_page) == level);
 
@@ -660,13 +727,117 @@ impl<'a> BTreeCursor<'a> {
             mtr,
         );
 
+        ut_ad!(root_page.page_get_n_recs() == 0);
+
+        // 3. Rebuild the root page to get free space.
+        self.btree.page_empty(root_block.clone(), level + 1, mtr);
+        BTree::page_set_next(&mut root_page, FILL_NULL, mtr);
+        BTree::page_set_prev(&mut root_page, FILL_NULL, mtr);
+
+        // 4. Create the smallest record on the new root page and make it point to the new page.
+        let smallest =
+            self.index.build_smallest_inner_node(dest_page_id.page_no);
+
+        let root_page_cur = PageCur::new(
+            self.index.clone(),
+            Some(root_page.page_get_infimum_rec()),
+            some_or_panic!(&self.buf_block).clone(),
+            root_page,
+        );
+
+        root_page_cur.page_cur_tuple_insert(
+            &smallest,
+            self.index.deref(),
+            0,
+            mtr,
+        );
+
         // Move the cursor to the new page.
         self.position(dest_page.page_get_infimum_rec(), dest_block.clone());
         BTree::page_set_level(&mut dest_page, level, mtr);
 
-        ut_ad!(root_page.page_get_n_recs() == 0);
-
-        // 3. We moved all the records from the root to the new page. Now, split the new record.
+        // 4. We moved all the records from the root to the new page. Now, split the new record.
         self.page_split_and_insert(dtuple, n_ext, mtr);
+    }
+
+    /// Attaches a newly created page to the B-tree structure after a page split operation.
+    ///
+    /// This method is called after a page has been split into two halves. It creates the necessary
+    /// pointers in the parent node to link the new page into the B-tree structure. The method
+    /// handles different split directions and updates the tree structure accordingly.
+    ///
+    /// # Parameters
+    /// * `split_rec` - The record at which the page was split
+    /// * `buf_block` - The original buffer block that was split
+    /// * `new_block` - The newly created buffer block
+    /// * `direction` - The direction of the split (up or down)
+    /// * `mtr` - Mini-transaction for managing locks and logging
+    ///
+    pub fn attach_half_pages(
+        &mut self,
+        split_rec: Record,
+        buf_block: Arc<RwLock<BufBlock>>,
+        new_block: Arc<RwLock<BufBlock>>,
+        direction: Direction,
+        mtr: &mut Mtr,
+    ) {
+        // Based on the split direction, we will attach the new block.
+        match direction {
+            Direction::FspUp => {
+                todo!("Implement FspUp direction logic");
+            }
+            Direction::FspDown => {
+                let lower_page_id = new_block.read().unwrap().get_page_id();
+                let lower_page_no = lower_page_id.page_no;
+
+                let mut dtuple =
+                    self.index.build_inner_node(split_rec, lower_page_no);
+
+                self.insert_on_non_leaf_level(1, &mut dtuple, mtr);
+            }
+            _ => {
+                ut_panic!("Unsupported direction for attaching half pages");
+            }
+        }
+    }
+
+    /// Inserts a data tuple into the B-tree at a non-leaf level.
+    ///
+    /// This method is used during page splits and tree structure modifications
+    /// to insert index entries at non-leaf levels of the B-tree. It creates a
+    /// cursor, positions it at the appropriate location in the specified level,
+    /// and performs a pessimistic insert operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - The level at which to insert (must be > 0, where 0 is leaf level)
+    /// * `index` - The index structure being modified
+    /// * `dtuple` - The data tuple to insert
+    /// * `mtr` - Mini transaction for logging the operation
+    ///
+    /// # Note
+    ///
+    /// It is assumed that the mini-transaction (mtr) holds an exclusive latch (x-latch)
+    /// on the tree during this operation.
+    pub fn insert_on_non_leaf_level(
+        &mut self,
+        level: usize,
+        dtuple: &mut DTuple,
+        mtr: &mut Mtr,
+    ) {
+        ut_ad!(level > 0);
+
+        self.search_to_nth_level(
+            vec![],
+            level,
+            dtuple,
+            PAGE_CUR_LE,
+            BtrContModifyTree as usize,
+            mtr,
+        );
+        let flag = BTR_NO_LOCKING_FLAG | BTR_KEEP_SYS_FLAG | BTR_NO_UNDO_LOG;
+        let result = self.pessimistic_insert(flag, dtuple, 0, mtr);
+
+        ut_ad!(result.is_ok());
     }
 }

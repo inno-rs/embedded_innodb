@@ -349,6 +349,23 @@ mod tests {
     }
 
     #[test]
+    fn test_page_fil_factor_on_empty_page() {
+        let owning_page = create_records(0, vec![]);
+        let page = owning_page.page;
+        assert_eq!(page.page_get_current_fill_factor(), 0);
+    }
+
+    #[test]
+    fn test_page_fil_factor_on_non_empty_page() {
+        let owning_page = create_records(
+            100,
+            vec![FieldType::String(Some("hello world!".to_string()))],
+        );
+        let page = owning_page.page;
+        assert_eq!(page.page_get_current_fill_factor(), 12);
+    }
+
+    #[test]
     fn test_page_get_middle_rec_on_page_with_2_rec() {
         let owning_page = create_records(
             2,

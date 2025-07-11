@@ -1494,6 +1494,21 @@ impl Page {
         }
     }
 
+    /// Returns the fill factor of the page as a percentage.
+    /// This is calculated as the ratio of the remaining space available for inserting records
+    /// to the total free space of an empty page, multiplied by 100.
+    ///
+    /// # Returns
+    ///
+    /// * The fill factor of the page as a `usize` percentage.
+    pub fn page_get_current_fill_factor(&self) -> usize {
+        let remaining_size = self.page_get_max_insert_size(1);
+        let empty_page_free_space = Self::page_get_free_space_of_empty();
+
+        ((empty_page_free_space - remaining_size) * 100)
+            / empty_page_free_space
+    }
+
     /// Copies records from the start to the given record (exclusive) to a newly created page.
     ///
     /// This specialized method copies records from the beginning of the source page up to

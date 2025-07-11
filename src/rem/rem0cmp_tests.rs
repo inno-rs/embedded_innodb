@@ -69,7 +69,7 @@ mod tests {
         let user_records_2 = owning_page_2.page.page_get_user_records();
         let rec2 = user_records_2[0];
 
-        let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
+        let index = Index::new(PageId { space_id: 0, page_no: 0 });
         let fields = create_new_fields(1);
         for field in fields {
             index.add_field(field);
@@ -115,7 +115,7 @@ mod tests {
         let user_records_2 = owning_page_2.page.page_get_user_records();
         let rec2 = user_records_2[0];
 
-        let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
+        let index = Index::new(PageId { space_id: 0, page_no: 0 });
         let fields = create_new_fields(8);
         for field in fields {
             index.add_field(field);
@@ -159,7 +159,7 @@ mod tests {
         let user_records_2 = owning_page_2.page.page_get_user_records();
         let rec2 = user_records_2[0];
 
-        let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
+        let index = Index::new(PageId { space_id: 0, page_no: 0 });
         let fields = create_new_fields(8);
         for field in fields {
             index.add_field(field);
@@ -204,7 +204,7 @@ mod tests {
         let user_records = owning_page.page.page_get_user_records();
         let rec2 = user_records[0];
 
-        let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
+        let index = Index::new(PageId { space_id: 0, page_no: 0 });
         let fields = create_new_fields(8);
         for field in fields {
             index.add_field(field);
@@ -262,7 +262,7 @@ mod tests {
         let user_records = owning_page.page.page_get_user_records();
         let rec2 = user_records[0];
 
-        let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
+        let index = Index::new(PageId { space_id: 0, page_no: 0 });
         let fields = create_new_fields(8);
         for field in fields {
             index.add_field(field);
@@ -381,7 +381,7 @@ mod tests {
             let user_records = owning_page.page.page_get_user_records();
             let rec2 = user_records[0];
 
-            let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
+            let index = Index::new(PageId { space_id: 0, page_no: 0 });
             let fields = create_new_fields(8);
             for field in fields {
                 index.add_field(field);
@@ -505,7 +505,7 @@ mod tests {
             let user_records = owning_page.page.page_get_user_records();
             let rec2 = user_records[0];
 
-            let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
+            let index = Index::new(PageId { space_id: 0, page_no: 0 });
             let fields = create_new_fields(8);
             for field in fields {
                 index.add_field(field);

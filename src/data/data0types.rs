@@ -1,5 +1,4 @@
 use derive_builder::Builder;
-
 /*
 The 'MAIN TYPE' of a column
 +------+-------------------+--------------------------------------------+
@@ -93,6 +92,8 @@ pub const DATA_CUSTOM_TYPE: usize = 2048;
 /** English language character string: only used for InnoDB's own system tables */
 pub const DATA_ENGLISH: usize = 4;
 
+pub const UNIV_SMALLEST_REC_DATA: &str = "UNIVERSAL SMALLEST RECORD";
+
 /*
 ┌────────────────────────────────────────────────────┐
 │                    dtype_t                         │
@@ -133,7 +134,7 @@ Column Definition → dtype_t → Record Format
    └── TEXT                      → 20-byte external pointer
 */
 
-#[derive(Clone, Builder)]
+#[derive(Clone, Builder, Debug)]
 pub struct DType {
     /// Main data type.
     pub m_type: u16,
@@ -149,7 +150,7 @@ pub struct DType {
 }
 
 /// Structure for an SQL data tuple of fields (logical record).
-#[derive(Builder)]
+#[derive(Builder, Debug)]
 pub struct DTuple {
     /// Info bits of an index record: the default is 0;
     /// this field is used if an index record is built from a data tuple.
@@ -166,7 +167,7 @@ pub struct DTuple {
 }
 
 /// Structure for an SQL data field.
-#[derive(Clone, Builder)]
+#[derive(Clone, Builder, Debug)]
 pub struct DField {
     /// Pointer to the data of the field.
     pub data: Vec<u8>,
