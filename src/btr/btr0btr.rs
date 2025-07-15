@@ -23,9 +23,12 @@ use crate::{
         mtr0mtr::{MemoSlot, Mtr},
         mtr0types::{FixMode, MlogType},
     },
-    page::page0page::{
-        PAGE_BTR_SEG_LEAF, PAGE_HEADER, PAGE_INDEX_ID, PAGE_LEVEL, Page,
-        PageDebug,
+    page::{
+        page0cur::PageCur,
+        page0page::{
+            PAGE_BTR_SEG_LEAF, PAGE_HEADER, PAGE_INDEX_ID, PAGE_LEVEL, Page,
+            PageDebug,
+        },
     },
     rem::rem0rec::Record,
     some_or_panic,
@@ -577,6 +580,105 @@ impl BTree {
 
         // todo: Start writing child page no using mach_write_to_4
         u32::from_le_bytes(data.as_bytes().try_into().unwrap()) as PageNo
+    }
+
+    /// Validates the entire B-tree index.
+    ///
+    /// This function checks the integrity of the B-tree structure by traversing
+    /// from the root to the leaf nodes, ensuring that all levels of the tree
+    /// are correctly structured and that the records at each level are sorted in ascending order.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the B-tree is valid, `false` otherwise.
+    ///
+    pub fn validate_index(&self) -> bool {
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let root = self.root_get(&mut mtr);
+        let root_page = root.read().unwrap().get_page();
+        let root_level = Self::page_get_level(&root_page);
+
+        for level in (0..root_level).rev() {
+            if !self.level_validate(level, &mut mtr) {
+                info!("BTree validation failed at level {}", level);
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Validates the B-tree at a specific level.
+    ///
+    /// This function checks if the records at the specified level of the B-tree
+    /// are sorted in ascending order.
+    /// It traverses the B-tree from the root
+    /// to the specified level, collecting records and checking their order.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - The level in the B-tree to validate
+    /// * `mtr` - The mini-transaction used for managing locks and logging
+    ///
+    /// # Returns
+    ///
+    /// `true` if the records at the specified level are sorted,
+    /// `false` otherwise.
+    ///
+    pub fn level_validate(&self, level: usize, mtr: &mut Mtr) -> bool {
+        let root_block = self.root_get(mtr);
+        let root_page = root_block.read().unwrap().get_page();
+        let mut page_cursor =
+            PageCur::new(self.index.clone(), None, root_block, root_page);
+        page_cursor.page_cur_set_before_first();
+        page_cursor.page_cur_move_to_next();
+
+        let mut page = page_cursor.page_cur_get_page();
+
+        while level != BTree::page_get_level(&page) {
+            info!("{}", page_cursor.page_cur_get_rec());
+            ut_ad!(page_cursor.positioned_at_user_rec());
+
+            let current_rec = page_cursor.page_cur_get_rec();
+
+            let child_page_no =
+                self.inner_node_get_child_page_no(&current_rec);
+
+            let mut buf_pool = self.buf_pool.lock().unwrap();
+            let buf_block = buf_pool.get(Request {
+                rw_latch: ReadWriteLatch::NoLatch,
+                page_id: PageId {
+                    space_id: root_page.page_get_space_id(),
+                    page_no: child_page_no,
+                },
+                mode: BUF_GET_ALWAYS,
+                mtr,
+            });
+
+            let buf_block = some_or_panic!(buf_block);
+
+            page_cursor = PageCur::new(
+                self.index.clone(),
+                None,
+                buf_block.clone(),
+                buf_block.read().unwrap().get_page(),
+            );
+
+            page = page_cursor.page_cur_get_page();
+            page_cursor.page_cur_set_before_first();
+            page_cursor.page_cur_move_to_next();
+        }
+
+        let records_data: Vec<String> = page_cursor
+            .page_cur_get_page()
+            .page_get_user_records()
+            .iter()
+            .map(|rec| rec.rec_get_data(0).unwrap().data_or_panic())
+            .collect();
+
+        records_data.is_sorted()
     }
 
     /// Formats and prints information about a non-leaf page in a B-tree.
