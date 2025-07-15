@@ -49,8 +49,8 @@ pub struct BufPool {
     buf_rea: Arc<Mutex<BufRea>>,
 }
 
-/// All of the data that used to live *inside* the pool mutex
-/// (i.e. everything protected by that lock) goes here.
+/// All the data that used to live *inside* the pool mutex
+/// (i.e., everything protected by that lock) goes here.
 pub(crate) struct BufPoolInner {
     /// A sequence number used to count pages evicted off the LRU list
     freed_page_clock: usize,

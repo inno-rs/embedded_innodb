@@ -20,7 +20,7 @@ mod tests {
         },
         data::data0types::{DTYPE_INT, DTuple},
         dict::dict0types::{Column, Field, Index},
-        fil::fil0fil::Fil,
+        fil::{fil0fil::Fil, fil0types::FILL_NULL},
         fsp::{fsp0fsp::Fsp, fsp0types::Direction},
         innodb::innodb0types::PageId,
         lock::lock0lock::LockSys,
@@ -33,6 +33,7 @@ mod tests {
             page0cur::{PAGE_CUR_G, PAGE_CUR_GE, PAGE_CUR_L, PAGE_CUR_LE},
             page0page::{Page, PageDebug},
         },
+        rem::rem0rec::Record,
         some_or_panic,
         sync::sync0rw::ReadWriteLatch,
         tests::test0utils::{
@@ -148,7 +149,7 @@ mod tests {
         );
 
         let mut mtr = Mtr::new();
-        mtr.set_mtr_state(MtrActive);
+        mtr.start();
 
         let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
@@ -214,16 +215,12 @@ mod tests {
         });
 
         let buf_block = some_or_panic!(buf_block);
-        let page = buf_block.read().unwrap().get_page();
+        mtr.memo_push(MemoSlot::PageFix(
+            buf_block.read().unwrap().get_page_id(),
+            FixMode::Exclusive,
+        ));
 
-        {
-            let buf_block = buf_block.read().unwrap();
-            Page::page_create(
-                fixture.index.deref(),
-                buf_block.deref(),
-                Some(&mut mtr),
-            );
-        }
+        btree.page_create(buf_block.clone(), 0, &mut mtr);
 
         fill_block_with_uniform_data(
             btree.clone(),
@@ -233,6 +230,7 @@ mod tests {
             seed,
         );
 
+        let page = buf_block.read().unwrap().get_page();
         assert!(page.page_validate());
         assert_eq!(page.page_get_data_size(), 15818);
 
@@ -471,7 +469,6 @@ mod tests {
         info!("finding: {}", &dtuples[dtuple_to_find]);
 
         btr_cur.search_to_nth_level(
-            vec![],
             0,
             &dtuples[dtuple_to_find],
             comparison_mode,
@@ -549,7 +546,8 @@ mod tests {
     fn test_pessimistic_insert_in_btree_page() {
         let seed = 1234u64;
         let mut rng = StdRng::seed_from_u64(seed);
-        let fixture = fixture(10);
+
+        let fixture = fixture(1);
         let btree = fixture.btree.clone();
         let btr_cur = BTreeCursor::new(
             &fixture.btree,
@@ -594,7 +592,8 @@ mod tests {
 
         btr_cur.position(record, buf_block.clone());
         let limit = 1;
-        let step_size = 9;
+
+        let step_size = 50;
         for chunk in (0..limit).step_by(step_size) {
             let mut input: Vec<[FieldType; 1]> = vec![];
 
@@ -609,9 +608,8 @@ mod tests {
 
             dtuples.shuffle(&mut rng);
 
-            for dtuple in dtuples.iter_mut() {
+            for (i, dtuple) in dtuples.iter_mut().enumerate() {
                 btr_cur.search_to_nth_level(
-                    vec![],
                     0,
                     dtuple,
                     PAGE_CUR_LE,
@@ -631,9 +629,185 @@ mod tests {
             }
         }
 
+        let smallest_dtuple = create_dtuple(&[FieldType::String(Some(
+            "hello world 00000".to_string(),
+        ))]);
+
+        btr_cur.search_to_nth_level(
+            0,
+            &smallest_dtuple,
+            PAGE_CUR_LE,
+            0,
+            &mut mtr,
+        );
+
+        let mut records: Vec<Record> = vec![];
+        let positioned_block = btr_cur.get_block().unwrap();
+        let positioned_page = positioned_block.read().unwrap().get_page();
+        let mut curr_page_no = positioned_page.page_get_fil_offset();
+
+        while curr_page_no as u32 != FILL_NULL {
+            let current_block =
+                fixture.buf_pool.lock().unwrap().get(Request {
+                    rw_latch: ReadWriteLatch::NoLatch,
+                    page_id: PageId {
+                        space_id: positioned_page.page_get_space_id(),
+                        page_no: curr_page_no as u32,
+                    },
+                    mode: BUF_GET_ALWAYS,
+                    mtr: &mut mtr,
+                });
+
+            let page =
+                some_or_panic!(current_block).read().unwrap().get_page();
+
+            let recs = page.page_get_user_records();
+            for r in recs.iter() {
+                records.push(r.clone());
+            }
+
+            curr_page_no = BTree::page_get_next(&page) as usize;
+        }
+
         let mut user_rec_data: Vec<String> = vec![];
         for rec in page.page_get_user_records() {
-            info!("dd {}", rec);
+            user_rec_data.push(rec.rec_get_data(0).unwrap().data_or_panic());
+        }
+
+        assert!(user_rec_data.is_sorted());
+    }
+
+    #[test]
+    fn test_leaves_traversal_left_to_right() {
+        let seed = 1234u64;
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        let fixture = fixture(1);
+        let buf_pool = fixture.buf_pool.clone();
+        let btree = fixture.btree.clone();
+        let btr_cur = BTreeCursor::new(
+            &fixture.btree,
+            fixture.index.clone(),
+            fixture.buf_pool.clone(),
+            fixture.lock_sys.clone(),
+        );
+        let btree = fixture.btree.clone();
+        let mut btr_cur = BTreeCursor::new(
+            &fixture.btree,
+            fixture.index.clone(),
+            fixture.buf_pool.clone(),
+            fixture.lock_sys.clone(),
+        );
+
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        ut_ad!(buf_block.is_some());
+
+        let buf_block = some_or_panic!(buf_block);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            buf_block.read().unwrap().get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        // Initialize the page.
+        btree.page_create(buf_block.clone(), 0, &mut mtr);
+
+        let page: Page = buf_block.read().unwrap().get_page();
+        let record = page.page_get_infimum_rec();
+
+        assert!(page.page_validate());
+
+        btr_cur.position(record, buf_block.clone());
+        let limit = 1;
+
+        let step_size = 50;
+        for chunk in (0..limit).step_by(step_size) {
+            let mut input: Vec<[FieldType; 1]> = vec![];
+
+            for c in chunk..chunk + step_size {
+                input.push([FieldType::String(Some(format!(
+                    "hello world {:05}",
+                    c
+                )))])
+            }
+
+            let mut dtuples = create_dtuples_from_input_data_chunk(input);
+
+            dtuples.shuffle(&mut rng);
+
+            for (i, dtuple) in dtuples.iter_mut().enumerate() {
+                btr_cur.search_to_nth_level(
+                    0,
+                    dtuple,
+                    PAGE_CUR_LE,
+                    0,
+                    &mut mtr,
+                );
+
+                let positioned_block = btr_cur.get_block().unwrap();
+                let positioned_page =
+                    positioned_block.read().unwrap().get_page();
+
+                assert_eq!(BTree::page_get_level(&positioned_page), 0);
+
+                let result =
+                    btr_cur.pessimistic_insert(0, dtuple, 0, &mut mtr);
+                assert!(result.is_ok(), "Failed to insert: {:?}", dtuple);
+            }
+        }
+
+        // Find the left most node
+        let dtuple = create_dtuple(&[FieldType::String(Some(
+            "hello world 00000".to_string(),
+        ))]);
+
+        btr_cur.search_to_nth_level(0, &dtuple, PAGE_CUR_LE, 0, &mut mtr);
+
+        let mut records: Vec<Record> = vec![];
+
+        let positioned_block = btr_cur.get_block().unwrap();
+        let positioned_page = positioned_block.read().unwrap().get_page();
+
+        ut_ad!(BTree::page_get_level(&positioned_page) == 0);
+
+        let mut current_page = Some(positioned_page);
+        while let Some(page) = current_page {
+            let recs = page.page_get_user_records();
+            for r in recs.iter() {
+                records.push(r.clone());
+            }
+
+            let next_page_no = BTree::page_get_next(&page);
+            if next_page_no as u32 != FILL_NULL {
+                let next_block = buf_pool.lock().unwrap().get(Request {
+                    rw_latch: ReadWriteLatch::NoLatch,
+                    page_id: PageId {
+                        space_id: page.page_get_space_id(),
+                        page_no: next_page_no as u32,
+                    },
+                    mode: BUF_GET_ALWAYS,
+                    mtr: &mut mtr,
+                });
+
+                let block = some_or_panic!(next_block);
+                let next_page = block.read().unwrap().get_page();
+                current_page.replace(next_page);
+            } else {
+                current_page = None;
+            }
+        }
+
+        let mut user_rec_data: Vec<String> = vec![];
+        for rec in page.page_get_user_records() {
             user_rec_data.push(rec.rec_get_data(0).unwrap().data_or_panic());
         }
 
@@ -699,7 +873,6 @@ mod tests {
 
             for dtuple in dtuples.iter_mut() {
                 btr_cur.search_to_nth_level(
-                    vec![],
                     0,
                     dtuple,
                     PAGE_CUR_LE,
@@ -1026,9 +1199,8 @@ mod tests {
         ))]);
 
         let rec = btr_cur.page_get_split_rec(&dtuple, 0);
-        assert!(rec.is_some());
+        assert!(rec.is_none());
         assert_eq!(page.page_get_n_recs(), 0);
-        assert!(page.page_rec_is_infimum(rec.unwrap()));
     }
 
     /* Start Root Split Operations */

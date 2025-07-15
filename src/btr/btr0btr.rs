@@ -1,4 +1,6 @@
 use std::{
+    collections::VecDeque,
+    fmt::Display,
     ops::Deref,
     sync::{Arc, Mutex, RwLock},
 };
@@ -23,6 +25,7 @@ use crate::{
     },
     page::page0page::{
         PAGE_BTR_SEG_LEAF, PAGE_HEADER, PAGE_INDEX_ID, PAGE_LEVEL, Page,
+        PageDebug,
     },
     rem::rem0rec::Record,
     some_or_panic,
@@ -344,6 +347,13 @@ impl BTree {
             return None;
         }
 
+        info!(
+            "page_alloc: Allocating page for index {} at level {}, page_no {}",
+            self.index.get_index_id(),
+            level,
+            new_page_no
+        );
+
         let buf_block = self.buf_pool.lock().unwrap().get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId {
@@ -385,6 +395,38 @@ impl BTree {
     /// * `mtr` - The mini-transaction that logs this operation
     pub fn page_set_next(page: &Page, next: PageNo, mtr: &mut Mtr) {
         mtr.write_u32(page, FIL_PAGE_NEXT, next as u32, MlogType::MLOG_4BYTES);
+    }
+
+    /// Gets the next page pointer from the given page.
+    ///
+    /// This function retrieves the page number that the current page points to as its next page.
+    ///
+    /// # Arguments
+    ///
+    /// * `page` - The page from which to retrieve the next page pointer
+    ///
+    /// # Returns
+    ///
+    /// The page number of the next page as a `PageNo`.
+    ///
+    pub fn page_get_next(page: &Page) -> PageNo {
+        page.get_next_page()
+    }
+
+    /// Retrieves the previous page pointer from a given page.
+    ///
+    /// This function returns the page number of the previous page in the B-tree structure.
+    ///
+    /// # Arguments
+    ///
+    /// * `page` - The page from which to retrieve the previous page pointer
+    ///
+    /// # Returns
+    ///
+    /// The page number of the previous page as a `PageNo`.
+    ///
+    pub fn page_get_prev(page: &Page) -> PageNo {
+        page.get_prev_page()
     }
 
     /// Sets the previous page pointer in the given page.
@@ -432,6 +474,9 @@ impl BTree {
 
         BTree::page_set_level(&mut page, level, mtr);
         BTree::page_set_index_id(&mut page, self.index.get_index_id(), mtr);
+
+        BTree::page_set_next(&mut page, FILL_NULL, mtr);
+        BTree::page_set_prev(&mut page, FILL_NULL, mtr);
     }
 
     /// Creates an empty page in a B-tree at the specified level.
@@ -462,6 +507,8 @@ impl BTree {
         };
 
         Self::page_set_level(&mut page, level, mtr);
+        BTree::page_set_next(&mut page, FILL_NULL, mtr);
+        BTree::page_set_prev(&mut page, FILL_NULL, mtr);
     }
 
     /// Retrieves the root page of a B-tree index.
@@ -530,5 +577,182 @@ impl BTree {
 
         // todo: Start writing child page no using mach_write_to_4
         u32::from_le_bytes(data.as_bytes().try_into().unwrap()) as PageNo
+    }
+
+    /// Formats and prints information about a non-leaf page in a B-tree.
+    ///
+    /// This function writes detailed information about a non-leaf (internal) page to the provided formatter.
+    /// It includes page metadata (ID, level, next/previous page pointers) and information about each record
+    /// in the page, including the child page numbers that the records point to.
+    ///
+    /// # Arguments
+    ///
+    /// * `buf_block` - The buffer block containing the non-leaf page to print
+    /// * `f` - The formatter to write the output to
+    ///
+    /// # Returns
+    ///
+    /// A Result containing a vector of child page numbers if successful, or a formatting error
+    fn print_non_leaf_block(
+        &self,
+        buf_block: Arc<RwLock<BufBlock>>,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> Result<Vec<PageNo>, std::fmt::Error> {
+        write!(f, "{:-^80}\n", "Start Non-Leaf Page")?;
+
+        let mut child_page_nos = Vec::new();
+        let buf_block = buf_block.read().unwrap();
+        let page = buf_block.get_page();
+        write!(f, "BTree Page: {}\n", buf_block.get_page_id())?;
+        write!(f, "Level: {}\n", Self::page_get_level(&page))?;
+        write!(f, "Next Page: {}\n", page.get_next_page() as u64)?;
+        write!(f, "Previous Page: {}\n", page.get_prev_page() as u64)?;
+
+        write!(f, "{:-^80}\n", "Start Elements In Page")?;
+        for rec in page.page_get_user_records() {
+            write!(f, "Record: \n")?;
+            write!(
+                f,
+                "Key: {}\n",
+                rec.rec_get_data(0).unwrap().data_or_panic()
+            )?;
+            let child_page_no = self.inner_node_get_child_page_no(&rec);
+            write!(f, "Child Page No(Value): {}\n", child_page_no)?;
+
+            child_page_nos.push(child_page_no as u32);
+        }
+
+        write!(f, "{:-^80}\n", "End Elements In The Page")?;
+
+        write!(f, "{:-^80}\n", "End Non-Leaf Page")?;
+
+        Ok(child_page_nos)
+    }
+
+    /// Formats and prints information about a leaf page in a B-tree.
+    ///
+    /// This function writes detailed information about a leaf page to the provided formatter.
+    /// It includes page metadata (ID, level, next/previous page pointers) and information about
+    /// each record in the page. Unlike non-leaf pages, leaf pages contain the actual data records.
+    ///
+    /// # Arguments
+    ///
+    /// * `buf_block` - The buffer block containing the leaf page to print
+    /// * `f` - The formatter to write the output to
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or a formatting error
+    fn print_leaf_block(
+        &self,
+        buf_block: Arc<RwLock<BufBlock>>,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        write!(f, "{:-^80}\n", "Start Leaf Page")?;
+        let buf_block = buf_block.read().unwrap();
+        let page = buf_block.get_page();
+        write!(f, "BTree Page: {}\n", buf_block.get_page_id())?;
+        write!(f, "Level: {}\n", Self::page_get_level(&page))?;
+        write!(f, "Next Page: {}\n", page.get_next_page() as u64)?;
+        write!(f, "Previous Page: {}\n", page.get_prev_page() as u64)?;
+
+        write!(f, "{:-^80}\n", "Start Elements In The Page")?;
+
+        for rec in page.page_get_user_records() {
+            write!(f, "Record >> {}\n", rec)?;
+        }
+
+        write!(f, "{:-^80}\n", "End Elements In The Page")?;
+
+        write!(f, "{:-^80}\n", "End Leaf Page")
+    }
+
+    /// Formats and prints the entire B-tree index structure.
+    ///
+    /// This function traverses and prints the complete B-tree index structure, including
+    /// metadata about the index itself and all pages in the tree. It performs a breadth-first
+    /// traversal of the tree, printing information about each page (both leaf and non-leaf).
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - The formatter to write the output to
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or a formatting error
+    pub fn print_index(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        write!(f, "\n{:-^80}\n", "Start Index")?;
+
+        write!(f, "Index ID: {}\n", self.index.get_index_id())?;
+        write!(
+            f,
+            "Number of Unique Fields in Tree: {}\n",
+            self.index.get_n_unique_in_tree()
+        )?;
+        write!(f, "Fill Factor: {}\n", self.fill_factor)?;
+
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let root_block = self.root_get(&mut mtr);
+        let root_page = root_block.read().unwrap().get_page();
+        let space_id = root_page.page_get_space_id();
+
+        let mut pages: VecDeque<PageNo> =
+            VecDeque::from(vec![self.index.get_root_page_no()]);
+        let mut next_level_pages: Vec<PageNo> = vec![];
+
+        while pages.is_empty() == false {
+            let page_no = pages.pop_front().unwrap();
+            let mut buf_pool = self.buf_pool.lock().unwrap();
+            let buf_block = buf_pool.get(Request {
+                rw_latch: ReadWriteLatch::NoLatch,
+                page_id: PageId { space_id, page_no },
+                mode: BUF_GET_ALWAYS,
+                mtr: &mut mtr,
+            });
+
+            let buf_block = some_or_panic!(buf_block);
+
+            let page = buf_block.read().unwrap().get_page();
+
+            if page.page_is_leaf() {
+                self.print_leaf_block(buf_block, f)?;
+            } else {
+                let child_page_nos =
+                    self.print_non_leaf_block(buf_block.clone(), f)?;
+                next_level_pages.extend(child_page_nos);
+            }
+
+            if pages.is_empty() && next_level_pages.is_empty() == false {
+                pages.extend(next_level_pages.clone());
+                next_level_pages.clear();
+            }
+        }
+
+        write!(f, "{:-^80}\n", "End Index")
+    }
+}
+
+/// Implements the Display trait for BTree.
+///
+/// This implementation allows a BTree to be formatted as a string using the `{}` format specifier.
+/// It provides a human-readable representation of the entire B-tree structure by delegating to
+/// the `print_index` method.
+impl Display for BTree {
+    /// Formats the BTree for display.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - The formatter to write the output to
+    ///
+    /// # Returns
+    ///
+    /// A Result indicating success or a formatting error
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.print_index(f)
     }
 }
