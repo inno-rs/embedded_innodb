@@ -69,7 +69,6 @@ mod tests {
             buf_lru.clone(),
             buf_rea,
         )));
-        buf_lru.lock().unwrap().init(Arc::downgrade(&buf_pool));
 
         let lock_sys = Arc::new(Mutex::new(LockSys::new()));
         let index = Arc::new(Index::new(PageId { space_id: 0, page_no: 0 }));

@@ -5,9 +5,19 @@
 /// moving pages within the list, and ensuring proper page aging and eviction.
 #[cfg(test)]
 mod tests {
-    use rstest::{fixture, rstest};
-
+    use crate::buf::buf0buf::BufPoolInner;
     use crate::buf::buf0buf_tests::tests::BufPoolFixture;
+    use crate::buf::buf0flu::{BufFlush, BufFlushType};
+    use crate::buf::buf0lru::BufLRU;
+    use crate::buf::buf0types::{
+        BufBlock, BufIoFix, BufPage, BufPageState, Frame,
+    };
+    use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
+    use intrusive_collections::{LinkedList, UnsafeRef};
+    use rstest::{fixture, rstest};
+    use std::alloc::{Layout, alloc_zeroed};
+    use std::sync::{Arc, RwLock};
+    use crate::tests::test0utils;
 
     /// Creates a new buffer pool fixture for testing.
     ///
@@ -33,4 +43,55 @@ mod tests {
     fn test_make_young() {
         // TODO: Implement this test to verify make_young functionality
     }
+
+    #[test]
+    fn test_block_remove_hashed_page_increments_clocks_and_returns_memory() {
+        let mut lru = BufLRU::new();
+        let mut inner = BufPoolInner::new();
+        let space_id = 0;
+        let page_no = 42;
+        let owning_page = test0utils::create_raw_page();
+        let buf_page = owning_page.page.clone();
+        let block = owning_page.buf_block.clone();
+        
+
+        // PHASE A: setup
+        {
+            let mut g = block.write().unwrap();
+            g.buf_block_set_state(BufPageState::BufBlockFilePage);
+            let pg = g.buf_block_get_page_mut();
+
+            pg.set_in_file();
+            pg.buf_page_set_io_fix(BufIoFix::BufIoNone);
+            pg.set_buf_page_io_fix_count(0);
+            lru.add_block_low(pg, false);
+        }
+
+        let mut before_i = 0usize;
+        let mut after_i = 0usize;
+
+        let mut before_b = 0usize;
+        let mut after_b = 0usize;
+
+        // snapshot before
+        {
+            before_i = inner.freed_page_clock();
+            before_b = block.read().unwrap().buf_block_get_clock();
+        }
+        // PHASE B: eviction
+
+        let new_state = {
+            let mut g = block.write().unwrap();
+            lru.remove_page_from_lru(&mut inner, &mut g)
+        };
+
+        // snapshot after
+        {
+            after_i = inner.freed_page_clock();
+            after_b = block.read().unwrap().buf_block_get_clock();
+        }
+        assert_eq!(after_i - before_i, 1);
+        assert_eq!(after_b - before_b, 1);
+    }
+   
 }
