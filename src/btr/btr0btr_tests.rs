@@ -815,6 +815,97 @@ mod tests {
     }
 
     #[test]
+    fn test_index_validate() {
+        let seed = 1234u64;
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        let fixture = fixture(1);
+        let buf_pool = fixture.buf_pool.clone();
+        let btree = fixture.btree.clone();
+        let btr_cur = BTreeCursor::new(
+            &fixture.btree,
+            fixture.index.clone(),
+            fixture.buf_pool.clone(),
+            fixture.lock_sys.clone(),
+        );
+        let btree = fixture.btree.clone();
+        let mut btr_cur = BTreeCursor::new(
+            &fixture.btree,
+            fixture.index.clone(),
+            fixture.buf_pool.clone(),
+            fixture.lock_sys.clone(),
+        );
+
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        ut_ad!(buf_block.is_some());
+
+        let buf_block = some_or_panic!(buf_block);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            buf_block.read().unwrap().get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        // Initialize the page.
+        btree.page_create(buf_block.clone(), 0, &mut mtr);
+
+        let page: Page = buf_block.read().unwrap().get_page();
+        let record = page.page_get_infimum_rec();
+
+        assert!(page.page_validate());
+
+        btr_cur.position(record, buf_block.clone());
+        let limit = 1;
+
+        let step_size = 50;
+        for chunk in (0..limit).step_by(step_size) {
+            let mut input: Vec<[FieldType; 1]> = vec![];
+
+            for c in chunk..chunk + step_size {
+                input.push([FieldType::String(Some(format!(
+                    "hello world {:05}",
+                    c
+                )))])
+            }
+
+            let mut dtuples = create_dtuples_from_input_data_chunk(input);
+
+            dtuples.shuffle(&mut rng);
+
+            for (i, dtuple) in dtuples.iter_mut().enumerate() {
+                btr_cur.search_to_nth_level(
+                    0,
+                    dtuple,
+                    PAGE_CUR_LE,
+                    0,
+                    &mut mtr,
+                );
+
+                let positioned_block = btr_cur.get_block().unwrap();
+                let positioned_page =
+                    positioned_block.read().unwrap().get_page();
+
+                assert_eq!(BTree::page_get_level(&positioned_page), 0);
+
+                let result =
+                    btr_cur.pessimistic_insert(0, dtuple, 0, &mut mtr);
+                assert!(result.is_ok(), "Failed to insert: {:?}", dtuple);
+            }
+        }
+
+        assert!(btree.validate_index());
+    }
+
+    #[test]
     fn test_optimistic_insert_in_btree_page() {
         let seed = 1234u64;
         let mut rng = StdRng::seed_from_u64(seed);
