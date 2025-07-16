@@ -1,12 +1,3 @@
-use std::sync::{Arc, Mutex, RwLock};
-
-use intrusive_collections::{LinkedListLink, intrusive_adapter};
-
-use crate::{
-    dict::dict0types::{Index, Table},
-    innodb::innodb0types::PageId,
-};
-
 /// Lock types
 pub type LockType = u16;
 
@@ -21,6 +12,9 @@ pub const TABLE_LOCK: LockType = 16;
 
 /// Record Lock
 pub const REC_LOCK: LockType = 32;
+
+/// Mask used to extract the type from type_mode field in a lock.
+pub const LOCK_TYPE_MASK: LockType = 0xF0;
 
 /// Wait lock flag. This flag is used to indicate that the lock is waiting for its turn in the wait queue.
 pub const LOCK_WAIT: LockType = 256;
@@ -45,6 +39,7 @@ pub const LOCK_COMPATIBILITY_MATRIX: [[bool; 4]; 4] = [
 
 /// Basic Lock Mode.
 #[derive(Clone, Copy, Debug)]
+#[repr(u16)]
 pub enum LockMode {
     /// Intention shared.
     LOCK_IS = 0,
@@ -57,23 +52,3 @@ pub enum LockMode {
     /// No lock.
     LOCK_NONE = 4,
 }
-
-pub struct TableLock {
-    /// Database table in dictionary cache.
-    table: Arc<Mutex<Table>>,
-    /// List of locks on the same table.
-    locks: LinkedListLink,
-}
-
-intrusive_adapter!(TableLockListAdapter = Box<TableLock>: TableLock { locks: LinkedListLink });
-
-pub struct RecLock {
-    /// Index of the record.
-    index: Arc<RwLock<Index>>,
-    /// Page Id.
-    page_id: PageId,
-    /// List of locks on the same page.
-    locks: LinkedListLink,
-}
-
-intrusive_adapter!(RecLockListAdapter = Box<RecLock>: RecLock { locks: LinkedListLink });
