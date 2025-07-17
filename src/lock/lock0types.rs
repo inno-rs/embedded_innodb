@@ -28,13 +28,24 @@ pub const LOCK_REC_NOT_GAP: LockType = 1024;
 /// This bit is set when we place a waiting gap type record lock request in order to let an insert of an index record to wait until there are no more conflicting locks by other transactions on the gap.
 pub const LOCK_INSERT_INTENTION: LockType = 2048;
 
+/// Lock compatibility matrix.
 #[rustfmt::skip]
 pub const LOCK_COMPATIBILITY_MATRIX: [[bool; 4]; 4] = [
-    /**         IS     IX       S     X   */ //
-    /* IS */ [  true,  true,  true,  false], //
-    /* IX */ [  true,  true,  false, false], //
-    /* S  */ [  true,  false, true,  false], //
-    /* X  */ [  false, false, false, false], //
+    /**         IS     IX       S     X     */ //
+    /* IS */ [  true,  true,  true,  false  ], //
+    /* IX */ [  true,  true,  false, false  ], //
+    /* S  */ [  true,  false, true,  false  ], //
+    /* X  */ [  false, false, false, false  ], //
+];
+
+/// Lock strength matrix. This defines the stronger-or-equal lock relation.
+#[rustfmt::skip]
+pub const LOCK_STRENGTH_MATRIX: [[bool; 4]; 4] = [
+    /**           IS     IX       S     X     */ //
+    /* IS */ [  true,  false,  false,  false  ], //
+    /* IX */ [  true,  true,   false,  false  ], //
+    /* S  */ [  true,  false,  true,   false  ], //
+    /* X  */ [  true,  true,   true,    true  ], //
 ];
 
 /// Basic Lock Mode.
