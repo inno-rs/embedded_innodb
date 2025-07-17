@@ -12,13 +12,14 @@ use crate::{
     innodb::innodb0types::{DbErr, DbErr::DbFail, PageId},
     lock::lock0types::{
         LOCK_COMPATIBILITY_MATRIX, LOCK_GAP, LOCK_INSERT_INTENTION,
-        LOCK_REC_NOT_GAP, LOCK_TYPE_MASK, LockMode,
+        LOCK_REC_NOT_GAP, LOCK_STRENGTH_MATRIX, LOCK_TYPE_MASK, LockMode,
         LockMode::{LOCK_IX, LOCK_S, LOCK_X},
         LockType, REC_LOCK,
     },
     mtr::mtr0mtr::Mtr,
     page::page0page::PAGE_HEAP_NO_SUPREMUM,
     rem::rem0rec::Record,
+    some_or_panic,
     trx::trx0trx::Trx,
     ut::ut0dbg::ut_ad,
 };
@@ -27,6 +28,7 @@ use crate::{
 ///
 /// A table lock is acquired by a transaction to control access to an entire table,
 /// preventing conflicting operations from other transactions based on the lock mode.
+#[derive(Clone)]
 pub struct TableLock {
     /// Database table in dictionary cache.
     pub table: Arc<Mutex<Table>>,
@@ -63,6 +65,7 @@ impl Display for RecLock {
 }
 
 /// Transaction lock type that can be either a table lock or a record lock.
+#[derive(Clone)]
 pub enum TxnLock {
     /// Table lock.
     TableLock(TableLock),
@@ -326,6 +329,41 @@ impl Lock {
         LOCK_COMPATIBILITY_MATRIX[lhs as usize][rhs as usize]
     }
 
+    /// Determines if one lock mode is stronger than or equal to another lock mode.
+    ///
+    /// This function uses the LOCK_STRENGTH_MATRIX to determine the strength relationship
+    /// between two lock modes. The strength hierarchy is as follows:
+    /// - LOCK_X (exclusive) is the strongest lock mode and is stronger than all other modes
+    /// - LOCK_S (shared) is stronger than LOCK_IS but not stronger than LOCK_IX or LOCK_X
+    /// - LOCK_IX (intention exclusive) is stronger than LOCK_IS but not stronger than LOCK_S or LOCK_X
+    /// - LOCK_IS (intention shared) is the weakest and is only stronger than or equal to itself
+    ///
+    /// # Arguments
+    ///
+    /// * `lhs` - The left-hand side lock mode to compare
+    /// * `rhs` - The right-hand side lock mode to compare against
+    ///
+    /// # Returns
+    ///
+    /// `true` if the left-hand side lock mode is stronger than or equal to the right-hand side lock mode,
+    /// `false` otherwise.
+    pub fn mode_stronger_or_eq(lhs: LockMode, rhs: LockMode) -> bool {
+        ut_ad!(
+            lhs == LockMode::LOCK_IS
+                || lhs == LOCK_IX
+                || lhs == LOCK_S
+                || lhs == LOCK_X
+        );
+        ut_ad!(
+            rhs == LockMode::LOCK_IS
+                || rhs == LOCK_IX
+                || rhs == LOCK_S
+                || rhs == LOCK_X
+        );
+
+        LOCK_STRENGTH_MATRIX[lhs as usize][rhs as usize]
+    }
+
     /// Checks if a lock type has a specific flag set.
     ///
     /// # Arguments
@@ -392,6 +430,53 @@ impl Lock {
             }
 
             return !self.rec_is_insert_intention();
+        }
+
+        false
+    }
+
+    /// Determines if the current lock has to wait for another lock.
+    ///
+    /// This method checks if the current lock is compatible with the given lock.
+    /// If the locks are not compatible, it determines whether the current lock
+    /// must wait for the other lock to be released before it can be granted.
+    ///
+    /// For record locks, it performs additional checks using the record's heap number
+    /// to determine if specific record locking conditions apply.
+    ///
+    /// # Arguments
+    ///
+    /// * `lock` - The other lock to check against
+    /// * `heap_no` - The heap number of the record (required for record locks)
+    ///
+    /// # Returns
+    ///
+    /// `true` if the current lock has to wait for the given lock, `false` otherwise
+    pub fn has_to_wait_for(
+        &self,
+        lock: &Lock,
+        heap_no: Option<usize>,
+    ) -> bool {
+        ut_ad!(self.lock_type() == REC_LOCK || heap_no.is_none());
+
+        if !Self::mode_compatible(self.lock_mode, lock.lock_mode) {
+            if self.lock_type() == REC_LOCK {
+                let heap_no = some_or_panic!(heap_no);
+                ut_ad!(lock.lock_type() == REC_LOCK);
+                ut_ad!(self.rec_is_nth_bit_set(heap_no));
+                ut_ad!(lock.rec_is_nth_bit_set(heap_no));
+
+                return lock.rec_blocks(
+                    self.trx.clone(),
+                    LockModeType {
+                        lock_mode: self.lock_mode,
+                        lock_type: self.lock_type,
+                    },
+                    false,
+                );
+            }
+
+            return true;
         }
 
         false

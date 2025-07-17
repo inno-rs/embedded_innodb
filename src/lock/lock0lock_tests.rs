@@ -436,6 +436,69 @@ mod tests {
         assert!(!Lock::mode_compatible(LockMode::LOCK_X, LockMode::LOCK_X));
     }
 
+    #[test]
+    fn test_mode_stronger_or_eq() {
+        // Test strength matrix
+        assert!(Lock::mode_stronger_or_eq(
+            LockMode::LOCK_IS,
+            LockMode::LOCK_IS
+        ));
+        assert!(!Lock::mode_stronger_or_eq(
+            LockMode::LOCK_IS,
+            LockMode::LOCK_IX
+        ));
+        assert!(!Lock::mode_stronger_or_eq(
+            LockMode::LOCK_IS,
+            LockMode::LOCK_S
+        ));
+        assert!(!Lock::mode_stronger_or_eq(
+            LockMode::LOCK_IS,
+            LockMode::LOCK_X
+        ));
+
+        assert!(Lock::mode_stronger_or_eq(
+            LockMode::LOCK_IX,
+            LockMode::LOCK_IS
+        ));
+        assert!(Lock::mode_stronger_or_eq(
+            LockMode::LOCK_IX,
+            LockMode::LOCK_IX
+        ));
+        assert!(!Lock::mode_stronger_or_eq(
+            LockMode::LOCK_IX,
+            LockMode::LOCK_S
+        ));
+        assert!(!Lock::mode_stronger_or_eq(
+            LockMode::LOCK_IX,
+            LockMode::LOCK_X
+        ));
+
+        assert!(Lock::mode_stronger_or_eq(
+            LockMode::LOCK_S,
+            LockMode::LOCK_IS
+        ));
+        assert!(!Lock::mode_stronger_or_eq(
+            LockMode::LOCK_S,
+            LockMode::LOCK_IX
+        ));
+        assert!(Lock::mode_stronger_or_eq(LockMode::LOCK_S, LockMode::LOCK_S));
+        assert!(!Lock::mode_stronger_or_eq(
+            LockMode::LOCK_S,
+            LockMode::LOCK_X
+        ));
+
+        assert!(Lock::mode_stronger_or_eq(
+            LockMode::LOCK_X,
+            LockMode::LOCK_IS
+        ));
+        assert!(Lock::mode_stronger_or_eq(
+            LockMode::LOCK_X,
+            LockMode::LOCK_IX
+        ));
+        assert!(Lock::mode_stronger_or_eq(LockMode::LOCK_X, LockMode::LOCK_S));
+        assert!(Lock::mode_stronger_or_eq(LockMode::LOCK_X, LockMode::LOCK_X));
+    }
+
     #[rstest]
     fn test_rec_blocks_same_transaction(rec_lock: RecLock) {
         // Create a transaction
@@ -673,5 +736,168 @@ mod tests {
             lock.rec_blocks(trx2.clone(), lock_mode_type, false),
             false
         );
+    }
+
+    #[rstest]
+    fn test_has_to_wait_for_compatible_modes(rec_lock: RecLock) {
+        // Create two different transactions
+        let trx1 = Arc::new(Trx::new(1));
+        let trx2 = Arc::new(Trx::new(2));
+
+        // Create a lock with S mode
+        let mut lock1 = Lock::new(
+            trx1.clone(),
+            50,
+            TxnLock::RecLock(rec_lock.clone()),
+            LockMode::LOCK_S,
+            REC_LOCK,
+        );
+
+        // Create another lock with S mode (compatible with S)
+        let mut lock2 = Lock::new(
+            trx2.clone(),
+            50,
+            TxnLock::RecLock(rec_lock),
+            LockMode::LOCK_S,
+            REC_LOCK,
+        );
+
+        // Set the bit for the record in both locks
+        let heap_no = 5;
+        lock1.rec_set_nth_bit(heap_no);
+        lock2.rec_set_nth_bit(heap_no);
+
+        // Test with compatible lock modes - should not wait
+        assert_eq!(lock1.has_to_wait_for(&lock2, Some(heap_no)), false);
+    }
+
+    #[rstest]
+    fn test_has_to_wait_for_incompatible_table_locks() {
+        // Create two different transactions
+        let trx1 = Arc::new(Trx::new(1));
+        let trx2 = Arc::new(Trx::new(2));
+
+        // Create table locks
+        let table = table();
+        let table_lock = table_lock(table.clone());
+
+        // Create a lock with S mode
+        let lock1 = Lock::new(
+            trx1.clone(),
+            50,
+            TxnLock::TableLock(table_lock.clone()),
+            LockMode::LOCK_S,
+            0, // Table lock
+        );
+
+        // Create another lock with X mode (incompatible with S)
+        let lock2 = Lock::new(
+            trx2.clone(),
+            50,
+            TxnLock::TableLock(table_lock),
+            LockMode::LOCK_X,
+            0, // Table lock
+        );
+
+        // Test with incompatible lock modes for table locks - should wait
+        assert_eq!(lock1.has_to_wait_for(&lock2, None), true);
+    }
+
+    #[rstest]
+    fn test_has_to_wait_for_incompatible_rec_locks(rec_lock: RecLock) {
+        // Create two different transactions
+        let trx1 = Arc::new(Trx::new(1));
+        let trx2 = Arc::new(Trx::new(2));
+
+        // Create a lock with S mode
+        let mut lock1 = Lock::new(
+            trx1.clone(),
+            50,
+            TxnLock::RecLock(rec_lock.clone()),
+            LockMode::LOCK_S,
+            REC_LOCK,
+        );
+
+        // Create another lock with X mode (incompatible with S)
+        let mut lock2 = Lock::new(
+            trx2.clone(),
+            50,
+            TxnLock::RecLock(rec_lock),
+            LockMode::LOCK_X,
+            REC_LOCK | LOCK_REC_NOT_GAP,
+        );
+
+        // Set the bit for the record in both locks
+        let heap_no = 5;
+        lock1.rec_set_nth_bit(heap_no);
+        lock2.rec_set_nth_bit(heap_no);
+
+        // Test with incompatible lock modes for record locks - should call rec_blocks
+        assert!(lock1.has_to_wait_for(&lock2, Some(heap_no)));
+    }
+
+    #[rstest]
+    fn test_has_to_wait_for_same_transaction(rec_lock: RecLock) {
+        // Create a transaction
+        let trx = Arc::new(Trx::new(1));
+
+        // Create a lock with S mode
+        let mut lock1 = Lock::new(
+            trx.clone(),
+            50,
+            TxnLock::RecLock(rec_lock.clone()),
+            LockMode::LOCK_S,
+            REC_LOCK,
+        );
+
+        // Create another lock with X mode (incompatible with S) but same transaction
+        let mut lock2 = Lock::new(
+            trx.clone(),
+            50,
+            TxnLock::RecLock(rec_lock),
+            LockMode::LOCK_X,
+            REC_LOCK,
+        );
+
+        // Set the bit for the record in both locks
+        let heap_no = 5;
+        lock1.rec_set_nth_bit(heap_no);
+        lock2.rec_set_nth_bit(heap_no);
+
+        // Test with same transaction - should not wait (rec_blocks returns false for same transaction)
+        assert_eq!(lock1.has_to_wait_for(&lock2, Some(heap_no)), false);
+    }
+
+    #[rstest]
+    fn test_has_to_wait_for_gap_locks(rec_lock: RecLock) {
+        // Create two different transactions
+        let trx1 = Arc::new(Trx::new(1));
+        let trx2 = Arc::new(Trx::new(2));
+
+        // Create a lock with S mode and GAP type
+        let mut lock1 = Lock::new(
+            trx1.clone(),
+            50,
+            TxnLock::RecLock(rec_lock.clone()),
+            LockMode::LOCK_S,
+            REC_LOCK | LOCK_GAP,
+        );
+
+        // Create another lock with X mode (incompatible with S) and GAP type
+        let mut lock2 = Lock::new(
+            trx2.clone(),
+            50,
+            TxnLock::RecLock(rec_lock),
+            LockMode::LOCK_X,
+            REC_LOCK | LOCK_GAP,
+        );
+
+        // Set the bit for the record in both locks
+        let heap_no = 5;
+        lock1.rec_set_nth_bit(heap_no);
+        lock2.rec_set_nth_bit(heap_no);
+
+        // Test with gap locks - should not wait (gap locks don't block each other)
+        assert_eq!(lock1.has_to_wait_for(&lock2, Some(heap_no)), false);
     }
 }
