@@ -5,19 +5,18 @@
 /// moving pages within the list, and ensuring proper page aging and eviction.
 #[cfg(test)]
 mod tests {
-    use crate::buf::buf0buf::BufPoolInner;
-    use crate::buf::buf0buf_tests::tests::BufPoolFixture;
-    use crate::buf::buf0flu::{BufFlush, BufFlushType};
-    use crate::buf::buf0lru::BufLRU;
-    use crate::buf::buf0types::{
-        BufBlock, BufIoFix, BufPage, BufPageState, Frame,
-    };
-    use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
-    use intrusive_collections::{LinkedList, UnsafeRef};
+
     use rstest::{fixture, rstest};
-    use std::alloc::{Layout, alloc_zeroed};
-    use std::sync::{Arc, RwLock};
-    use crate::tests::test0utils;
+
+    use crate::{
+        buf::{
+            buf0buf::BufPoolInner,
+            buf0buf_tests::tests::BufPoolFixture,
+            buf0lru::BufLRU,
+            buf0types::{BufIoFix, BufPageState},
+        },
+        tests::test0utils,
+    };
 
     /// Creates a new buffer pool fixture for testing.
     ///
@@ -53,7 +52,6 @@ mod tests {
         let owning_page = test0utils::create_raw_page();
         let buf_page = owning_page.page.clone();
         let block = owning_page.buf_block.clone();
-        
 
         // PHASE A: setup
         {
@@ -93,5 +91,4 @@ mod tests {
         assert_eq!(after_i - before_i, 1);
         assert_eq!(after_b - before_b, 1);
     }
-   
 }

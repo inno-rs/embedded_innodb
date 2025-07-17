@@ -18,7 +18,9 @@ mod tests {
     use crate::{
         buf::buf0types::{BufBlock, BufPage, Frame},
         dict::dict0types::Index,
+        fil::fil0types::{FIL_PAGE_NEXT, FIL_PAGE_PREV, FIL_PAGE_SPACE_ID},
         innodb::innodb0types::{PageFrame, PageId, UNIV_PAGE_SIZE},
+        mach::mach0data::{mach_read_from_4, mach_write_to_4},
         mtr::mtr0mtr::Mtr,
         page::page0page::*,
         rem::rem0rec::{Record, RecordFieldData},
@@ -636,4 +638,357 @@ mod tests {
     }
 
     /* END PAGE DIRECTORY TESTS */
+
+    /* START PAGE VALIDATION TESTS */
+
+    #[rstest]
+    fn test_page_validate(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
+        assert!(page.page_validate());
+    }
+
+    #[test]
+    fn test_page_validate_with_records() {
+        let owning_page = create_records(
+            20,
+            vec![FieldType::String(Some("test validation".to_string()))],
+        );
+        let page = owning_page.page;
+        assert!(page.page_validate());
+    }
+
+    /* END PAGE VALIDATION TESTS */
+
+    /* START PAGE REORGANIZE TESTS */
+
+    #[rstest]
+    fn test_page_get_max_insert_size_after_reorganize(
+        page_fixture: PageFixture,
+    ) {
+        let page = &page_fixture.page;
+        let size = page.page_get_max_insert_size_after_reorganize(0);
+        assert_eq!(size, Page::page_get_free_space_of_empty());
+    }
+
+    #[test]
+    fn test_page_get_max_insert_size_after_reorganize_with_records() {
+        let owning_page = create_records(
+            10,
+            vec![FieldType::String(Some("reorganize test".to_string()))],
+        );
+        let page = owning_page.page;
+        let n_recs = page.page_get_user_records().len();
+        let size = page.page_get_max_insert_size_after_reorganize(n_recs);
+
+        // The size should be less than the empty page free space
+        assert!(size < Page::page_get_free_space_of_empty());
+        // But greater than 0
+        assert!(size > 0);
+    }
+
+    /* END PAGE REORGANIZE TESTS */
+
+    /* START PAGE RECORD EXTENSION TESTS */
+
+    #[test]
+    fn test_page_rec_needs_ext() {
+        // Small record size should not need extension
+        assert!(!Page::page_rec_needs_ext(100));
+
+        // Very large record size should need extension
+        assert!(Page::page_rec_needs_ext(UNIV_PAGE_SIZE / 2));
+    }
+
+    /* END PAGE RECORD EXTENSION TESTS */
+
+    /* START PAGE NAVIGATION TESTS */
+
+    #[rstest]
+    fn test_page_get_prev_next_page(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
+
+        // Default values should be 0 for a newly created page
+        assert_eq!(page.get_prev_page(), 0);
+        assert_eq!(page.get_next_page(), 0);
+
+        // We'll use a different approach to test these values
+        // Instead of directly modifying memory, we'll create a new page with the values set
+
+        // Create a buffer to copy to
+        let mut buffer = [0u8; UNIV_PAGE_SIZE];
+
+        // Copy the page to the buffer
+        page.copy_to(&mut buffer);
+
+        // Set the prev and next page values in the buffer
+        mach_write_to_4(&mut buffer[FIL_PAGE_PREV..FIL_PAGE_PREV + 4], 123);
+        mach_write_to_4(&mut buffer[FIL_PAGE_NEXT..FIL_PAGE_NEXT + 4], 456);
+
+        // Create a new page from the buffer
+        let new_page = Page::new(buffer.as_mut_ptr());
+
+        // Check if values were set correctly
+        assert_eq!(new_page.get_prev_page(), 123);
+        assert_eq!(new_page.get_next_page(), 456);
+    }
+
+    /* END PAGE NAVIGATION TESTS */
+
+    /* START PAGE SPACE ID TESTS */
+
+    #[rstest]
+    fn test_page_space_id(mut page_fixture: PageFixture) {
+        let page = &mut page_fixture.page;
+
+        // Set a new space ID
+        page.page_set_space_id(42);
+
+        // Verify it was set correctly
+        assert_eq!(page.page_get_space_id(), 42);
+    }
+
+    /* END PAGE SPACE ID TESTS */
+
+    /* START PAGE OFFSET TESTS */
+
+    #[rstest]
+    fn test_page_fil_offset(mut page_fixture: PageFixture) {
+        let page = &mut page_fixture.page;
+
+        // Set a new file offset
+        page.page_set_fil_offset(789);
+
+        // Verify it was set correctly
+        assert_eq!(page.page_get_fil_offset(), 789);
+    }
+
+    /* END PAGE OFFSET TESTS */
+
+    /* START PAGE FILL FACTOR TESTS */
+
+    #[test]
+    fn test_page_get_fill_factor_after_insert() {
+        let owning_page = create_records(
+            10,
+            vec![FieldType::String(Some("fill factor test".to_string()))],
+        );
+        let page = owning_page.page;
+
+        // Test with a small insert size
+        let factor1 = page.page_get_fill_factor_after_insert(100);
+
+        // Test with a larger insert size
+        let factor2 = page.page_get_fill_factor_after_insert(500);
+
+        // The fill factor should increase with larger insert size
+        assert!(factor2 > factor1);
+
+        // Both should be greater than the current fill factor
+        let current_factor = page.page_get_current_fill_factor();
+        assert!(factor1 > current_factor);
+        assert!(factor2 > current_factor);
+    }
+
+    /* END PAGE FILL FACTOR TESTS */
+
+    /* START PAGE LEAF TESTS */
+
+    #[rstest]
+    fn test_page_is_leaf(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
+
+        // By default, a new page should be a leaf page (level 0)
+        assert!(page.page_is_leaf());
+
+        // Set the page level to 1 (non-leaf)
+        page.page_header_set_field(PAGE_LEVEL, 1);
+
+        // Now it should not be a leaf page
+        assert!(!page.page_is_leaf());
+    }
+
+    /* END PAGE LEAF TESTS */
+
+    /* START PAGE COPY TESTS */
+
+    #[test]
+    fn test_page_copy_to() {
+        // Create a simple page with no records
+        let index = Index::new(PageId { space_id: 0, page_no: 0 });
+        let frame = get_raw_block();
+        let buf_page = BufPage::dummy();
+        let buf_block = BufBlock::new(buf_page, frame);
+        let mut page = Page::page_create(&index, &buf_block, None);
+
+        // Set a space ID directly using the page method
+        let space_id = 42;
+        page.page_set_space_id(space_id);
+
+        // Create a buffer to copy to
+        let mut buffer = [0u8; UNIV_PAGE_SIZE];
+
+        // Copy the page to the buffer
+        page.copy_to(&mut buffer);
+
+        // Create a new page from the buffer
+        let new_page = Page::new(buffer.as_mut_ptr());
+
+        // Verify the space ID was copied correctly
+        assert_eq!(new_page.page_get_space_id(), space_id);
+
+        // Clean up
+        free_raw_block(frame);
+    }
+
+    /* END PAGE COPY TESTS */
+
+    /* START PAGE RECORD CHECK TESTS */
+
+    #[rstest]
+    fn test_page_rec_check(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
+
+        // Test with infimum record (should be valid)
+        let infimum_rec = page.page_get_infimum_rec();
+        assert!(page.page_rec_check(infimum_rec));
+
+        // Test with supremum record (should be valid)
+        let supremum_rec = page.page_get_supremum_rec();
+        assert!(page.page_rec_check(supremum_rec));
+    }
+
+    /* END PAGE RECORD CHECK TESTS */
+
+    /* START PAGE FRAME TESTS */
+
+    #[rstest]
+    fn test_to_page_frame(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
+
+        // Get the page frame
+        let page_frame = page.to_page_frame();
+
+        // Verify the page frame has the correct size
+        assert_eq!(page_frame.0.len(), UNIV_PAGE_SIZE);
+
+        // Verify we can read data from the page frame
+        // The space ID should be 0 for a newly created page
+        let space_id = mach_read_from_4(&page_frame.0[FIL_PAGE_SPACE_ID..]);
+        assert_eq!(space_id, 0);
+    }
+
+    /* END PAGE FRAME TESTS */
+
+    /* START PAGE MEMORY ALLOCATION TESTS */
+
+    #[rstest]
+    fn test_page_mem_alloc_heap(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
+
+        // Get initial heap top and heap number
+        let initial_heap_top = page.page_header_get_field(PAGE_HEAP_TOP);
+        let initial_heap_no = page.page_dir_get_n_heap();
+
+        // Allocate a small amount of memory
+        let need = 100;
+        let offset = page.page_mem_alloc_heap(need);
+
+        // Verify allocation was successful
+        assert!(offset.is_some());
+        let offset = offset.unwrap();
+
+        // Verify the offset is the initial heap top
+        assert_eq!(offset, initial_heap_top);
+
+        // Verify heap top has increased by the allocated amount
+        assert_eq!(
+            page.page_header_get_field(PAGE_HEAP_TOP),
+            initial_heap_top + need
+        );
+
+        // Verify heap number has increased by 1
+        assert_eq!(page.page_dir_get_n_heap(), initial_heap_no + 1);
+
+        // Try to allocate more memory than available
+        let large_need = UNIV_PAGE_SIZE * 2; // Definitely too large
+        let result = page.page_mem_alloc_heap(large_need);
+
+        // Verify allocation failed
+        assert!(result.is_none());
+    }
+
+    /* END PAGE MEMORY ALLOCATION TESTS */
+
+    /* START PAGE DIRECTORY SPLIT SLOT TESTS */
+
+    #[test]
+    fn test_page_dir_split_slot() {
+        // Create a page with 9 records (PAGE_DIR_SLOT_MAX_N_OWNED + 1)
+        let owning_page = create_records(
+            9,
+            vec![FieldType::String(Some("split slot test".to_string()))],
+        );
+        let page = owning_page.page;
+
+        // Check the initial number of slots
+        let initial_slots = page.page_dir_get_n_slots();
+
+        // Find a slot with records
+        let mut slot_to_split = 0;
+        for slot in 1..initial_slots {
+            if page.page_dir_get_n_owned(slot) > 0 {
+                slot_to_split = slot;
+                break;
+            }
+        }
+
+        // Set the number of records owned by the slot to PAGE_DIR_SLOT_MAX_N_OWNED + 1
+        page.page_dir_set_n_owned(
+            slot_to_split,
+            PAGE_DIR_SLOT_MAX_N_OWNED + 1,
+        );
+
+        // Split the slot
+        page.page_dir_split_slot(slot_to_split);
+
+        // Verify the number of slots has increased by 1
+        assert_eq!(page.page_dir_get_n_slots(), initial_slots + 1);
+
+        // Verify the records are distributed between the two slots
+        let n_owned_new_slot = page.page_dir_get_n_owned(slot_to_split);
+        let n_owned_old_slot = page.page_dir_get_n_owned(slot_to_split + 1);
+
+        // Each slot should have approximately half the records
+        assert!(n_owned_new_slot > 0);
+        assert!(n_owned_old_slot > 0);
+    }
+
+    /* END PAGE DIRECTORY SPLIT SLOT TESTS */
+
+    /* START PAGE DIRECTORY SET N OWNED TESTS */
+
+    #[rstest]
+    fn test_page_dir_set_n_owned(page_fixture: PageFixture) {
+        let page = &page_fixture.page;
+
+        // Get initial number of slots
+        let n_slots = page.page_dir_get_n_slots();
+
+        // Test setting n_owned for each slot
+        for slot in 0..n_slots {
+            let initial_n_owned = page.page_dir_get_n_owned(slot);
+            let new_n_owned = 5; // Arbitrary value
+
+            // Set new n_owned value
+            page.page_dir_set_n_owned(slot, new_n_owned);
+
+            // Verify the value was set correctly
+            assert_eq!(page.page_dir_get_n_owned(slot), new_n_owned);
+
+            // Restore original value
+            page.page_dir_set_n_owned(slot, initial_n_owned);
+        }
+    }
+
+    /* END PAGE DIRECTORY SET N OWNED TESTS */
 }
