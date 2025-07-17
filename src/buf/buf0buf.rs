@@ -28,7 +28,6 @@ use crate::{
     ut::ut0dbg::ut_ad,
     ut_2_power_up, ut_panic,
 };
-use crate::fil::fil0types::{FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID};
 
 /// Buffer Pool manages the caching of database pages in memory.
 ///
@@ -73,7 +72,7 @@ pub(crate) struct BufPoolInner {
 
 impl BufPoolInner {
     /// Construct an empty `BufPoolInner` for tests or benches.
-   
+
     pub fn new() -> Self {
         BufPoolInner {
             freed_page_clock: 0,
@@ -169,7 +168,6 @@ impl BufPoolInner {
         self.n_flush = n_flush;
     }
 }
-
 
 impl BufPool {
     /// Creates a new Buffer Pool instance.
@@ -487,17 +485,16 @@ impl BufPool {
         let mut block_guard = block_arc.write().unwrap();
 
         // 4) Let the LRU helper unlink it and bump the pool‐clock
-    
+
         lru.remove_page_from_lru(&mut *inner, &mut block_guard);
         let buf_page = block_guard.buf_block_get_page_mut();
         // 5) Mark it out of the hash map
         buf_page.set_is_in_hash_map(false);
-        
+
         let mut page = block_guard.get_page();
         page.page_set_space_id(0xFF);
         page.page_set_fil_offset(0xFF);
 
-        
         block_guard.buf_block_set_state(BufPageState::BufBlockRemoveHash);
         ut_ad!(
             inner.page_hash.get(&page_id).is_none(),
@@ -983,10 +980,7 @@ impl BufPool {
     pub fn set_inner(&mut self, inner: Mutex<BufPoolInner>) {
         self.inner = inner;
     }
-    
- 
 
-    
     // ——————————————————————————————————————————————————
     // freed_page_clock
     // ——————————————————————————————————————————————————
@@ -1174,7 +1168,7 @@ impl BufPool {
     pub fn add_block(&self, buf_page: &mut BufPage, old: bool) {
         // 1) Lock the pool‐inner if you ever need to update pool counters,
         //    or just to uphold the lock‐order discipline:
-        let mut inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap();
 
         // 2) Lock the LRU manager
         let mut lru = self.buf_lru.lock().unwrap();

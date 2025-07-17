@@ -334,6 +334,295 @@ mod tests {
     }
 
     #[test]
+    fn test_record_field_data_is_sql_null() {
+        let sql_null_data = RecordFieldData::SqlNullData();
+        let string_data = RecordFieldData::Data("test".to_string());
+
+        assert!(sql_null_data.is_sql_null());
+        assert!(!string_data.is_sql_null());
+    }
+
+    #[test]
+    fn test_record_field_data_or_panic() {
+        let string_data = RecordFieldData::Data("test".to_string());
+        assert_eq!(string_data.data_or_panic(), "test");
+
+        // We can't test the panic case directly as it would crash the test
+    }
+
+    #[test]
+    fn test_orphan_record_new_and_get_record() {
+        let data = vec![0; 100];
+        let n_fields = 5;
+        let mut orphan_record = OrphanRecord::new(data, n_fields);
+
+        let record = orphan_record.get_record();
+        assert_eq!(record.rec_get_n_fields(), 0); // Default value before setting
+    }
+
+    #[test]
+    fn test_record_new_and_get_ptr() {
+        let (rec, layout, ptr) = get_new_rec();
+
+        assert_eq!(rec.get_ptr() as *mut u8, ptr);
+
+        free_rec(layout, ptr);
+    }
+
+    #[test]
+    fn test_rec_get_prev() {
+        let owning_page = create_records(
+            3,
+            vec![FieldType::String(Some("Test".to_string()))],
+        );
+        let page = owning_page.page;
+
+        // Get the first user record
+        let first_rec = page.page_get_user_records()[0];
+
+        // Get the second user record
+        let second_rec = first_rec.rec_get_next().unwrap();
+
+        // The previous record of the second record should be the first record
+        let prev_of_second = second_rec.rec_get_prev().unwrap();
+        assert_eq!(prev_of_second, first_rec);
+    }
+
+    #[test]
+    fn test_rec_get_data_size() {
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello".to_string())),
+                FieldType::String(Some("World".to_string())),
+            ],
+        );
+        let rec = owning_page.page.page_get_user_records()[0];
+
+        // The data size should be the sum of the field lengths
+        // "Hello" (5) + "World" (5) = 10
+        assert_eq!(rec.rec_get_data_size(), 10);
+    }
+
+    #[test]
+    fn test_rec_get_extra_size() {
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello".to_string())),
+                FieldType::String(Some("World".to_string())),
+            ],
+        );
+        let rec = owning_page.page.page_get_user_records()[0];
+
+        // For 2 fields with 1-byte offsets, the extra size should be:
+        // REC_N_EXTRA_BYTES (6) + n_fields (2) = 8
+        assert_eq!(rec.rec_get_extra_size(), 8);
+    }
+
+    #[test]
+    fn test_rec_get_nth_field() {
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello".to_string())),
+                FieldType::String(Some("World".to_string())),
+            ],
+        );
+        let rec = owning_page.page.page_get_user_records()[0];
+
+        // Get the first field
+        let (offset, size) = rec.rec_get_nth_field(0);
+        assert_eq!(size, 5); // "Hello" has 5 bytes
+
+        // Get the second field
+        let (offset, size) = rec.rec_get_nth_field(1);
+        assert_eq!(size, 5); // "World" has 5 bytes
+    }
+
+    #[test]
+    fn test_rec_get_data() {
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello".to_string())),
+                FieldType::String(Some("World".to_string())),
+            ],
+        );
+        let rec = owning_page.page.page_get_user_records()[0];
+
+        // Get the first field data
+        let data = rec.rec_get_data(0).unwrap();
+        match data {
+            RecordFieldData::Data(s) => assert_eq!(s, "Hello"),
+            RecordFieldData::SqlNullData() => {
+                panic!("Expected string data, got SQL NULL")
+            }
+        }
+
+        // Get the second field data
+        let data = rec.rec_get_data(1).unwrap();
+        match data {
+            RecordFieldData::Data(s) => assert_eq!(s, "World"),
+            RecordFieldData::SqlNullData() => {
+                panic!("Expected string data, got SQL NULL")
+            }
+        }
+    }
+
+    #[test]
+    fn test_rec_get_nth_field_size() {
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello".to_string())),
+                FieldType::String(Some("World".to_string())),
+            ],
+        );
+        let rec = owning_page.page.page_get_user_records()[0];
+
+        // Get the size of the first field
+        let size = rec.rec_get_nth_field_size(0);
+        assert_eq!(size, 5); // "Hello" has 5 bytes
+
+        // Get the size of the second field
+        let size = rec.rec_get_nth_field_size(1);
+        assert_eq!(size, 5); // "World" has 5 bytes
+    }
+
+    #[test]
+    fn test_rec_validate() {
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello".to_string())),
+                FieldType::String(Some("World".to_string())),
+            ],
+        );
+        let rec = owning_page.page.page_get_user_records()[0];
+
+        // The record should be valid
+        assert!(rec.rec_validate());
+    }
+
+    #[test]
+    fn test_get_nth_field_byte_at_offset() {
+        let owning_page = create_records(
+            1,
+            vec![FieldType::String(Some("Hello".to_string()))],
+        );
+        let rec = owning_page.page.page_get_user_records()[0];
+
+        // Get the first byte of the first field
+        let byte = rec.get_nth_field_byte_at_offset(0, 0);
+        assert_eq!(byte, b'H');
+
+        // Get the second byte of the first field
+        let byte = rec.get_nth_field_byte_at_offset(0, 1);
+        assert_eq!(byte, b'e');
+    }
+
+    #[test]
+    fn test_rec_set_bit_field_1_and_get_bit_field_1() {
+        let (rec, layout, ptr) = get_new_rec();
+
+        // Set a bit field
+        rec.rec_set_bit_field_1(3, 1, 0x0F, 0);
+
+        // Get the bit field
+        let val = rec.rec_get_bit_field_1(1, 0x0F, 0);
+        assert_eq!(val, 3);
+
+        free_rec(layout, ptr);
+    }
+
+    #[test]
+    fn test_rec_set_bit_field_2_and_get_bit_field_2() {
+        let (rec, layout, ptr) = get_new_rec();
+
+        // Set a bit field
+        rec.rec_set_bit_field_2(300, 1, 0x0FFF, 0);
+
+        // Get the bit field
+        let val = rec.rec_get_bit_field_2(1, 0x0FFF, 0);
+        assert_eq!(val, 300);
+
+        free_rec(layout, ptr);
+    }
+
+    #[test]
+    fn test_rec_get_field_start_offs() {
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello".to_string())),
+                FieldType::String(Some("World".to_string())),
+            ],
+        );
+        let rec = owning_page.page.page_get_user_records()[0];
+
+        // The first field starts at offset 0
+        assert_eq!(rec.rec_get_field_start_offs(0), 0);
+
+        // The second field starts after the first field
+        assert_eq!(rec.rec_get_field_start_offs(1), 5); // After "Hello"
+    }
+
+    #[test]
+    fn test_rec_get_nth_field_offs() {
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello".to_string())),
+                FieldType::String(Some("World".to_string())),
+            ],
+        );
+        let rec = owning_page.page.page_get_user_records()[0];
+
+        // Get the offset and size of the first field
+        let (offset, size) = rec.rec_get_nth_field_offs(0);
+        assert_eq!(offset, 0);
+        assert_eq!(size, 5); // "Hello" has 5 bytes
+
+        // Get the offset and size of the second field
+        let (offset, size) = rec.rec_get_nth_field_offs(1);
+        assert_eq!(offset, 5); // After "Hello"
+        assert_eq!(size, 5); // "World" has 5 bytes
+    }
+
+    #[test]
+    fn test_rec_set_1byte_offs_flag_custom() {
+        let (rec, layout, ptr) = get_new_rec();
+
+        // Set the 1-byte offset flag to true
+        rec.rec_set_1byte_offs_flag(true);
+        assert!(rec.rec_get_1byte_offs_flag());
+
+        // Set the 1-byte offset flag to false
+        rec.rec_set_1byte_offs_flag(false);
+        assert!(!rec.rec_get_1byte_offs_flag());
+
+        free_rec(layout, ptr);
+    }
+
+    #[test]
+    fn test_get_page() {
+        let owning_page = create_records(
+            1,
+            vec![FieldType::String(Some("Test".to_string()))],
+        );
+        let page = owning_page.page;
+        let rec = page.page_get_user_records()[0];
+
+        // The page containing the record should be the same as the original page
+        let rec_page = rec.get_page();
+
+        // Compare page properties to verify they're the same page
+        assert_eq!(rec_page.page_get_space_id(), page.page_get_space_id());
+        assert_eq!(rec_page.page_get_fil_offset(), page.page_get_fil_offset());
+    }
+
+    #[test]
     fn test_rec_to_string() {
         {
             let owning_page = create_records(

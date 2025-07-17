@@ -1,26 +1,22 @@
-use intrusive_collections::{LinkedList, UnsafeRef, linked_list::CursorMut};
-use std::sync::RwLockWriteGuard;
 use std::{
     cmp::min,
     ops::Deref,
-    sync::{Arc, Mutex, RwLock, Weak, atomic::Ordering::Relaxed},
+    sync::{Arc, RwLock, RwLockWriteGuard, atomic::Ordering::Relaxed},
 };
 
+use intrusive_collections::{LinkedList, UnsafeRef};
 use tracing::info;
 
 use crate::{
     buf::{
-        buf0buf::{BufPool, BufPoolInner},
+        buf0buf::BufPoolInner,
         buf0types::{
             BufBlock, BufIoFix, BufPage, BufPageState,
             BufPageState::{BufBlockNotUsed, BufBlockReadyForUse},
-            BufPoolStats, FreeListAdapter, LruAdapter, Request,
+            BufPoolStats, FreeListAdapter, LruAdapter,
         },
     },
     innodb::innodb0types::PageId,
-    mtr::mtr0mtr::Mtr,
-    some_or_panic,
-    sync::sync0rw::ReadWriteLatch,
     ut::ut0dbg::{ut_a, ut_ad},
     ut_panic,
 };
@@ -639,7 +635,7 @@ impl BufLRU {
         // 1) Try to free one page
 
         let freed = self.free_from_common_lru_list(pool, stats, n_iterations);
-        
+
         if !freed {
             pool.set_lru_flush_ended(0)
         } else if pool.lru_flush_ended() > 0 {

@@ -1,11 +1,14 @@
-use intrusive_collections::{LinkedListLink, UnsafeRef, intrusive_adapter};
-use parking_lot::{RwLock as ParkingLotRwLock, lock_api::RawRwLock};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     alloc::Layout,
     cmp::PartialEq,
-    sync::{Arc, RwLock, Weak, atomic::AtomicU64},
+    sync::{
+        Arc, RwLock, Weak,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
 };
+
+use intrusive_collections::{LinkedListLink, UnsafeRef, intrusive_adapter};
+use parking_lot::{RwLock as ParkingLotRwLock, lock_api::RawRwLock};
 use strum_macros::Display;
 use tracing::info;
 
