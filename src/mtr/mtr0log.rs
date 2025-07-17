@@ -92,7 +92,6 @@ impl MLog {
     }
 
     /// Write an 8-byte LE value at `offset` in `page` and log it exactly like
-    /// C++ `mlog_write_uint64` does in this fork.
     /// Exactly like C++ `mlog_write_uint64`, but using your PageFrame API
     pub(in crate::mtr) fn mlog_write_uint64(
         &mut self,

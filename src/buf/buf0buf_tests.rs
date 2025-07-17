@@ -1,9 +1,10 @@
 #[cfg(test)]
 pub(super) mod tests {
-    use std::sync::{Arc, Mutex};
-
+    use std::sync::{Arc, Mutex, RwLock};
     use rstest::{fixture, rstest};
 
+    use crate::buf::buf0buf::BufPoolInner;
+    use crate::buf::buf0types::{BufBlock, BufPage, BufPageState, Frame};
     use crate::{
         buf::{
             buf0buf::BufPool,
@@ -17,6 +18,7 @@ pub(super) mod tests {
         os::{os0io::OsIo, os0runtime::create_runtime},
         sync::sync0rw::ReadWriteLatch,
     };
+    use crate::tests::test0utils;
 
     pub struct BufPoolFixture {
         buf_pool: Arc<Mutex<BufPool>>,
@@ -29,12 +31,12 @@ pub(super) mod tests {
             let fil = Arc::new(Mutex::new(Fil::new(1, os_io, runtime)));
             let buf_rea = Arc::new(Mutex::new(BufRea::new(fil.clone())));
             let buf_lru = Arc::new(Mutex::new(BufLRU::new()));
+            let inner_pool = Arc::new(Mutex::new(BufPoolInner::new()));
             let buf_pool = Arc::new(Mutex::new(BufPool::new(
                 fil,
                 buf_lru.clone(),
                 buf_rea,
             )));
-            buf_lru.lock().unwrap().init(Arc::downgrade(&buf_pool));
 
             BufPoolFixture { buf_pool }
         }
@@ -161,4 +163,90 @@ pub(super) mod tests {
             );
         }
     }
+
+    #[rstest]
+    fn test_block_remove_hashed_page_scrubs_header_and_updates_clocks(buf_pool_fixture: BufPoolFixture) {
+        // 1) Build a fresh pool fixture.
+        let pool_arc = buf_pool_fixture.buf_pool.clone();
+
+        // 2) Pick a page id.
+        let space_id = 0;
+        let page_no  = 42;
+        let owning_page = test0utils::create_raw_page();
+        let buf_page = owning_page.page.clone();
+        let block = owning_page.buf_block.clone();
+        
+        // 4) Initialize the page in the pool (this sets in_file & hashes it).
+        {
+            let mut pool = pool_arc.lock().unwrap();
+            pool.page_init(owning_page.page.page_get_space_id(), page_no, block.clone());
+        }
+
+        // 5) Add it to LRU as the “young” end.
+        {
+            let mut pool = pool_arc.lock().unwrap();
+            let mut guard = block.write().unwrap();
+            pool.add_block(guard.buf_block_get_page_mut(), /*old=*/ false);
+        }
+
+        // 6) Snapshot clocks & hash‐membership before eviction.
+        let (before_pool_clk, before_block_clk, in_hash_before) = {
+            let pool       = pool_arc.lock().unwrap();
+            let pool_clk   = pool.freed_page_clock();
+            let block_clk  = block.read().unwrap().buf_block_get_clock();
+            let in_hash    = pool.peek(space_id, page_no);
+            (pool_clk, block_clk, in_hash)
+        };
+        assert!(in_hash_before, "page must start in the hash map");
+
+        // 7) Evict via the public API.
+        let returned_state = {
+            let pool = pool_arc.lock().unwrap();
+            pool.block_remove_hashed_page(space_id, page_no)
+        };
+
+        // 8) It should return the “removed‐hash” state.
+        assert_eq!(
+            returned_state,
+            BufPageState::BufBlockRemoveHash,
+            "should return the RemoveHash state"
+        );
+
+        // 9) Snapshot clocks & membership again.
+        let (after_pool_clk, after_block_clk, in_hash_after) = {
+            let pool       = pool_arc.lock().unwrap();
+            let pool_clk   = pool.freed_page_clock();
+            let block_clk  = block.read().unwrap().buf_block_get_clock();
+            let in_hash    = pool.peek(space_id, page_no);
+            (pool_clk, block_clk, in_hash)
+        };
+
+        // 10) Verify eviction, clocks, and hash removal.
+        assert!(!in_hash_after, "page should no longer be in the hash");
+        assert_eq!(after_pool_clk,  before_pool_clk + 1, "global clock must +1");
+        assert_eq!(after_block_clk, before_block_clk + 1, "block clock must +1");
+
+        // 11) Finally, verify that the two header fields were overwritten with 0xFF:
+        {
+            let page = {
+                // assuming your BufBlock exposes the frame as &_[u8]_
+                let guard = block.read().unwrap();
+                guard.get_page()
+            };
+            
+            // Check that exactly those 4 bytes at each offset are 0xFF
+            assert_eq!(
+                page.page_get_space_id(),
+                0xFF,
+                "space_id field must be scrubbed"
+            );
+            assert_eq!(
+                page.page_get_fil_offset(),
+                0xFF,
+                "page_no field must be scrubbed"
+            );
+        }
+    }
+
+ 
 }

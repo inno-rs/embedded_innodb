@@ -1,10 +1,11 @@
+use intrusive_collections::{LinkedList, UnsafeRef, linked_list::CursorMut};
+use std::sync::RwLockWriteGuard;
 use std::{
     cmp::min,
     ops::Deref,
     sync::{Arc, Mutex, RwLock, Weak, atomic::Ordering::Relaxed},
 };
 
-use intrusive_collections::{LinkedList, UnsafeRef};
 use tracing::info;
 
 use crate::{
@@ -62,7 +63,7 @@ pub enum BlockStatus {
 /// is full.
 pub struct BufLRU {
     /// Reference to the buffer pool that this LRU manager operates on
-    buf_pool: Weak<Mutex<BufPool>>,
+    //buf_pool: Weak<Mutex<BufPool>>,
     /// Reserve old_ratio/OLD_RATIO_DIV for old blocks.
     old_ratio: usize,
     /// List of buffer blocks ordered by least recently used algorithm
@@ -85,24 +86,12 @@ impl BufLRU {
     /// A new BufLRU instance
     pub fn new() -> Self {
         BufLRU {
-            buf_pool: Default::default(),
             old_ratio: 0,
             lru_list: Default::default(),
             lru_old_head: None,
             lru_old_len: 0,
             free_list: Default::default(),
         }
-    }
-
-    /// Initializes the LRU manager with a reference to the buffer pool.
-    ///
-    /// This method sets up the connection between the LRU manager and the buffer pool,
-    /// allowing the LRU manager to access and manage the buffer pool's pages.
-    ///
-    /// # Parameters
-    /// * `buf_pool` - A weak reference to the buffer pool to manage
-    pub fn init(&mut self, buf_pool: Weak<Mutex<BufPool>>) {
-        self.buf_pool = buf_pool;
     }
 
     /// Tries to remove LRU flushed blocks from the end of the LRU list and put them to the free list.
@@ -116,17 +105,6 @@ impl BufLRU {
     /// # Returns
     /// * `bool` - True if a block was successfully freed, false otherwise
     pub fn try_free_flushed_block(&mut self) {}
-
-    /// Adds a buffer page to the LRU list.
-    ///
-    /// This is a high-level method that adds a buffer page to the LRU list
-    /// by delegating to the internal `add_block_low` method.
-    ///
-    /// # Parameters
-    /// * `buf_page` - The buffer page to add to the LRU list
-    pub fn add_block(&mut self, buf_page: &mut BufPage, old: bool) {
-        self.add_block_low(buf_page, old);
-    }
 
     /// Moves a page to the start of the buffer pool LRU list.
     ///
@@ -211,31 +189,32 @@ impl BufLRU {
     /// # Parameters
     /// * `buf_page` - The buffer page to add to the LRU list
     /// * `old` - Whether to add the page to the old section of the LRU list
-    fn add_block_low(&mut self, buf_page: &mut BufPage, old: bool) {
+    pub(crate) fn add_block_low(&mut self, buf_page: &mut BufPage, old: bool) {
         let length = self.lru_list.iter().count();
-        if old == false || length < OLD_MIN_LENGTH {
+        if !old || length < OLD_MIN_LENGTH {
+            // front‐insert
             let page = unsafe { UnsafeRef::from_raw(buf_page) };
-
             self.lru_list.push_front(page);
         } else {
-            let lru_list_ref = &mut self.lru_list;
-            unsafe {
-                let mut cursor = lru_list_ref.cursor_mut_from_ptr(buf_page);
-                cursor.insert_after(UnsafeRef::from_raw(buf_page));
-                buf_page.set_is_in_lru_list(false);
-            }
+            // insert after the “old” head
+            let mut cursor =
+                unsafe { self.lru_list.cursor_mut_from_ptr(buf_page) };
+            cursor.insert_after(unsafe { UnsafeRef::from_raw(buf_page) });
         }
 
-        let buf_pool = self.buf_pool.upgrade();
-        if let Some(buf_pool) = buf_pool {
-            if length > OLD_MIN_LENGTH {
-                ut_ad!(self.lru_old_head.is_some());
+        // **Always** mark it as in the list:
+        buf_page.set_is_in_lru_list(true);
 
-                self.buf_page_set(buf_page, old);
-            } else if length == OLD_MIN_LENGTH {
-            } else {
-                self.buf_page_set(buf_page, self.lru_old_head.is_some());
-            }
+        // 2) Update our own LRU‐old pointers/timestamps
+        //    No pool‐lock or upgrade() here! We already have everything
+        //    we need in `self` (the BufLRU instance).
+        if length > OLD_MIN_LENGTH {
+            // once we exceed the threshold, we must have an old‐head
+            ut_ad!(self.lru_old_head.is_some());
+            self.buf_page_set(buf_page, old);
+        } else if length < OLD_MIN_LENGTH {
+            // still building up: use whichever region we’ve already marked
+            self.buf_page_set(buf_page, self.lru_old_head.is_some());
         }
     }
 
@@ -257,106 +236,70 @@ impl BufLRU {
         buf_page.set_old(old);
     }
 
-    /// Adjusts the length of the old section in the LRU list.
+    /// Set a new `old_ratio_pct` (0–100) and compute which pages flip.
     ///
-    /// This method moves the lru_old_head pointer so that the total number of items
-    /// marked as old are within the limits defined by the old_ratio. It ensures that
-    /// the old section of the LRU list maintains the proper proportion of the total list.
-    ///
-    /// The method handles both increasing and decreasing the old section size as needed.
-    fn old_adjust_len(&mut self) {
-        struct PageStateChange {
-            page_id: PageId,
-            old: bool,
-        }
-        ut_ad!(self.old_ratio <= OLD_RATIO_MAX);
-        ut_ad!(self.old_ratio >= OLD_RATIO_MIN);
-
-        let mut changes: Vec<PageStateChange> = vec![];
-        {
-            let lru_length = self.lru_list.iter().count();
-            let new_length = min(
-                lru_length * self.old_ratio / OLD_RATIO_DIV,
-                lru_length - OLD_TOLERANCE - NON_MIN_LENGTH,
-            );
-
-            let mut lru_old_length = self.lru_old_len;
-            let buf_page = self.lru_old_head.take().unwrap();
-            let lru_list = &mut self.lru_list;
-
-            // move the pointer pointing to lru_old_head to increase the old section
-            while new_length > lru_old_length + OLD_TOLERANCE {
-                let mut cursor =
-                    unsafe { lru_list.cursor_from_ptr(buf_page.deref()) };
-                cursor.move_prev();
-
-                let new_head = cursor.get().unwrap();
-                let head_ref = unsafe { UnsafeRef::from_raw(new_head) };
-                self.lru_old_head = Some(head_ref.clone());
-                self.lru_old_len += 1;
-
-                lru_old_length = self.lru_old_len;
-
-                changes.push(PageStateChange {
-                    page_id: new_head.get_page_id(),
-                    old: true,
-                });
-            }
-
-            while lru_old_length > new_length + OLD_TOLERANCE {
-                let mut cursor =
-                    unsafe { lru_list.cursor_from_ptr(buf_page.deref()) };
-
-                cursor.move_next();
-
-                let new_head = cursor.get().unwrap();
-                let head_ref = unsafe { UnsafeRef::from_raw(new_head) };
-                self.lru_old_head = Some(head_ref.clone());
-                self.lru_old_len -= 1;
-                lru_old_length = self.lru_old_len;
-
-                changes.push(PageStateChange {
-                    page_id: new_head.get_page_id(),
-                    old: true,
-                });
-            }
-        }
-
-        let mut mtr = Mtr::new();
-        let buf_pool =
-            some_or_panic!(self.buf_pool.upgrade(), "buf_pool is empty");
-        let mut buf_pool_ref = buf_pool.lock().unwrap();
-        changes.iter().for_each(|change| {
-            buf_pool_ref.get(Request {
-                rw_latch: ReadWriteLatch::NoLatch,
-                page_id: change.page_id,
-                mode: 0,
-                mtr: &mut mtr,
-            });
-        });
+    /// This _only_ knows about OLD_RATIO_DIV, TOLERANCE, etc.
+    /// Returns a Vec of PageIds that need replay.
+    pub(crate) fn set_old_ratio_pct_and_collect(
+        &mut self,
+        old_pct: usize,
+    ) -> Vec<PageId> {
+        let mut ratio = (old_pct * OLD_RATIO_DIV) / 100;
+        ratio = ratio.clamp(OLD_RATIO_MIN, OLD_RATIO_MAX);
+        // reuse our existing `old_ratio_update_list` logic by passing
+        // that fixed‐point ratio directly:
+        self.old_ratio_update_list(ratio)
     }
 
-    /// Updates the old_ratio field based on the provided percentage.
-    ///
-    /// This method calculates a new ratio based on the provided percentage and
-    /// optionally adjusts the LRU list's old section length accordingly.
-    ///
-    /// # Parameters
-    /// * `old_pct` - The percentage of the buffer pool to reserve for old pages
-    /// * `adjust` - Whether to adjust the LRU list's old section length immediately
-    pub fn old_ratio_update(&mut self, old_pct: usize, adjust: bool) {
-        let mut ratio = (old_pct * OLD_RATIO_DIV) / 100;
+    /// Adjusts `old_ratio`, moves the `lru_old_head` pointer in/out by up to
+    /// `OLD_TOLERANCE`, updates `lru_old_len`, and returns the list of pages
+    /// whose “old” bit flipped.
+    fn old_ratio_update_list(&mut self, new_ratio: usize) -> Vec<PageId> {
+        ut_ad!(new_ratio >= OLD_RATIO_MIN && new_ratio <= OLD_RATIO_MAX);
 
-        ratio =
-            if ratio < OLD_RATIO_MIN { OLD_RATIO_MIN } else { OLD_RATIO_MAX };
-
-        if adjust {
-            if ratio != self.old_ratio {
-                self.old_ratio = ratio;
-
-                self.old_adjust_len();
-            }
+        // 1) If unchanged, nothing to do
+        if new_ratio == self.old_ratio {
+            return Vec::new();
         }
+        self.old_ratio = new_ratio;
+        // Take ownership of the head pointer so we can reuse it without borrowing `self`:
+        let mut head_ref =
+            self.lru_old_head.take().expect("there must be an old‐head");
+
+        let mut old_len = self.lru_old_len;
+
+        let mut changed = Vec::new();
+        let lru_len = self.lru_list.iter().count();
+        let target = min(
+            lru_len * new_ratio / OLD_RATIO_DIV,
+            lru_len - OLD_TOLERANCE - NON_MIN_LENGTH,
+        );
+
+        // Grow the “old” region
+        while old_len + OLD_TOLERANCE < target {
+            let ptr = head_ref.deref();
+            let mut cursor = unsafe { self.lru_list.cursor_from_ptr(ptr) };
+            cursor.move_prev();
+            let new_head = cursor.get().unwrap();
+            head_ref = unsafe { UnsafeRef::from_raw(new_head) };
+            old_len += 1;
+            changed.push(new_head.get_page_id());
+        }
+
+        // Shrink the “old” region
+        while old_len > target + OLD_TOLERANCE {
+            let ptr = head_ref.deref();
+            let mut cursor = unsafe { self.lru_list.cursor_from_ptr(ptr) };
+            cursor.move_next();
+            let new_head = cursor.get().unwrap();
+            head_ref = unsafe { UnsafeRef::from_raw(new_head) };
+            old_len -= 1;
+            changed.push(new_head.get_page_id());
+        }
+        self.lru_old_head = Some(head_ref);
+        self.lru_old_len = old_len;
+
+        changed
     }
 
     /// Gets a free block from the buffer pool's free list without modifying the LRU list.
@@ -528,47 +471,34 @@ impl BufLRU {
         BlockStatus::Freed
     }
 
-    /// Removes a buffer block from the LRU list and the buffer pool hash table.
+    /// Low‐level removal of `buf_page` from the LRU **and** bump the pool‐inner clock.
     ///
-    /// This method performs a complete removal of a buffer page from the buffer pool's
-    /// data structures. It checks that the page is in a valid state for removal,
-    /// removes it from the LRU list, updates the freed page counter, and removes
-    /// the page from the buffer pool's hash table.
-    ///
-    /// # Parameters
-    /// * `buf_page` - The  buffer page to remove
-    ///
-    /// # Returns
-    /// * `BufPageState` - The new state of the buffer page after removal (typically BufBlockMemory)
-    ///
-    /// # Panics
-    /// Panics if the page has I/O operations in progress, if the buffer pool reference is invalid,
-    /// or if the page is in an invalid state for removal.
-    pub fn block_remove_hashed_page(
+    /// Caller must hold:
+    ///  1) `pool_inner: &mut BufPoolInner` (already locked),
+    ///  2) and the page’s RwLock write‐guard so that `buf_page` is safe to mutate.
+    pub(crate) fn remove_page_from_lru(
         &mut self,
-        buf_page: &mut BufPage,
-    ) -> BufPageState {
+        pool_inner: &mut BufPoolInner,
+        block_guard: &mut RwLockWriteGuard<BufBlock>,
+    ) {
+        // 0) Sanity checks
+        let buf_page = block_guard.buf_block_get_page_mut();
         ut_a!(buf_page.buf_page_get_io_fix() == BufIoFix::BufIoNone);
         ut_a!(buf_page.buf_page_io_fix_count() == 0);
+        buf_page.buf_page_get_io_fix();
 
+        // 1) Unlink from our intrusive LRU list
         self.remove_block(buf_page);
 
-        if let Some(buf_pool) = self.buf_pool.upgrade() {
-            buf_pool.lock().unwrap().incr_freed_page_count();
-        } else {
-            ut_panic!("buf_pool reference not found");
-        }
+        // 2) Bump the pool‐free clock
+        pool_inner.set_freed_page_clock(
+            pool_inner.freed_page_clock().wrapping_add(1),
+        );
 
+        // 3) Advance the BufBlock’s own “clock” if it’s a file page
         match buf_page.get_state() {
             BufPageState::BufBlockFilePage => {
-                if let Some(buf_block) =
-                    buf_page.buf_page_get_buf_block().upgrade()
-                {
-                    let mut buf_block_ref = buf_block.write().unwrap();
-                    buf_block_ref.buf_block_incr_clock();
-                } else {
-                    ut_panic!("buf_block cannot be accessed from buf_page");
-                }
+                block_guard.buf_block_incr_clock();
             }
             _rest_of_states => {
                 ut_panic!(
@@ -577,27 +507,6 @@ impl BufLRU {
                 );
             }
         }
-
-        let space_id = buf_page.get_space_id();
-        let page_no = buf_page.get_page_no();
-
-        // Get the page from the buffer pool hashmap.
-        let buf_pool = self.buf_pool.upgrade().unwrap();
-        let buf_pool_ref = buf_pool.lock().unwrap();
-        buf_pool_ref.hash_remove_page(space_id, page_no);
-
-        match buf_page.get_state() {
-            BufPageState::BufBlockFilePage => {}
-            _rest_of_states => {
-                ut_panic!(
-                    "invalid state for removal, space_id: {}, page_no: {}",
-                    space_id,
-                    page_no
-                );
-            }
-        }
-
-        BufPageState::BufBlockMemory
     }
 
     /// Attempts to evict (“free”) one cold page from the LRU list, scanning up to
@@ -730,8 +639,7 @@ impl BufLRU {
         // 1) Try to free one page
 
         let freed = self.free_from_common_lru_list(pool, stats, n_iterations);
-
-        // 2) Update the LRU‐flush counter just like the C++ does
+        
         if !freed {
             pool.set_lru_flush_ended(0)
         } else if pool.lru_flush_ended() > 0 {
@@ -739,17 +647,6 @@ impl BufLRU {
         }
 
         freed
-    }
-
-    /// Gets a reference to the buffer pool.
-    ///
-    /// This method returns a weak reference to the buffer pool that this LRU manager
-    /// is associated with. The weak reference prevents circular dependencies.
-    ///
-    /// # Returns
-    /// * `&Weak<Mutex<BufPool>>` - A weak reference to the buffer pool
-    pub fn buf_pool(&self) -> &Weak<Mutex<BufPool>> {
-        &self.buf_pool
     }
 
     /// Gets the old ratio value.
@@ -775,6 +672,10 @@ impl BufLRU {
     /// * `&LinkedList<LruAdapter>` - A reference to the LRU list
     pub fn lru_list(&self) -> &LinkedList<LruAdapter> {
         &self.lru_list
+    }
+
+    pub(crate) fn lru_list_mut(&mut self) -> &mut LinkedList<LruAdapter> {
+        &mut self.lru_list
     }
 
     /// Gets a reference to the LRU old head.
@@ -810,18 +711,6 @@ impl BufLRU {
     /// * `&LinkedList<FreeListAdapter>` - A reference to the free list
     pub fn free_list(&self) -> &LinkedList<FreeListAdapter> {
         &self.free_list
-    }
-
-    /// Sets the buffer pool reference.
-    ///
-    /// This method updates the weak reference to the buffer pool that this LRU manager
-    /// is associated with. It's typically called during initialization or when
-    /// reconfiguring the buffer pool.
-    ///
-    /// # Parameters
-    /// * `buf_pool` - The new weak reference to the buffer pool
-    pub fn set_buf_pool(&mut self, buf_pool: Weak<Mutex<BufPool>>) {
-        self.buf_pool = buf_pool;
     }
 
     /// Sets the old ratio value.

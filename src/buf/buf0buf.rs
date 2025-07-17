@@ -28,6 +28,7 @@ use crate::{
     ut::ut0dbg::ut_ad,
     ut_2_power_up, ut_panic,
 };
+use crate::fil::fil0types::{FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID};
 
 /// Buffer Pool manages the caching of database pages in memory.
 ///
@@ -38,7 +39,6 @@ use crate::{
 pub struct BufPool {
     /// Protects *exactly* the `inner` data above
     inner: Mutex<BufPoolInner>,
-
     /// File system interface for I/O operations
     fil: Arc<Mutex<Fil>>,
     /// reference to BufLru.
@@ -72,6 +72,20 @@ pub(crate) struct BufPoolInner {
 }
 
 impl BufPoolInner {
+    /// Construct an empty `BufPoolInner` for tests or benches.
+   
+    pub fn new() -> Self {
+        BufPoolInner {
+            freed_page_clock: 0,
+            curr_size: 0,
+            page_hash: HashMap::new(),
+            flush_list: Default::default(),
+            chunks: Vec::new(),
+            lru_flush_ended: 0,
+            init_flush: [false; BufFlush::N_TYPES],
+            n_flush: [0; BufFlush::N_TYPES],
+        }
+    }
     /**
 
      Following methods are package protected and not Thread Safe
@@ -156,20 +170,7 @@ impl BufPoolInner {
     }
 }
 
-impl Default for BufPoolInner {
-    fn default() -> Self {
-        BufPoolInner {
-            freed_page_clock: 0,
-            curr_size: 0,
-            page_hash: Default::default(),
-            flush_list: Default::default(),
-            chunks: vec![],
-            lru_flush_ended: 0,
-            init_flush: [false; BufFlush::N_TYPES],
-            n_flush: [0; BufFlush::N_TYPES],
-        }
-    }
-}
+
 impl BufPool {
     /// Creates a new Buffer Pool instance.
     ///
@@ -184,7 +185,7 @@ impl BufPool {
         buf_rea: Arc<Mutex<BufRea>>,
     ) -> Self {
         BufPool {
-            inner: Mutex::new(BufPoolInner::default()),
+            inner: Mutex::new(BufPoolInner::new()),
             fil,
             buf_lru,
             stat: Arc::new(BufPoolStats::new()),
@@ -438,6 +439,8 @@ impl BufPool {
     /// * `false` - If the page was not in the hash table
     /// Remove the given page from the pool’s hash (if present),
     /// clear its in‐hash flag under the block‐latch, and return true.
+    /// This is a light weight method to remove a page from the hashmap.
+    /// It does not remove the page from LRU and  do page eviction.
     pub fn hash_remove_page(
         &self,
         space_id: SpaceId,
@@ -460,6 +463,48 @@ impl BufPool {
         } else {
             false
         }
+    }
+
+    /// Public API: remove a single page completely, evicting it from
+    /// the LRU, un‐hashing it, and updating all clocks & stats.
+    pub fn block_remove_hashed_page(
+        &self,
+        space_id: SpaceId,
+        page_no: PageNo,
+    ) -> BufPageState {
+        // 1) Lock the pool‐inner & LRU
+        let mut inner = self.inner.lock().unwrap();
+        let mut lru = self.buf_lru.lock().unwrap();
+
+        // 2) Pull the BufBlock out of the page_hash (removing from the hash)
+        let page_id = PageId { space_id, page_no };
+        let block_arc = inner
+            .page_hash
+            .remove(&page_id)
+            .unwrap_or_else(|| ut_panic!("page not in hash: {:?}", page_id));
+
+        // 3) Lock the block for write & get the BufPage
+        let mut block_guard = block_arc.write().unwrap();
+
+        // 4) Let the LRU helper unlink it and bump the pool‐clock
+    
+        lru.remove_page_from_lru(&mut *inner, &mut block_guard);
+        let buf_page = block_guard.buf_block_get_page_mut();
+        // 5) Mark it out of the hash map
+        buf_page.set_is_in_hash_map(false);
+        
+        let mut page = block_guard.get_page();
+        page.page_set_space_id(0xFF);
+        page.page_set_fil_offset(0xFF);
+
+        
+        block_guard.buf_block_set_state(BufPageState::BufBlockRemoveHash);
+        ut_ad!(
+            inner.page_hash.get(&page_id).is_none(),
+            "evicted page still in hash: {:?}",
+            page_id
+        );
+        BufPageState::BufBlockRemoveHash
     }
 
     /// Checks if a page is present in the buffer pool.
@@ -542,7 +587,7 @@ impl BufPool {
             let mut block_ref = block.write().unwrap();
 
             let mut buf_page_ref = block_ref.buf_block_get_page_mut();
-            self.buf_lru.lock().unwrap().add_block(&mut buf_page_ref, false);
+            self.add_block(&mut buf_page_ref, false);
         }
 
         self.page_init(space_id, page_no, block.clone());
@@ -938,43 +983,10 @@ impl BufPool {
     pub fn set_inner(&mut self, inner: Mutex<BufPoolInner>) {
         self.inner = inner;
     }
+    
+ 
 
-    /// Sets the file system interface for the buffer pool.
-    ///
-    /// This method updates the reference to the file system interface used by the buffer pool
-    /// for I/O operations. It's typically called during initialization or when reconfiguring
-    /// the buffer pool.
-    ///
-    /// # Parameters
-    /// * `fil` - The new file system interface reference
-    pub fn set_fil(&mut self, fil: Arc<Mutex<Fil>>) {
-        self.fil = fil;
-    }
-
-    /// Sets the LRU manager for the buffer pool.
-    ///
-    /// This method updates the reference to the LRU (Least Recently Used) manager
-    /// used by the buffer pool for page replacement. The LRU manager handles the
-    /// eviction of pages when the buffer pool is full.
-    ///
-    /// # Parameters
-    /// * `buf_lru` - The new LRU manager reference
-    pub fn set_buf_lru(&mut self, buf_lru: Arc<Mutex<BufLRU>>) {
-        self.buf_lru = buf_lru;
-    }
-
-    /// Sets the read-ahead manager for the buffer pool.
-    ///
-    /// This method updates the reference to the read-ahead manager used by the buffer pool
-    /// for prefetching pages. The read-ahead manager predicts which pages might be needed
-    /// soon and loads them into the buffer pool in advance.
-    ///
-    /// # Parameters
-    /// * `buf_rea` - The new read-ahead manager reference
-    pub fn set_buf_rea(&mut self, buf_rea: Arc<Mutex<BufRea>>) {
-        self.buf_rea = buf_rea;
-    }
-
+    
     // ——————————————————————————————————————————————————
     // freed_page_clock
     // ——————————————————————————————————————————————————
@@ -1150,5 +1162,55 @@ impl BufPool {
     pub fn set_chunks(&self, chunks: Vec<Arc<RwLock<BufChunk>>>) {
         let mut inner = self.inner.lock().unwrap();
         inner.chunks = chunks;
+    }
+
+    /// Adds a buffer page to the LRU list.
+    ///
+    /// This is a high-level method that adds a buffer page to the LRU list
+    /// by delegating to the internal `add_block_low` method.
+    ///
+    /// # Parameters
+    /// * `buf_page` - The buffer page to add to the LRU list
+    pub fn add_block(&self, buf_page: &mut BufPage, old: bool) {
+        // 1) Lock the pool‐inner if you ever need to update pool counters,
+        //    or just to uphold the lock‐order discipline:
+        let mut inner = self.inner.lock().unwrap();
+
+        // 2) Lock the LRU manager
+        let mut lru = self.buf_lru.lock().unwrap();
+
+        // 3) Call the real insertion routine
+        lru.add_block_low(buf_page, old);
+
+        // 4) If you need to update any fields in `inner`, do it here:
+        //    e.g. inner.freed_page_clock += 1;
+        // Drop both locks automatically at the end of this function
+    }
+
+    /// Change the percent of pages treated as “old.”  If `adjust==true`,
+    /// replay every flipped page through `get()`.  No LRU constants here.
+    fn update_old_ratio(&mut self, old_pct: usize, adjust: bool) {
+        // 1) Under the LRU lock, set the ratio and get the pages to touch.
+        let changed: Vec<PageId> = {
+            let mut lru = self.buf_lru.lock().unwrap();
+            lru.set_old_ratio_pct_and_collect(old_pct)
+        };
+
+        // 2) If caller said “don’t adjust now” or nothing moved, bail
+        if !adjust || changed.is_empty() {
+            return;
+        }
+
+        // 3) Otherwise, replay each page through get(), using one MTR
+        let mut mtr = Mtr::new();
+        for pid in changed {
+            let req = Request {
+                rw_latch: ReadWriteLatch::NoLatch,
+                page_id: pid,
+                mode: BUF_GET_ALWAYS,
+                mtr: &mut mtr,
+            };
+            let _ = self.get(req);
+        }
     }
 }

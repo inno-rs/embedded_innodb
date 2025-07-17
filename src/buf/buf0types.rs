@@ -1,11 +1,11 @@
+use intrusive_collections::{LinkedListLink, UnsafeRef, intrusive_adapter};
+use parking_lot::{RwLock as ParkingLotRwLock, lock_api::RawRwLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     alloc::Layout,
     cmp::PartialEq,
     sync::{Arc, RwLock, Weak, atomic::AtomicU64},
 };
-
-use intrusive_collections::{LinkedListLink, UnsafeRef, intrusive_adapter};
-use parking_lot::{RwLock as ParkingLotRwLock, lock_api::RawRwLock};
 use strum_macros::Display;
 use tracing::info;
 
@@ -347,6 +347,11 @@ impl BufPage {
         }
     }
 
+    #[cfg(test)]
+    pub fn set_in_file(&mut self) {
+        self.state = BufPageState::BufBlockFilePage;
+    }
+
     /// Checks if the buffer page has been modified and not yet flushed to disk.
     ///
     /// A page is considered modified if it has an oldest modification LSN greater than zero.
@@ -426,6 +431,11 @@ impl BufPage {
     /// * `usize` - The current buffer fix count
     pub fn buf_page_io_fix_count(&self) -> usize {
         self.buf_fix_count
+    }
+
+    #[cfg(test)]
+    pub fn set_buf_page_io_fix_count(&mut self, count: usize) {
+        self.buf_fix_count = count
     }
 
     /// Gets the space ID of the tablespace containing this page.
@@ -509,7 +519,7 @@ impl BufPage {
 pub struct BufBlock {
     /// Counter that tracks modifications to this buffer block.
     /// Incremented each time the block is removed from the hash table.
-    modify_clock: usize,
+    modify_clock: AtomicUsize,
     /// Metadata about the page stored in this buffer block
     buf_page: BufPage,
     /// Pointer to the actual page data in memory
@@ -533,7 +543,7 @@ impl BufBlock {
         );
 
         BufBlock {
-            modify_clock: 0,
+            modify_clock: AtomicUsize::new(0),
             buf_page,
             frame,
             rw_lock: Arc::new(Default::default()),
@@ -578,6 +588,10 @@ impl BufBlock {
     /// A pointer to the memory location where the page data is stored
     pub fn get_frame(&self) -> Frame {
         self.frame
+    }
+
+    pub fn get_frame_mut(&mut self) -> &mut Frame {
+        &mut self.frame
     }
 
     /// Gets the current state of the buffer page.
@@ -636,8 +650,13 @@ impl BufBlock {
     /// This method is called when the block is removed from the hash table,
     /// typically during page eviction or relocation. The modification clock
     /// helps track how many times the block has been recycled.
-    pub fn buf_block_incr_clock(&mut self) {
-        self.modify_clock += 1;
+    pub fn buf_block_incr_clock(&self) {
+        self.modify_clock.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Read the current value of the modification clock.
+    pub(crate) fn buf_block_get_clock(&self) -> usize {
+        self.modify_clock.load(Ordering::Relaxed)
     }
 
     /// Gets a Page object that provides methods for accessing the page data.
