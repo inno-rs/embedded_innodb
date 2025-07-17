@@ -1,6 +1,7 @@
 use std::{
+    collections::HashMap,
     fmt::Display,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex},
 };
 
 use fixedbitset::FixedBitSet;
@@ -11,9 +12,12 @@ use crate::{
     innodb::innodb0types::{DbErr, DbErr::DbFail, PageId},
     lock::lock0types::{
         LOCK_COMPATIBILITY_MATRIX, LOCK_GAP, LOCK_INSERT_INTENTION,
-        LOCK_TYPE_MASK, LockMode, LockType, REC_LOCK,
+        LOCK_REC_NOT_GAP, LOCK_TYPE_MASK, LockMode,
+        LockMode::{LOCK_IX, LOCK_S, LOCK_X},
+        LockType, REC_LOCK,
     },
     mtr::mtr0mtr::Mtr,
+    page::page0page::PAGE_HEAP_NO_SUPREMUM,
     rem::rem0rec::Record,
     trx::trx0trx::Trx,
     ut::ut0dbg::ut_ad,
@@ -44,7 +48,7 @@ impl Display for TableLock {
 #[derive(Clone)]
 pub struct RecLock {
     /// Index of the record.
-    pub index: Arc<RwLock<Index>>,
+    pub index: Arc<Index>,
     /// Page Id where the record is located.
     pub page_id: PageId,
 }
@@ -171,6 +175,17 @@ impl Lock {
         self.lock_type as u16 & LOCK_GAP != 0
     }
 
+    /// Check if the lock is not LOCK_REC_NOT_GAP.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the lock is not LOCK_REC_NOT_GAP, `false` otherwise.
+    pub fn rec_is_not_gap(&self) -> bool {
+        ut_ad!(self.lock_type() == REC_LOCK);
+
+        self.lock_type as u16 & LOCK_REC_NOT_GAP != 0
+    }
+
     /// Check if the lock is a record lock that does not block inserts into the gap before the record.
     ///
     /// # Returns
@@ -254,7 +269,14 @@ impl Lock {
         self.n_bits.set(n, false);
     }
 
-    /// Resets all bits in the lock bitmap.
+    /// Resets all bits in the lock bitmap to false.
+    ///
+    /// This method clears all record locks by setting all bits in the bitmap to false.
+    /// It is typically used when releasing all locks held by a transaction on a specific page.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug mode if the lock is not a record lock.
     pub fn rec_bitmap_reset(&mut self) {
         ut_ad!(self.lock_type() == REC_LOCK);
         self.n_bits.clear();
@@ -288,8 +310,104 @@ impl Lock {
     ///
     /// `true` if the lock modes are compatible, `false` otherwise.
     pub fn mode_compatible(lhs: LockMode, rhs: LockMode) -> bool {
+        ut_ad!(
+            lhs == LockMode::LOCK_IS
+                || lhs == LOCK_IX
+                || lhs == LOCK_S
+                || lhs == LOCK_X
+        );
+        ut_ad!(
+            rhs == LockMode::LOCK_IS
+                || rhs == LOCK_IX
+                || rhs == LOCK_S
+                || rhs == LOCK_X
+        );
+
         LOCK_COMPATIBILITY_MATRIX[lhs as usize][rhs as usize]
     }
+
+    /// Checks if a lock type has a specific flag set.
+    ///
+    /// # Arguments
+    ///
+    /// * `lock_type` - The lock type to check
+    /// * `target` - The flag to check for
+    ///
+    /// # Returns
+    ///
+    /// `true` if the lock type has the target flag set, `false` otherwise.
+    fn is_lock_type(lock_type: LockType, target: LockType) -> bool {
+        (lock_type & target) == target
+    }
+
+    /// Determines if this lock blocks a specific transaction's requested lock.
+    ///
+    /// This method checks if the current lock would prevent another transaction from
+    /// acquiring a lock with the specified mode and type. It implements the complex
+    /// rules of InnoDB's lock compatibility, including special handling for gap locks,
+    /// insert intention locks, and locks on the supremum record.
+    ///
+    /// # Arguments
+    ///
+    /// * `trx` - The transaction requesting the lock
+    /// * `lock_mode_type` - The mode and type of the requested lock
+    /// * `lock_is_on_supremum` - Whether the lock is on the supremum record
+    ///
+    /// # Returns
+    ///
+    /// `true` if this lock blocks the requested lock, `false` otherwise.
+    pub fn rec_blocks(
+        &self,
+        trx: Arc<Trx>,
+        lock_mode_type: LockModeType,
+        lock_is_on_supremum: bool,
+    ) -> bool {
+        ut_ad!(self.lock_type() == REC_LOCK);
+
+        let lhs_mode = self.lock_mode;
+        let LockModeType { lock_mode, lock_type, .. } = lock_mode_type;
+
+        if self.trx_id() != trx.trx_get_id()
+            && !Self::mode_compatible(lhs_mode, lock_mode)
+        {
+            if (lock_is_on_supremum || Self::is_lock_type(lock_type, LOCK_GAP))
+                && !Self::is_lock_type(lock_type, LOCK_INSERT_INTENTION)
+            {
+                // Gap type locks with the LOCK_INSERT_INTENTION flag do not need to wait for anything.
+                // This is because different users can have conflicting gap locks.
+                return false;
+            }
+
+            if !Self::is_lock_type(lock_type, LOCK_INSERT_INTENTION)
+                && self.rec_is_gap()
+            {
+                // Record lock (ORDINARY or LOCK_REC_NOT_GAP does not need to wait for gap type lock.
+                return false;
+            }
+
+            if Self::is_lock_type(lock_type, LOCK_GAP) && self.rec_is_not_gap()
+            {
+                // Lock on a gap does not need to wait for LOCK_REC_NOT_GAP type lock.
+                return false;
+            }
+
+            return !self.rec_is_insert_intention();
+        }
+
+        false
+    }
+}
+
+/// Combines lock mode and lock type information for lock operations.
+///
+/// This struct is used to pass both the lock mode (e.g., shared, exclusive) and
+/// lock type (e.g., gap, record) information together when creating or checking locks.
+/// It simplifies method signatures by grouping related lock attributes.
+pub struct LockModeType {
+    /// The lock mode of the lock.
+    pub lock_mode: LockMode,
+    /// The type of the lock.
+    pub lock_type: LockType,
 }
 
 /// Manages the lock system for transaction concurrency control.
@@ -297,7 +415,10 @@ impl Lock {
 /// The LockSys struct provides functionality for managing locks on records and tables,
 /// handling lock conflicts, and ensuring transaction isolation levels are maintained.
 /// It is a central component in the pessimistic concurrency control mechanism.
-pub struct LockSys {}
+pub struct LockSys {
+    /// Map of record locks, where the key is the PageId and the value is a vector of RecLocks.
+    rec_locks: HashMap<PageId, Vec<RecLock>>,
+}
 
 impl LockSys {
     /// Creates a new instance of the lock management system.
@@ -306,7 +427,7 @@ impl LockSys {
     ///
     /// A new LockSys instance is initialized with default settings.
     pub fn new() -> Self {
-        LockSys {}
+        LockSys { rec_locks: Default::default() }
     }
 
     /// Checks if locks of other transactions prevent an immediate insertion of a record.
@@ -338,5 +459,63 @@ impl LockSys {
         mtr: &mut Mtr,
     ) -> DbErr {
         DbFail("".to_string())
+    }
+
+    /// Creates a new record lock with the specified parameters.
+    ///
+    /// This is a low-level method for creating a record lock. It handles special cases
+    /// such as locks on the supremum record, and adds the created lock to the lock system's
+    /// internal data structures.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_id` - The page ID where the record is located
+    /// * `lock_mode_type` - The mode and type of the lock to create
+    /// * `heap_no` - The heap number of the record to lock
+    /// * `n_bits` - The capacity of the bitmap for record locks
+    /// * `index` - The index containing the record
+    /// * `trx` - The transaction that will own the lock
+    ///
+    /// # Returns
+    ///
+    /// A new Lock instance configured according to the specified parameters.
+    fn rec_create_low(
+        &mut self,
+        page_id: PageId,
+        lock_mode_type: LockModeType,
+        heap_no: usize,
+        n_bits: usize,
+        index: Arc<Index>,
+        trx: Arc<Trx>,
+    ) -> Lock {
+        // If rec is the supremum record, then we reset the gap and LOCK_REC_NOT_GAP bits, as all locks on the supremum record are gap locks.
+        let lock_mode_type = lock_mode_type;
+        let (lock_mode, mut lock_type) =
+            (lock_mode_type.lock_mode, lock_mode_type.lock_type);
+
+        if heap_no == PAGE_HEAP_NO_SUPREMUM {
+            ut_ad!(lock_type & LOCK_REC_NOT_GAP != 0);
+
+            lock_type &= !(LOCK_GAP | LOCK_REC_NOT_GAP);
+        }
+
+        let rec_lock = RecLock { index, page_id };
+        let mut lock = Lock::new(
+            trx,
+            n_bits,
+            TxnLock::RecLock(rec_lock.clone()),
+            lock_mode,
+            lock_type,
+        );
+
+        lock.rec_set_nth_bit(heap_no);
+
+        if let Some(locks) = self.rec_locks.get_mut(&page_id) {
+            locks.push(rec_lock)
+        } else {
+            self.rec_locks.insert(page_id, vec![rec_lock]);
+        }
+
+        lock
     }
 }

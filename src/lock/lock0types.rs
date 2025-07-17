@@ -38,7 +38,7 @@ pub const LOCK_COMPATIBILITY_MATRIX: [[bool; 4]; 4] = [
 ];
 
 /// Basic Lock Mode.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u16)]
 pub enum LockMode {
     /// Intention shared.
