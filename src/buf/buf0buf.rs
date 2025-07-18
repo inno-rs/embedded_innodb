@@ -1,13 +1,14 @@
+use intrusive_collections::{LinkedList, UnsafeRef};
+use std::sync::RwLockWriteGuard;
 use std::{
     alloc::{Layout, alloc_zeroed},
     collections::HashMap,
     ops::DerefMut,
     sync::{Arc, Mutex, RwLock, atomic::Ordering::Relaxed},
 };
-
-use intrusive_collections::{LinkedList, UnsafeRef};
 use tracing::{error, info};
 
+use crate::ut::ut0dbg::ut_a;
 use crate::{
     buf::{
         buf0flu::{BufFlush, BufFlushType},
@@ -101,6 +102,13 @@ impl BufPoolInner {
 
     pub(crate) fn page_hash(&self) -> &HashMap<PageId, Arc<RwLock<BufBlock>>> {
         &self.page_hash
+    }
+
+    #[cfg(test)]
+    pub(crate) fn page_hash_mut(
+        &mut self,
+    ) -> &mut HashMap<PageId, Arc<RwLock<BufBlock>>> {
+        &mut self.page_hash
     }
 
     pub(crate) fn flush_list(&self) -> &LinkedList<FlushListAdapter> {
@@ -675,8 +683,18 @@ impl BufPool {
     ///
     /// # Parameters
     /// * `buf_block` - The buffer block to free
-    pub fn block_free(&mut self, buf_block: &mut BufBlock) {
-        self.buf_lru.lock().unwrap().block_free_non_file_page(buf_block);
+    pub fn block_free(&mut self, buf_block: Arc<RwLock<BufBlock>>) {
+        let mut inner = self.inner.lock().unwrap();
+        let mut guard = buf_block.write().unwrap();
+        let mut lru = self.buf_lru.lock().unwrap();
+
+        // 3) Sanity: must not be a file-backed page
+        ut_a!(
+            guard.buf_block_get_state() != BufPageState::BufBlockFilePage,
+            "block_free called on file‐page"
+        );
+
+        lru.block_free_non_file_page(&mut *inner, &mut guard);
     }
 
     /// Creates a new page in the buffer pool.
@@ -704,16 +722,18 @@ impl BufPool {
     ) -> Option<Arc<RwLock<BufBlock>>> {
         ut_ad!(mtr.get_mtr_state() == MtrState::MtrActive);
 
+        // TODO this implementation is wrong. Lets come back to it soon.
         let free_block = self.get_free_block();
         if let Some(block) = free_block {
             {
-                let mut buf_block = block.write().unwrap();
-                let buf_block_ref = buf_block.deref_mut();
-
-                if buf_block_ref.buf_block_get_page().in_file() {
-                    self.block_free(buf_block_ref);
-
-                    // return using the Get methods.
+                let was_in_file = {
+                    let mut buf_block = block.write().unwrap();
+                    let buf_page = buf_block.buf_block_get_page_mut();
+                    buf_page.in_file()
+                };
+                if was_in_file {
+                    // now that the write‐lock is gone, this won’t deadlock
+                    self.block_free(block.clone());
                 }
             }
 
@@ -970,17 +990,6 @@ impl BufPool {
     // ——————————————————————————————————————————————————
     // Component Setters
     // ——————————————————————————————————————————————————
-    /// Sets the inner state of the buffer pool.
-    ///
-    /// This method replaces the current inner state of the buffer pool with a new one.
-    /// It's primarily used during initialization or when the buffer pool needs to be reset.
-    ///
-    /// # Parameters
-    /// * `inner` - The new inner state for the buffer pool
-    pub fn set_inner(&mut self, inner: Mutex<BufPoolInner>) {
-        self.inner = inner;
-    }
-
     // ——————————————————————————————————————————————————
     // freed_page_clock
     // ——————————————————————————————————————————————————
@@ -1175,10 +1184,6 @@ impl BufPool {
 
         // 3) Call the real insertion routine
         lru.add_block_low(buf_page, old);
-
-        // 4) If you need to update any fields in `inner`, do it here:
-        //    e.g. inner.freed_page_clock += 1;
-        // Drop both locks automatically at the end of this function
     }
 
     /// Change the percent of pages treated as “old.”  If `adjust==true`,
@@ -1206,5 +1211,13 @@ impl BufPool {
             };
             let _ = self.get(req);
         }
+    }
+
+    /// Test‐only: get a handle to the inner‐pool lock so we can
+    /// inspect or manipulate BufPoolInner.
+    ///  Will try to eliminate this.
+    #[cfg(test)]
+    pub(crate) fn inner(&self) -> &Mutex<BufPoolInner> {
+        &self.inner
     }
 }

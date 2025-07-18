@@ -357,45 +357,6 @@ impl BufLRU {
         None
     }
 
-    /// Frees a non-file page block and returns it to the free list.
-    ///
-    /// This method handles the freeing of buffer blocks that are not associated
-    /// with file pages (e.g., blocks used for internal data structures).
-    ///
-    /// # Parameters
-    /// * `block` - The buffer block to be freed
-    ///
-    /// # Panics
-    /// Panics if the block is not in a valid state to be freed
-    pub fn block_free_non_file_page(&mut self, block: &mut BufBlock) {
-        match block.buf_block_get_state() {
-            n if n == BufPageState::BufBlockMemory
-                || n == BufBlockReadyForUse =>
-            {
-                info!("bufblock state: {:?}", n);
-            }
-            n => {
-                ut_panic!(
-                    "Block is not in a valid state to be freed: {:?}",
-                    n
-                );
-            }
-        }
-
-        let page_ref = block.buf_block_get_page();
-        ut_ad!(page_ref.is_in_free_list() == false);
-        ut_ad!(page_ref.is_in_flush_list() == false);
-        ut_ad!(page_ref.is_in_lru_list() == false);
-
-        block.buf_block_set_state(BufBlockNotUsed);
-
-        let page = block.buf_block_get_page_mut();
-
-        self.add_to_free_list(page);
-
-        ut_a!(page.is_in_lru_list())
-    }
-
     /// Adds a buffer page to the free list.
     ///
     /// This method adds a buffer page to the free list, making it available for
@@ -408,6 +369,22 @@ impl BufLRU {
         let free_list_ref = &mut self.free_list;
         unsafe {
             free_list_ref.push_back(UnsafeRef::from_raw(buf_page));
+        }
+        buf_page.set_is_in_free_list(true);
+    }
+
+    /// Adds a buffer page to the free list from FRONT.
+    ///
+    /// This method adds a buffer page to the free list, making it available for
+    /// reuse. It also updates the page's status to indicate it is now in the LRU list.
+    ///
+    /// # Parameters
+    /// * `buf_page` - The buffer page to add to the free list
+    pub fn add_to_free_list_front(&mut self, buf_page: &mut BufPage) {
+        ut_ad!(buf_page.is_in_free_list() == false);
+        let free_list_ref = &mut self.free_list;
+        unsafe {
+            free_list_ref.push_front(UnsafeRef::from_raw(buf_page));
         }
         buf_page.set_is_in_free_list(true);
     }
@@ -465,6 +442,60 @@ impl BufLRU {
         }
 
         BlockStatus::Freed
+    }
+
+    /// Frees a non-file-backed page and returns it to the buffer‐pool’s free list.
+    ///
+    /// This is used for blocks that do _not_ contain on‐disk pages (e.g. internal
+    /// metadata blocks). It performs exactly the steps InnoDB’s
+    /// `block_free_non_file_page` does:
+    ///
+    /// 1. **State check.** The block must be in one of:
+    ///    - `BufPageState::BufBlockMemory`
+    ///    - `BufPageState::BufBlockReadyForUse`
+    ///    Otherwise this function panics.
+    /// 2. **Mark `NOT_USED`.** Transitions the block state to `BufBlockNotUsed`.
+    /// 3. **Wipe header.**  
+    ///    - In debug builds: zeros out the _entire_ page.  
+    ///    - In release builds: only overwrites the page‐id header fields.  
+    /// 4. **Insert into free list.** Pushes the page at the _front_ of the
+    ///    free‐list and sets its `in_free_list` flag to `true`.
+    /// # Arguments
+    /// * `inner` — the locked‐pool data
+    /// * `guard` — the write‐guard for the BufBlock being freed
+    pub(crate) fn block_free_non_file_page(
+        &mut self,
+        inner: &mut BufPoolInner,
+        guard: &mut RwLockWriteGuard<BufBlock>,
+    ) {
+        // sanity: only MEMORY or READY_FOR_USE may be freed here
+        match guard.buf_block_get_state() {
+            BufPageState::BufBlockMemory | BufBlockReadyForUse => {}
+            other => panic!("block_free_non_file_page: bad state {:?}", other),
+        }
+        // 1) Transition to NOT_USED
+        guard.buf_block_set_state(BufBlockNotUsed);
+
+        // 2) Wipe memory
+        let mut page = guard.get_page();
+        if cfg!(debug_assertions) {
+            // wipe *entire* page if debugging
+            page.page_set_fil_offset(0xFF);
+        } else {
+            // otherwise just zap the header fields
+            page.page_set_fil_offset(0xFF);
+            page.page_set_space_id(0xFF);
+        }
+
+        {
+            let buf_page = guard.buf_block_get_page_mut();
+            // sanity: must not already be on any list
+            ut_ad!(!buf_page.is_in_free_list());
+            ut_ad!(!buf_page.is_in_flush_list());
+            ut_ad!(!buf_page.is_in_lru_list());
+            // 4) Push onto the “free” list
+            self.add_to_free_list_front(buf_page)
+        }
     }
 
     /// Low‐level removal of `buf_page` from the LRU **and** bump the pool‐inner clock.

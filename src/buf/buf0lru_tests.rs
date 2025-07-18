@@ -91,4 +91,47 @@ mod tests {
         assert_eq!(after_i - before_i, 1);
         assert_eq!(after_b - before_b, 1);
     }
+
+    #[test]
+    fn block_free_non_file_page_moves_to_free_list_and_resets_state() {
+        // --- 1) set up LRU + inner pool ---
+        let mut lru = BufLRU::new();
+        let mut inner = BufPoolInner::new();
+
+        // --- 2) build one BufBlock in READY_FOR_USE state ---
+        let space_id = 1;
+        let page_no = 2;
+        let owning_page = test0utils::create_raw_page();
+
+        let buf_page = owning_page.page.clone();
+        let block = owning_page.buf_block.clone();
+
+        // precondition: free_list empty
+        assert_eq!(lru.free_list().iter().count(), 0);
+
+        // --- 3) call the helper under a write-guard ---
+        {
+            let mut g = block.write().unwrap();
+            g.buf_block_set_state(BufPageState::BufBlockReadyForUse);
+            // sanity: not yet on any list
+            assert!(!g.buf_block_get_page().is_in_free_list());
+            // now free it
+            lru.block_free_non_file_page(&mut inner, &mut g);
+            // after:
+            //  a) state → NOT_USED
+            assert_eq!(g.buf_block_get_state(), BufPageState::BufBlockNotUsed);
+            //  b) page flag → in free list
+            assert!(g.buf_block_get_page().is_in_free_list());
+            //  c) didn’t touch modify_clock
+            assert_eq!(g.buf_block_get_clock(), 0);
+        }
+
+        // --- 4) check LRU’s free list grew by 1, and points at our page ---
+        let entries: Vec<_> =
+            lru.free_list().iter().map(|up| up.get_page_id()).collect();
+        assert_eq!(entries.len(), 1);
+
+        // --- 5) global freed_page_clock stays at zero (this helper doesn’t bump it) ---
+        assert_eq!(inner.freed_page_clock(), 0);
+    }
 }

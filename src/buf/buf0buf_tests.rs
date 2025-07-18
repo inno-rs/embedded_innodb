@@ -1,8 +1,8 @@
 #[cfg(test)]
 pub(super) mod tests {
-    use std::sync::{Arc, Mutex};
-
+    use libc::poll;
     use rstest::{fixture, rstest};
+    use std::sync::{Arc, Mutex};
 
     use crate::{
         buf::{
@@ -170,7 +170,6 @@ pub(super) mod tests {
         // 1) Build a fresh pool fixture.
         let pool_arc = buf_pool_fixture.buf_pool.clone();
 
-        // 2) Pick a page id.
         let space_id = 0;
         let page_no = 42;
         let owning_page = test0utils::create_raw_page();
@@ -262,5 +261,79 @@ pub(super) mod tests {
                 "page_no field must be scrubbed"
             );
         }
+    }
+
+    #[rstest]
+    fn test_block_free_moves_memory_page_back_to_free_list_and_resets_state(
+        buf_pool_fixture: BufPoolFixture,
+    ) {
+        // 1) Grab the pool:
+        let pool_arc = buf_pool_fixture.buf_pool.clone();
+
+        let space_id = 0;
+        let page_no = 0;
+        let page_id = PageId { space_id, page_no };
+        let owning_page = test0utils::create_raw_page();
+
+        let buf_page = owning_page.page.clone();
+        let block = owning_page.buf_block.clone();
+
+        // Manually insert it into the pool’s inner structures as an “in-memory” page:
+        {
+            let mut pool = pool_arc.lock().unwrap();
+
+            let mut inner = pool.inner().lock().unwrap();
+            inner.page_hash_mut().insert(page_id, block.clone());
+            drop(inner);
+
+            // mark it as a memory page
+            let mut blk = block.write().unwrap();
+            blk.buf_block_set_state(BufPageState::BufBlockMemory);
+            // ensure it's not on *any* list yet:
+            let pg = blk.buf_block_get_page_mut();
+            pg.set_is_in_hash_map(false);
+            pg.set_is_in_lru_list(false);
+            pg.set_is_in_flush_list(false);
+            pg.set_is_in_free_list(false);
+            drop(blk);
+        }
+
+        // 4) Snapshot state before
+        let (before_state, before_in_free) = {
+            let pool = pool_arc.lock().unwrap();
+            let blk = block.read().unwrap();
+            (
+                blk.buf_block_get_state(),
+                blk.buf_block_get_page().is_in_free_list(),
+            )
+        };
+        assert_eq!(before_state, BufPageState::BufBlockMemory);
+        assert!(!before_in_free, "should start out off of the free-list");
+
+        // 5) Call the API under test:
+        {
+            let mut pool = pool_arc.lock().unwrap();
+            pool.block_free(block.clone());
+        }
+
+        // 6) Verify post-conditions:
+        let (after_state, after_in_free) = {
+            let pool = pool_arc.lock().unwrap();
+            let blk = block.read().unwrap();
+            (
+                blk.buf_block_get_state(),
+                blk.buf_block_get_page().is_in_free_list(),
+            )
+        };
+
+        assert_eq!(
+            after_state,
+            BufPageState::BufBlockNotUsed,
+            "block_free must transition to NOT_USED"
+        );
+        assert!(
+            after_in_free,
+            "block_free must push the page onto the free list"
+        );
     }
 }
