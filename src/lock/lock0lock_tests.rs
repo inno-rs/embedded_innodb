@@ -1,6 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        cell::RefCell,
+        rc::Rc,
+        sync::{Arc, Mutex},
+    };
 
     use pretty_assertions::assert_eq;
     use rstest::{fixture, rstest};
@@ -9,12 +13,16 @@ mod tests {
         dict::dict0types::{Index, Table},
         innodb::innodb0types::PageId,
         lock::{
-            lock0lock::{Lock, RecLock, TableLock, TxnLock},
+            lock0lock::{
+                DeadlockSearchResult::{LockVictimIsStart, NoDeadlock},
+                Lock, LockModeType, LockSys, RecLock, TableLock, TxnLock,
+            },
             lock0types::{
-                LOCK_GAP, LOCK_INSERT_INTENTION, LOCK_REC_NOT_GAP, LockMode,
-                REC_LOCK, TABLE_LOCK,
+                LOCK_GAP, LOCK_INSERT_INTENTION, LOCK_REC, LOCK_REC_NOT_GAP,
+                LOCK_TABLE, LOCK_WAIT, LockId, LockMode,
             },
         },
+        some_or_panic,
         trx::trx0trx::Trx,
     };
 
@@ -62,87 +70,92 @@ mod tests {
     fn test_lock_new(trx: Arc<Trx>, txn_lock_table: TxnLock) {
         // Test creating a new lock with LOCK_NONE mode and TABLE_LOCK type
         let lock = Lock::new(
+            LockId(0),
             trx.clone(),
             10,
             txn_lock_table,
-            LockMode::LOCK_NONE,
-            TABLE_LOCK,
+            LockMode::LockNone,
+            LOCK_TABLE,
         );
 
         // Verify the lock has the expected properties
-        // Since LockMode doesn't implement PartialEq, we need to use pattern matching
+        // Since LockMode doesn't implement PartialEq; we need to use pattern matching
         match lock.lock_mode() {
-            LockMode::LOCK_NONE => {} // This is what we expect
+            LockMode::LockNone => {} // This is what we expect
             _ => panic!("Expected LOCK_NONE, got a different lock mode"),
         }
 
         assert_eq!(lock.trx_id(), trx.trx_get_id());
-        assert_eq!(lock.lock_type(), TABLE_LOCK);
+        assert_eq!(lock.lock_type(), LOCK_TABLE);
     }
 
     #[rstest]
     fn test_lock_type_and_mode(trx: Arc<Trx>, txn_lock_table: TxnLock) {
         // Create a lock with LOCK_NONE mode and TABLE_LOCK type
         let lock = Lock::new(
+            LockId(0),
             trx.clone(),
             10,
             txn_lock_table,
-            LockMode::LOCK_NONE,
-            TABLE_LOCK,
+            LockMode::LockNone,
+            LOCK_TABLE,
         );
 
         // Verify the lock has the expected properties
         // Since LockMode doesn't implement PartialEq, we need to use pattern matching
         match lock.lock_mode() {
-            LockMode::LOCK_NONE => {} // This is what we expect
+            LockMode::LockNone => {} // This is what we expect
             _ => panic!("Expected LOCK_NONE, got a different lock mode"),
         }
 
         // Verify the lock type is TABLE_LOCK
-        assert_eq!(lock.lock_type(), TABLE_LOCK);
+        assert_eq!(lock.lock_type(), LOCK_TABLE);
     }
 
     #[rstest]
     fn test_lock_rec_lock(trx: Arc<Trx>, rec_lock: RecLock) {
         // Create a lock with LOCK_NONE mode and REC_LOCK type
         let lock = Lock::new(
+            LockId(0),
             trx.clone(),
             20,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_NONE,
-            REC_LOCK,
+            LockMode::LockNone,
+            LOCK_REC,
         );
 
         // Verify the lock has the expected properties
         // Since LockMode doesn't implement PartialEq, we need to use pattern matching
         match lock.lock_mode() {
-            LockMode::LOCK_NONE => {} // This is what we expect
+            LockMode::LockNone => {} // This is what we expect
             _ => panic!("Expected LOCK_NONE, got a different lock mode"),
         }
 
         // Verify the lock type is REC_LOCK
-        assert_eq!(lock.lock_type(), REC_LOCK);
+        assert_eq!(lock.lock_type(), LOCK_REC);
     }
 
     #[rstest]
     fn test_lock_gap_and_insert_intention(trx: Arc<Trx>, rec_lock: RecLock) {
         // Create a lock with LOCK_GAP type
         let gap_lock = Lock::new(
+            LockId(0),
             trx.clone(),
             30,
             TxnLock::RecLock(rec_lock.clone()),
-            LockMode::LOCK_NONE,
-            LOCK_GAP | REC_LOCK,
+            LockMode::LockNone,
+            LOCK_GAP | LOCK_REC,
         );
         assert!(gap_lock.rec_is_gap());
 
         // Create a lock with LOCK_INSERT_INTENTION type
         let insert_intention_lock = Lock::new(
+            LockId(0),
             trx.clone(),
             40,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_NONE,
-            LOCK_INSERT_INTENTION | REC_LOCK,
+            LockMode::LockNone,
+            LOCK_INSERT_INTENTION | LOCK_REC,
         );
         assert!(insert_intention_lock.rec_is_insert_intention());
     }
@@ -151,11 +164,12 @@ mod tests {
     fn test_trx_id(trx: Arc<Trx>, txn_lock_table: TxnLock) {
         // Create a lock with a specific trx
         let lock = Lock::new(
+            LockId(0),
             trx.clone(),
             10,
             txn_lock_table,
-            LockMode::LOCK_NONE,
-            TABLE_LOCK,
+            LockMode::LockNone,
+            LOCK_TABLE,
         );
 
         // Verify the trx_id of the lock
@@ -165,11 +179,12 @@ mod tests {
     fn test_rec_is_gap(rec_lock: RecLock) {
         // Create a RecLock with a specific page_id
         let lock = Lock::new(
+            LockId(0),
             Arc::new(Trx::new(1)),
             60,
             TxnLock::RecLock(rec_lock.clone()),
-            LockMode::LOCK_NONE,
-            LOCK_GAP | REC_LOCK,
+            LockMode::LockNone,
+            LOCK_GAP | LOCK_REC,
         );
 
         // Verify if the lock is a gap lock
@@ -177,11 +192,12 @@ mod tests {
 
         // Create a lock that is not a gap lock
         let non_gap_lock = Lock::new(
+            LockId(0),
             Arc::new(Trx::new(2)),
             70,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_NONE,
-            REC_LOCK,
+            LockMode::LockNone,
+            LOCK_REC,
         );
 
         // Verify that it is not a gap lock
@@ -191,11 +207,12 @@ mod tests {
     fn test_rec_is_insert_intention(rec_lock: RecLock) {
         // Create a RecLock with a specific page_id
         let lock = Lock::new(
+            LockId(0),
             Arc::new(Trx::new(1)),
             80,
             TxnLock::RecLock(rec_lock.clone()),
-            LockMode::LOCK_NONE,
-            LOCK_INSERT_INTENTION | REC_LOCK,
+            LockMode::LockNone,
+            LOCK_INSERT_INTENTION | LOCK_REC,
         );
 
         // Verify if the lock is an insert intention lock
@@ -203,11 +220,12 @@ mod tests {
 
         // Create a lock that is not an insert intention lock
         let non_insert_intention_lock = Lock::new(
+            LockId(0),
             Arc::new(Trx::new(2)),
             90,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_NONE,
-            REC_LOCK,
+            LockMode::LockNone,
+            LOCK_REC,
         );
 
         // Verify that it is not an insert intention lock
@@ -218,11 +236,12 @@ mod tests {
     fn test_rec_is_not_gap(rec_lock: RecLock) {
         // Create a RecLock with a specific page_id
         let lock = Lock::new(
+            LockId(0),
             Arc::new(Trx::new(1)),
             80,
             TxnLock::RecLock(rec_lock.clone()),
-            LockMode::LOCK_NONE,
-            LOCK_REC_NOT_GAP | REC_LOCK,
+            LockMode::LockNone,
+            LOCK_REC_NOT_GAP | LOCK_REC,
         );
 
         // Verify if the lock is an insert intention lock
@@ -230,11 +249,12 @@ mod tests {
 
         // Create a lock that is not an insert intention lock
         let non_insert_intention_lock = Lock::new(
+            LockId(0),
             Arc::new(Trx::new(2)),
             90,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_NONE,
-            REC_LOCK,
+            LockMode::LockNone,
+            LOCK_REC,
         );
 
         // Verify that it is not an insert intention lock
@@ -246,11 +266,12 @@ mod tests {
         let total_bits = 50; // Total bits for the record lock
         // Create a RecLock with a specific page_id
         let mut lock = Lock::new(
+            LockId(0),
             Arc::new(Trx::new(1)),
             total_bits,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_NONE,
-            REC_LOCK,
+            LockMode::LockNone,
+            LOCK_REC,
         );
 
         // Initially, all bits should be unset
@@ -279,11 +300,12 @@ mod tests {
         let total_bits = 50; // Total bits for the record lock
         // Create a RecLock with a specific page_id
         let lock = Lock::new(
+            LockId(0),
             Arc::new(Trx::new(1)),
             total_bits,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_NONE,
-            REC_LOCK,
+            LockMode::LockNone,
+            LOCK_REC,
         );
 
         // Get the number of set bits
@@ -296,11 +318,12 @@ mod tests {
         let total_bits = 50; // Total bits for the record lock
         // Create a RecLock with a specific page_id
         let mut lock = Lock::new(
+            LockId(0),
             Arc::new(Trx::new(1)),
             total_bits,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_NONE,
-            REC_LOCK,
+            LockMode::LockNone,
+            LOCK_REC,
         );
 
         // Set some bits
@@ -322,11 +345,12 @@ mod tests {
         let total_bits = 50; // Total bits for the record lock
         // Create a RecLock with a specific page_id
         let mut lock = Lock::new(
+            LockId(0),
             Arc::new(Trx::new(1)),
             total_bits,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_NONE,
-            REC_LOCK,
+            LockMode::LockNone,
+            LOCK_REC,
         );
 
         // Set some bits
@@ -353,11 +377,12 @@ mod tests {
         let total_bits = 50; // Total bits for the record lock
         // Create a RecLock with a specific page_id
         let mut lock = Lock::new(
+            LockId(0),
             Arc::new(Trx::new(1)),
             total_bits,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_NONE,
-            REC_LOCK,
+            LockMode::LockNone,
+            LOCK_REC,
         );
 
         // Set some bits
@@ -377,11 +402,12 @@ mod tests {
         let total_bits = 50; // Total bits for the record lock
         // Create a RecLock with a specific page_id
         let mut lock = Lock::new(
+            LockId(0),
             Arc::new(Trx::new(1)),
             total_bits,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_NONE,
-            REC_LOCK,
+            LockMode::LockNone,
+            LOCK_REC,
         );
 
         // Set some bits
@@ -401,11 +427,12 @@ mod tests {
     fn test_rec_page_id(rec_lock: RecLock, page_id: PageId) {
         // Create a RecLock with a specific page_id
         let lock = Lock::new(
+            LockId(0),
             Arc::new(Trx::new(1)),
             50,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_NONE,
-            REC_LOCK,
+            LockMode::LockNone,
+            LOCK_REC,
         );
 
         // Verify the page_id of the lock
@@ -415,88 +442,52 @@ mod tests {
     #[test]
     fn test_mode_compatible() {
         // Test compatibility matrix
-        assert!(Lock::mode_compatible(LockMode::LOCK_IS, LockMode::LOCK_IS));
-        assert!(Lock::mode_compatible(LockMode::LOCK_IS, LockMode::LOCK_IX));
-        assert!(Lock::mode_compatible(LockMode::LOCK_IS, LockMode::LOCK_S));
-        assert!(!Lock::mode_compatible(LockMode::LOCK_IS, LockMode::LOCK_X));
+        assert!(Lock::mode_compatible(LockMode::LockIS, LockMode::LockIS));
+        assert!(Lock::mode_compatible(LockMode::LockIS, LockMode::LockIX));
+        assert!(Lock::mode_compatible(LockMode::LockIS, LockMode::LockS));
+        assert!(!Lock::mode_compatible(LockMode::LockIS, LockMode::LockX));
 
-        assert!(Lock::mode_compatible(LockMode::LOCK_IX, LockMode::LOCK_IS));
-        assert!(Lock::mode_compatible(LockMode::LOCK_IX, LockMode::LOCK_IX));
-        assert!(!Lock::mode_compatible(LockMode::LOCK_IX, LockMode::LOCK_S));
-        assert!(!Lock::mode_compatible(LockMode::LOCK_IX, LockMode::LOCK_X));
+        assert!(Lock::mode_compatible(LockMode::LockIX, LockMode::LockIS));
+        assert!(Lock::mode_compatible(LockMode::LockIX, LockMode::LockIX));
+        assert!(!Lock::mode_compatible(LockMode::LockIX, LockMode::LockS));
+        assert!(!Lock::mode_compatible(LockMode::LockIX, LockMode::LockX));
 
-        assert!(Lock::mode_compatible(LockMode::LOCK_S, LockMode::LOCK_IS));
-        assert!(!Lock::mode_compatible(LockMode::LOCK_S, LockMode::LOCK_IX));
-        assert!(Lock::mode_compatible(LockMode::LOCK_S, LockMode::LOCK_S));
-        assert!(!Lock::mode_compatible(LockMode::LOCK_S, LockMode::LOCK_X));
+        assert!(Lock::mode_compatible(LockMode::LockS, LockMode::LockIS));
+        assert!(!Lock::mode_compatible(LockMode::LockS, LockMode::LockIX));
+        assert!(Lock::mode_compatible(LockMode::LockS, LockMode::LockS));
+        assert!(!Lock::mode_compatible(LockMode::LockS, LockMode::LockX));
 
-        assert!(!Lock::mode_compatible(LockMode::LOCK_X, LockMode::LOCK_IS));
-        assert!(!Lock::mode_compatible(LockMode::LOCK_X, LockMode::LOCK_IX));
-        assert!(!Lock::mode_compatible(LockMode::LOCK_X, LockMode::LOCK_S));
-        assert!(!Lock::mode_compatible(LockMode::LOCK_X, LockMode::LOCK_X));
+        assert!(!Lock::mode_compatible(LockMode::LockX, LockMode::LockIS));
+        assert!(!Lock::mode_compatible(LockMode::LockX, LockMode::LockIX));
+        assert!(!Lock::mode_compatible(LockMode::LockX, LockMode::LockS));
+        assert!(!Lock::mode_compatible(LockMode::LockX, LockMode::LockX));
     }
 
     #[test]
     fn test_mode_stronger_or_eq() {
         // Test strength matrix
-        assert!(Lock::mode_stronger_or_eq(
-            LockMode::LOCK_IS,
-            LockMode::LOCK_IS
-        ));
+        assert!(Lock::mode_stronger_or_eq(LockMode::LockIS, LockMode::LockIS));
         assert!(!Lock::mode_stronger_or_eq(
-            LockMode::LOCK_IS,
-            LockMode::LOCK_IX
+            LockMode::LockIS,
+            LockMode::LockIX
         ));
-        assert!(!Lock::mode_stronger_or_eq(
-            LockMode::LOCK_IS,
-            LockMode::LOCK_S
-        ));
-        assert!(!Lock::mode_stronger_or_eq(
-            LockMode::LOCK_IS,
-            LockMode::LOCK_X
-        ));
+        assert!(!Lock::mode_stronger_or_eq(LockMode::LockIS, LockMode::LockS));
+        assert!(!Lock::mode_stronger_or_eq(LockMode::LockIS, LockMode::LockX));
 
-        assert!(Lock::mode_stronger_or_eq(
-            LockMode::LOCK_IX,
-            LockMode::LOCK_IS
-        ));
-        assert!(Lock::mode_stronger_or_eq(
-            LockMode::LOCK_IX,
-            LockMode::LOCK_IX
-        ));
-        assert!(!Lock::mode_stronger_or_eq(
-            LockMode::LOCK_IX,
-            LockMode::LOCK_S
-        ));
-        assert!(!Lock::mode_stronger_or_eq(
-            LockMode::LOCK_IX,
-            LockMode::LOCK_X
-        ));
+        assert!(Lock::mode_stronger_or_eq(LockMode::LockIX, LockMode::LockIS));
+        assert!(Lock::mode_stronger_or_eq(LockMode::LockIX, LockMode::LockIX));
+        assert!(!Lock::mode_stronger_or_eq(LockMode::LockIX, LockMode::LockS));
+        assert!(!Lock::mode_stronger_or_eq(LockMode::LockIX, LockMode::LockX));
 
-        assert!(Lock::mode_stronger_or_eq(
-            LockMode::LOCK_S,
-            LockMode::LOCK_IS
-        ));
-        assert!(!Lock::mode_stronger_or_eq(
-            LockMode::LOCK_S,
-            LockMode::LOCK_IX
-        ));
-        assert!(Lock::mode_stronger_or_eq(LockMode::LOCK_S, LockMode::LOCK_S));
-        assert!(!Lock::mode_stronger_or_eq(
-            LockMode::LOCK_S,
-            LockMode::LOCK_X
-        ));
+        assert!(Lock::mode_stronger_or_eq(LockMode::LockS, LockMode::LockIS));
+        assert!(!Lock::mode_stronger_or_eq(LockMode::LockS, LockMode::LockIX));
+        assert!(Lock::mode_stronger_or_eq(LockMode::LockS, LockMode::LockS));
+        assert!(!Lock::mode_stronger_or_eq(LockMode::LockS, LockMode::LockX));
 
-        assert!(Lock::mode_stronger_or_eq(
-            LockMode::LOCK_X,
-            LockMode::LOCK_IS
-        ));
-        assert!(Lock::mode_stronger_or_eq(
-            LockMode::LOCK_X,
-            LockMode::LOCK_IX
-        ));
-        assert!(Lock::mode_stronger_or_eq(LockMode::LOCK_X, LockMode::LOCK_S));
-        assert!(Lock::mode_stronger_or_eq(LockMode::LOCK_X, LockMode::LOCK_X));
+        assert!(Lock::mode_stronger_or_eq(LockMode::LockX, LockMode::LockIS));
+        assert!(Lock::mode_stronger_or_eq(LockMode::LockX, LockMode::LockIX));
+        assert!(Lock::mode_stronger_or_eq(LockMode::LockX, LockMode::LockS));
+        assert!(Lock::mode_stronger_or_eq(LockMode::LockX, LockMode::LockX));
     }
 
     #[rstest]
@@ -506,17 +497,18 @@ mod tests {
 
         // Create a lock with the same transaction ID
         let lock = Lock::new(
+            LockId(0),
             trx.clone(),
             50,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_X,
-            REC_LOCK,
+            LockMode::LockX,
+            LOCK_REC,
         );
 
         // Create a lock mode type for testing
         let lock_mode_type = crate::lock::lock0lock::LockModeType {
-            lock_mode: LockMode::LOCK_S,
-            lock_type: REC_LOCK,
+            lock_mode: LockMode::LockS,
+            lock_type: LOCK_REC,
         };
 
         // Test with the same transaction - should not block
@@ -531,17 +523,18 @@ mod tests {
 
         // Create a lock with IS mode
         let lock = Lock::new(
+            LockId(0),
             trx1.clone(),
             50,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_IS,
-            REC_LOCK,
+            LockMode::LockIS,
+            LOCK_REC,
         );
 
         // Create a lock mode type with IS mode (compatible with IS)
         let lock_mode_type = crate::lock::lock0lock::LockModeType {
-            lock_mode: LockMode::LOCK_IS,
-            lock_type: REC_LOCK,
+            lock_mode: LockMode::LockIS,
+            lock_type: LOCK_REC,
         };
 
         // Test with compatible lock modes - should not block
@@ -559,17 +552,18 @@ mod tests {
 
         // Create a lock with X mode and GAP type
         let lock = Lock::new(
+            LockId(0),
             trx1.clone(),
             50,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_X,
-            REC_LOCK | LOCK_GAP,
+            LockMode::LockX,
+            LOCK_REC | LOCK_GAP,
         );
 
         // Create a lock mode type with S mode (incompatible with X) and GAP type
         let lock_mode_type = crate::lock::lock0lock::LockModeType {
-            lock_mode: LockMode::LOCK_S,
-            lock_type: REC_LOCK | LOCK_GAP,
+            lock_mode: LockMode::LockS,
+            lock_type: LOCK_REC | LOCK_GAP,
         };
 
         // Test with incompatible lock modes but gap lock - should not block
@@ -587,17 +581,18 @@ mod tests {
 
         // Create a lock with X mode and GAP type
         let lock = Lock::new(
+            LockId(0),
             trx1.clone(),
             50,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_X,
-            REC_LOCK | LOCK_GAP,
+            LockMode::LockX,
+            LOCK_REC | LOCK_GAP,
         );
 
         // Create a lock mode type with S mode (incompatible with X) and GAP type
         let lock_mode_type = crate::lock::lock0lock::LockModeType {
-            lock_mode: LockMode::LOCK_S,
-            lock_type: REC_LOCK | LOCK_GAP,
+            lock_mode: LockMode::LockS,
+            lock_type: LOCK_REC | LOCK_GAP,
         };
 
         // Test with incompatible lock modes but both gap locks - should not block
@@ -615,17 +610,18 @@ mod tests {
 
         // Create a lock with X mode and GAP type
         let lock = Lock::new(
+            LockId(0),
             trx1.clone(),
             50,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_X,
-            REC_LOCK | LOCK_GAP,
+            LockMode::LockX,
+            LOCK_REC | LOCK_GAP,
         );
 
         // Create a lock mode type with S mode (incompatible with X) and INSERT_INTENTION type
         let lock_mode_type = crate::lock::lock0lock::LockModeType {
-            lock_mode: LockMode::LOCK_S,
-            lock_type: REC_LOCK | LOCK_INSERT_INTENTION,
+            lock_mode: LockMode::LockS,
+            lock_type: LOCK_REC | LOCK_INSERT_INTENTION,
         };
 
         // Test with incompatible lock modes, insert intention on gap lock
@@ -640,17 +636,18 @@ mod tests {
 
         // Create a lock with X mode
         let lock = Lock::new(
+            LockId(0),
             trx1.clone(),
             50,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_X,
-            REC_LOCK,
+            LockMode::LockX,
+            LOCK_REC,
         );
 
         // Create a lock mode type with S mode (incompatible with X)
         let lock_mode_type = crate::lock::lock0lock::LockModeType {
-            lock_mode: LockMode::LOCK_S,
-            lock_type: REC_LOCK,
+            lock_mode: LockMode::LockS,
+            lock_type: LOCK_REC,
         };
 
         // Test with lock on supremum record
@@ -665,17 +662,18 @@ mod tests {
 
         // Create a lock with X mode and LOCK_REC_NOT_GAP type
         let lock = Lock::new(
+            LockId(0),
             trx1.clone(),
             50,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_X,
-            REC_LOCK | LOCK_REC_NOT_GAP,
+            LockMode::LockX,
+            LOCK_REC | LOCK_REC_NOT_GAP,
         );
 
         // Create a lock mode type with S mode (incompatible with X) and LOCK_REC_NOT_GAP type
         let lock_mode_type = crate::lock::lock0lock::LockModeType {
-            lock_mode: LockMode::LOCK_S,
-            lock_type: REC_LOCK | LOCK_REC_NOT_GAP,
+            lock_mode: LockMode::LockS,
+            lock_type: LOCK_REC | LOCK_REC_NOT_GAP,
         };
 
         // Test with incompatible lock modes and non-gap locks - should block
@@ -690,17 +688,18 @@ mod tests {
 
         // Create a lock with X mode and GAP type
         let lock = Lock::new(
+            LockId(0),
             trx1.clone(),
             50,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_X,
-            REC_LOCK | LOCK_GAP,
+            LockMode::LockX,
+            LOCK_REC | LOCK_GAP,
         );
 
         // Create a lock mode type with S mode (incompatible with X) and non-INSERT_INTENTION type
         let lock_mode_type = crate::lock::lock0lock::LockModeType {
-            lock_mode: LockMode::LOCK_S,
-            lock_type: REC_LOCK,
+            lock_mode: LockMode::LockS,
+            lock_type: LOCK_REC,
         };
 
         // Test with incompatible lock modes, non-insert intention on gap lock - should not block
@@ -718,17 +717,18 @@ mod tests {
 
         // Create a lock with X mode and INSERT_INTENTION type
         let lock = Lock::new(
+            LockId(0),
             trx1.clone(),
             50,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_X,
-            REC_LOCK | LOCK_INSERT_INTENTION,
+            LockMode::LockX,
+            LOCK_REC | LOCK_INSERT_INTENTION,
         );
 
         // Create a lock mode type with S mode (incompatible with X)
         let lock_mode_type = crate::lock::lock0lock::LockModeType {
-            lock_mode: LockMode::LOCK_S,
-            lock_type: REC_LOCK,
+            lock_mode: LockMode::LockS,
+            lock_type: LOCK_REC,
         };
 
         // Test with incompatible lock modes, current lock is insert intention - should not block
@@ -746,20 +746,22 @@ mod tests {
 
         // Create a lock with S mode
         let mut lock1 = Lock::new(
+            LockId(0),
             trx1.clone(),
             50,
             TxnLock::RecLock(rec_lock.clone()),
-            LockMode::LOCK_S,
-            REC_LOCK,
+            LockMode::LockS,
+            LOCK_REC,
         );
 
         // Create another lock with S mode (compatible with S)
         let mut lock2 = Lock::new(
+            LockId(0),
             trx2.clone(),
             50,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_S,
-            REC_LOCK,
+            LockMode::LockS,
+            LOCK_REC,
         );
 
         // Set the bit for the record in both locks
@@ -783,19 +785,21 @@ mod tests {
 
         // Create a lock with S mode
         let lock1 = Lock::new(
+            LockId(0),
             trx1.clone(),
             50,
             TxnLock::TableLock(table_lock.clone()),
-            LockMode::LOCK_S,
+            LockMode::LockS,
             0, // Table lock
         );
 
         // Create another lock with X mode (incompatible with S)
         let lock2 = Lock::new(
+            LockId(0),
             trx2.clone(),
             50,
             TxnLock::TableLock(table_lock),
-            LockMode::LOCK_X,
+            LockMode::LockX,
             0, // Table lock
         );
 
@@ -811,20 +815,22 @@ mod tests {
 
         // Create a lock with S mode
         let mut lock1 = Lock::new(
+            LockId(0),
             trx1.clone(),
             50,
             TxnLock::RecLock(rec_lock.clone()),
-            LockMode::LOCK_S,
-            REC_LOCK,
+            LockMode::LockS,
+            LOCK_REC,
         );
 
         // Create another lock with X mode (incompatible with S)
         let mut lock2 = Lock::new(
+            LockId(0),
             trx2.clone(),
             50,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_X,
-            REC_LOCK | LOCK_REC_NOT_GAP,
+            LockMode::LockX,
+            LOCK_REC | LOCK_REC_NOT_GAP,
         );
 
         // Set the bit for the record in both locks
@@ -843,20 +849,22 @@ mod tests {
 
         // Create a lock with S mode
         let mut lock1 = Lock::new(
+            LockId(0),
             trx.clone(),
             50,
             TxnLock::RecLock(rec_lock.clone()),
-            LockMode::LOCK_S,
-            REC_LOCK,
+            LockMode::LockS,
+            LOCK_REC,
         );
 
         // Create another lock with X mode (incompatible with S) but same transaction
         let mut lock2 = Lock::new(
+            LockId(0),
             trx.clone(),
             50,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_X,
-            REC_LOCK,
+            LockMode::LockX,
+            LOCK_REC,
         );
 
         // Set the bit for the record in both locks
@@ -876,20 +884,22 @@ mod tests {
 
         // Create a lock with S mode and GAP type
         let mut lock1 = Lock::new(
+            LockId(0),
             trx1.clone(),
             50,
             TxnLock::RecLock(rec_lock.clone()),
-            LockMode::LOCK_S,
-            REC_LOCK | LOCK_GAP,
+            LockMode::LockS,
+            LOCK_REC | LOCK_GAP,
         );
 
         // Create another lock with X mode (incompatible with S) and GAP type
         let mut lock2 = Lock::new(
+            LockId(0),
             trx2.clone(),
             50,
             TxnLock::RecLock(rec_lock),
-            LockMode::LOCK_X,
-            REC_LOCK | LOCK_GAP,
+            LockMode::LockX,
+            LOCK_REC | LOCK_GAP,
         );
 
         // Set the bit for the record in both locks
@@ -899,5 +909,561 @@ mod tests {
 
         // Test with gap locks - should not wait (gap locks don't block each other)
         assert_eq!(lock1.has_to_wait_for(&lock2, Some(heap_no)), false);
+    }
+
+    #[test]
+    fn test_rec_create_low() {
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let n_bits = 100;
+
+        {
+            let trx = Arc::new(Trx::new(1));
+            // Not waiting for lock.
+            let lock = lock_sys.rec_create_low(
+                page_id.clone(),
+                LockModeType {
+                    lock_mode: LockMode::LockX,
+                    lock_type: LOCK_REC,
+                },
+                rec_heap_no,
+                n_bits,
+                index.clone(),
+                trx.clone(),
+            );
+
+            let lock = lock.borrow();
+            assert_eq!(lock.rec_page_id(), page_id);
+            assert!(lock.rec_is_nth_bit_set(rec_heap_no));
+            assert_eq!(lock.lock_type() & LOCK_REC, LOCK_REC);
+            assert!(trx.get_wait_lock().is_none());
+        }
+
+        {
+            let trx = Arc::new(Trx::new(1));
+            // Waiting lock.
+            let lock = lock_sys.rec_create_low(
+                page_id.clone(),
+                LockModeType {
+                    lock_mode: LockMode::LockX,
+                    lock_type: LOCK_REC | LOCK_WAIT,
+                },
+                rec_heap_no,
+                n_bits,
+                index.clone(),
+                trx.clone(),
+            );
+
+            let lock = lock.borrow();
+            assert_eq!(lock.rec_page_id(), page_id);
+            assert!(lock.rec_is_nth_bit_set(rec_heap_no));
+            assert_eq!(lock.lock_type() & LOCK_REC, LOCK_REC);
+            assert_eq!(lock.get_id(), some_or_panic!(trx.get_wait_lock()));
+        }
+    }
+
+    #[test]
+    fn test_deadlock_recursive_with_non_conflicting_cycle() {
+        // trxA -> trxB -> trxA
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+
+        let page_id = PageId::dummy();
+        let rec_x_heap_no = 10;
+        let rec_y_heap_no = 20;
+        let n_bits = 100;
+
+        // Create trxA, trxB
+        let trx_a = Arc::new(Trx::new(1));
+        let trx_b = Arc::new(Trx::new(2));
+
+        // trx_a has lock for rec_x, but waiting for rec_y
+        lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType { lock_mode: LockMode::LockIS, lock_type: LOCK_REC },
+            rec_x_heap_no,
+            n_bits,
+            index.clone(),
+            trx_a.clone(),
+        );
+
+        let wait_for = lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType {
+                lock_mode: LockMode::LockIS,
+                lock_type: LOCK_REC | LOCK_WAIT,
+            },
+            rec_y_heap_no,
+            n_bits,
+            index.clone(),
+            trx_a.clone(),
+        );
+
+        // trx_b has rec_y, but waiting for rec_x
+        lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType { lock_mode: LockMode::LockIS, lock_type: LOCK_REC },
+            rec_y_heap_no,
+            n_bits,
+            index.clone(),
+            trx_b.clone(),
+        );
+
+        lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType {
+                lock_mode: LockMode::LockIS,
+                lock_type: LOCK_REC | LOCK_WAIT,
+            },
+            rec_x_heap_no,
+            n_bits,
+            index.clone(),
+            trx_b.clone(),
+        );
+
+        let result =
+            lock_sys.deadlock_recursive(trx_a, trx_b, wait_for, &mut 0, 0);
+
+        assert_eq!(result, NoDeadlock);
+    }
+
+    #[test]
+    fn test_deadlock_recursive_with_cycle() {
+        // trxA -> trxB -> trxA
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+
+        let page_id = PageId::dummy();
+        let rec_x_heap_no = 10;
+        let rec_y_heap_no = 20;
+        let n_bits = 100;
+
+        // Create trxA, trxB
+        let trx_a = Arc::new(Trx::new(1));
+        let trx_b = Arc::new(Trx::new(2));
+
+        // trx_a has lock for rec_x, but waiting for rec_y
+        lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_REC },
+            rec_x_heap_no,
+            n_bits,
+            index.clone(),
+            trx_a.clone(),
+        );
+
+        let wait_for = lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType {
+                lock_mode: LockMode::LockX,
+                lock_type: LOCK_REC | LOCK_WAIT,
+            },
+            rec_y_heap_no,
+            n_bits,
+            index.clone(),
+            trx_a.clone(),
+        );
+
+        // trx_b has rec_y, but waiting for rec_x
+        lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_REC },
+            rec_y_heap_no,
+            n_bits,
+            index.clone(),
+            trx_b.clone(),
+        );
+
+        lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType {
+                lock_mode: LockMode::LockX,
+                lock_type: LOCK_REC | LOCK_WAIT,
+            },
+            rec_x_heap_no,
+            n_bits,
+            index.clone(),
+            trx_b.clone(),
+        );
+
+        let result =
+            lock_sys.deadlock_recursive(trx_a, trx_b, wait_for, &mut 0, 0);
+
+        assert_eq!(result, LockVictimIsStart);
+    }
+
+    #[test]
+    fn get_next_rec_lock_all_belonging_to_same_page() {
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let n_bits = 100;
+        let trx = Arc::new(Trx::new(1));
+        let limit = 100;
+
+        // Add 100 rec_locks
+        for i in 0..limit {
+            lock_sys.rec_create_low(
+                page_id.clone(),
+                LockModeType {
+                    lock_mode: LockMode::LockX,
+                    lock_type: LOCK_REC,
+                },
+                rec_heap_no,
+                n_bits,
+                index.clone(),
+                trx.clone(),
+            );
+        }
+
+        // Get locks for the same page
+        let mut locks: Vec<Rc<RefCell<Lock>>> = vec![];
+        let mut index = 0;
+        while let (Some(lock), i) =
+            lock_sys.get_next_rec_lock(page_id, index, rec_heap_no)
+        {
+            locks.push(lock);
+            index = i;
+        }
+
+        assert_eq!(locks.len(), limit);
+    }
+
+    #[test]
+    fn get_next_rec_lock_all_belonging_diff_heap_no() {
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let n_bits = 100;
+        let trx = Arc::new(Trx::new(1));
+        let limit = 100;
+
+        // Add 100 rec_locks
+        for i in 0..limit {
+            lock_sys.rec_create_low(
+                page_id.clone(),
+                LockModeType {
+                    lock_mode: LockMode::LockX,
+                    lock_type: LOCK_REC,
+                },
+                rec_heap_no,
+                n_bits,
+                index.clone(),
+                trx.clone(),
+            );
+        }
+
+        // Get locks for the same page
+        let mut locks: Vec<Rc<RefCell<Lock>>> = vec![];
+        let mut index = 0;
+        while let (Some(lock), i) =
+            lock_sys.get_next_rec_lock(page_id, index, rec_heap_no + 1)
+        {
+            locks.push(lock);
+            index = i;
+        }
+
+        assert_eq!(locks.len(), 0);
+    }
+
+    #[test]
+    fn get_next_rec_lock_belonging_to_non_existing_page() {
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let n_bits = 100;
+        let trx = Arc::new(Trx::new(1));
+        let limit = 100;
+
+        // Add 100 rec_locks
+        for i in 0..limit {
+            lock_sys.rec_create_low(
+                page_id.clone(),
+                LockModeType {
+                    lock_mode: LockMode::LockX,
+                    lock_type: LOCK_REC,
+                },
+                rec_heap_no,
+                n_bits,
+                index.clone(),
+                trx.clone(),
+            );
+        }
+
+        let mut locks: Vec<Rc<RefCell<Lock>>> = vec![];
+        let mut index = 0;
+        let page_id = PageId { space_id: 100, page_no: 0 };
+        while let (Some(lock), i) =
+            lock_sys.get_next_rec_lock(page_id, index, rec_heap_no)
+        {
+            locks.push(lock);
+            index = i;
+        }
+
+        assert_eq!(locks.len(), 0);
+    }
+
+    #[test]
+    fn get_next_rec_lock_having_mix_of_pages_and_heap_no() {
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let n_bits = 100;
+        let trx = Arc::new(Trx::new(1));
+        let limit = 100;
+
+        // Add 50 rec_locks
+        for _ in 0..limit / 2 {
+            lock_sys.rec_create_low(
+                page_id.clone(),
+                LockModeType {
+                    lock_mode: LockMode::LockX,
+                    lock_type: LOCK_REC,
+                },
+                rec_heap_no,
+                n_bits,
+                index.clone(),
+                trx.clone(),
+            );
+        }
+
+        // Add 50 rec_locks
+        for i in 0..limit / 2 {
+            lock_sys.rec_create_low(
+                PageId { space_id: i * 100, page_no: i * 78 },
+                LockModeType {
+                    lock_mode: LockMode::LockX,
+                    lock_type: LOCK_REC,
+                },
+                rec_heap_no + 1 + i as usize,
+                n_bits,
+                index.clone(),
+                trx.clone(),
+            );
+        }
+
+        // Get locks for the same page
+        let mut locks: Vec<Rc<RefCell<Lock>>> = vec![];
+        let mut index = 0;
+        while let (Some(lock), i) =
+            lock_sys.get_next_rec_lock(page_id, index, rec_heap_no)
+        {
+            locks.push(lock);
+            index = i;
+        }
+
+        assert_eq!(locks.len(), (limit / 2) as usize);
+    }
+
+    #[test]
+    fn test_rec_has_to_wait_in_queue_no_other_locks() {
+        // Test case where there are no other locks on the page
+        let lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let n_bits = 100;
+        let trx = Arc::new(Trx::new(1));
+
+        // Create a waiting lock
+        let waiting_lock = Rc::new(RefCell::new(Lock::new(
+            LockId(1),
+            trx.clone(),
+            n_bits,
+            TxnLock::RecLock(RecLock { index: index.clone(), page_id }),
+            LockMode::LockX,
+            LOCK_REC | LOCK_WAIT,
+        )));
+
+        // Set the bit for the record in the waiting lock
+        waiting_lock.borrow_mut().rec_set_nth_bit(rec_heap_no);
+
+        // Since there are no other locks on the page, the waiting lock should not have to wait
+        assert_eq!(
+            lock_sys.rec_has_to_wait_in_queue(waiting_lock, rec_heap_no),
+            false
+        );
+    }
+
+    #[test]
+    fn test_rec_has_to_wait_in_queue_compatible_locks() {
+        // Test case where there are other locks on the page but they are compatible
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let n_bits = 100;
+
+        // Create two different transactions
+        let trx1 = Arc::new(Trx::new(1));
+        let trx2 = Arc::new(Trx::new(2));
+
+        // Add an S lock from trx1
+        lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType { lock_mode: LockMode::LockS, lock_type: LOCK_REC },
+            rec_heap_no,
+            n_bits,
+            index.clone(),
+            trx1.clone(),
+        );
+
+        // Create a waiting S lock from trx2 (compatible with existing S lock)
+        let waiting_lock = Rc::new(RefCell::new(Lock::new(
+            LockId(2),
+            trx2.clone(),
+            n_bits,
+            TxnLock::RecLock(RecLock { index: index.clone(), page_id }),
+            LockMode::LockS,
+            LOCK_REC | LOCK_WAIT,
+        )));
+
+        // Set the bit for the record in the waiting lock
+        waiting_lock.borrow_mut().rec_set_nth_bit(rec_heap_no);
+
+        // Since the existing lock is compatible (S mode) with the waiting lock (also S mode),
+        // the waiting lock should not have to wait
+        assert_eq!(
+            lock_sys.rec_has_to_wait_in_queue(waiting_lock, rec_heap_no),
+            false
+        );
+    }
+
+    #[test]
+    fn test_rec_has_to_wait_in_queue_incompatible_locks() {
+        // Test case where there are other locks on the page that are incompatible
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let n_bits = 100;
+
+        // Create two different transactions
+        let trx1 = Arc::new(Trx::new(1));
+        let trx2 = Arc::new(Trx::new(2));
+
+        // Add an X lock from trx1
+        lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_REC },
+            rec_heap_no,
+            n_bits,
+            index.clone(),
+            trx1.clone(),
+        );
+
+        // Create a waiting S lock from trx2 (incompatible with existing X lock)
+        let waiting_lock = Rc::new(RefCell::new(Lock::new(
+            LockId(2),
+            trx2.clone(),
+            n_bits,
+            TxnLock::RecLock(RecLock { index: index.clone(), page_id }),
+            LockMode::LockS,
+            LOCK_REC | LOCK_WAIT,
+        )));
+
+        // Set the bit for the record in the waiting lock
+        waiting_lock.borrow_mut().rec_set_nth_bit(rec_heap_no);
+
+        // Since the existing lock is incompatible (X mode) with the waiting lock (S mode),
+        // the waiting lock should have to wait
+        assert_eq!(
+            lock_sys.rec_has_to_wait_in_queue(waiting_lock, rec_heap_no),
+            true
+        );
+    }
+
+    #[test]
+    fn test_rec_has_to_wait_in_queue_same_transaction() {
+        // Test case where there are other locks on the page from the same transaction
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let n_bits = 100;
+
+        // Create a transaction
+        let trx = Arc::new(Trx::new(1));
+
+        // Add an X lock from trx
+        lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_REC },
+            rec_heap_no,
+            n_bits,
+            index.clone(),
+            trx.clone(),
+        );
+
+        // Create a waiting S lock from the same trx
+        let waiting_lock = Rc::new(RefCell::new(Lock::new(
+            LockId(2),
+            trx.clone(),
+            n_bits,
+            TxnLock::RecLock(RecLock { index: index.clone(), page_id }),
+            LockMode::LockS,
+            LOCK_REC | LOCK_WAIT,
+        )));
+
+        // Set the bit for the record in the waiting lock
+        waiting_lock.borrow_mut().rec_set_nth_bit(rec_heap_no);
+
+        // Since the existing lock is from the same transaction,
+        // the waiting lock should not have to wait (locks from the same transaction don't block each other)
+        assert_eq!(
+            lock_sys.rec_has_to_wait_in_queue(waiting_lock, rec_heap_no),
+            false
+        );
+    }
+
+    #[test]
+    fn test_rec_has_to_wait_in_queue_different_heap_no() {
+        // Test case where there are other locks on the page but for different heap numbers
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let different_heap_no = 20;
+        let n_bits = 100;
+
+        // Create two different transactions
+        let trx1 = Arc::new(Trx::new(1));
+        let trx2 = Arc::new(Trx::new(2));
+
+        // Add an X lock from trx1 on a different heap number
+        lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_REC },
+            different_heap_no,
+            n_bits,
+            index.clone(),
+            trx1.clone(),
+        );
+
+        // Create a waiting S lock from trx2
+        let waiting_lock = Rc::new(RefCell::new(Lock::new(
+            LockId(2),
+            trx2.clone(),
+            n_bits,
+            TxnLock::RecLock(RecLock { index: index.clone(), page_id }),
+            LockMode::LockS,
+            LOCK_REC | LOCK_WAIT,
+        )));
+
+        // Set the bit for the record in the waiting lock
+        waiting_lock.borrow_mut().rec_set_nth_bit(rec_heap_no);
+
+        // Since the existing lock is for a different heap number,
+        // the waiting lock should not have to wait
+        assert_eq!(
+            lock_sys.rec_has_to_wait_in_queue(waiting_lock, rec_heap_no),
+            false
+        );
     }
 }
