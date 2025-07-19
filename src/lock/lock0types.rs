@@ -1,19 +1,21 @@
+use std::fmt::{Display, Formatter};
+
 /// Lock types
 pub type LockType = u16;
 
-/// Mask used to extract mode from type_mode field in a lock.
+/// Mask used to extract mode from the type_mode field in a lock.
 pub const LOCK_MODE_MASK: LockType = 0xF;
 
-/// This flags denotes an ordinary next key lock.
+/// This flag denotes an ordinary next key lock.
 pub const LOCK_ORDINARY: LockType = 0;
 
 /// Table Lock
-pub const TABLE_LOCK: LockType = 16;
+pub const LOCK_TABLE: LockType = 16;
 
 /// Record Lock
-pub const REC_LOCK: LockType = 32;
+pub const LOCK_REC: LockType = 32;
 
-/// Mask used to extract the type from type_mode field in a lock.
+/// Mask used to extract the type from the type_mode field in a lock.
 pub const LOCK_TYPE_MASK: LockType = 0xF0;
 
 /// Wait lock flag. This flag is used to indicate that the lock is waiting for its turn in the wait queue.
@@ -48,18 +50,27 @@ pub const LOCK_STRENGTH_MATRIX: [[bool; 4]; 4] = [
     /* X  */ [  true,  true,   true,    true  ], //
 ];
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
+pub struct LockId(pub u64);
+
+impl Display for LockId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}", self.0))
+    }
+}
+
 /// Basic Lock Mode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u16)]
 pub enum LockMode {
     /// Intention shared.
-    LOCK_IS = 0,
+    LockIS = 0,
     /// Intention exclusive.
-    LOCK_IX = 1,
+    LockIX = 1,
     /// Shared.
-    LOCK_S = 2,
+    LockS = 2,
     /// Exclusive.
-    LOCK_X = 3,
+    LockX = 3,
     /// No lock.
-    LOCK_NONE = 4,
+    LockNone = 4,
 }
