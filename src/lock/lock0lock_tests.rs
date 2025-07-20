@@ -1466,4 +1466,132 @@ mod tests {
             false
         );
     }
+
+    #[test]
+    fn test_rec_other_has_conflicting_no_locks() {
+        // Test case where there are no locks on the page
+        let lock_sys = LockSys::new();
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let trx = Arc::new(Trx::new(1));
+
+        // Check if there are any conflicting locks
+        let result = lock_sys.rec_other_has_conflicting(
+            page_id,
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_REC },
+            rec_heap_no,
+            trx,
+        );
+
+        // Since there are no locks on the page, there should be no conflicts
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_rec_other_has_conflicting_no_conflict() {
+        // Test case where there are locks but none conflict
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let different_heap_no = 20;
+        let n_bits = 100;
+
+        // Create two different transactions
+        let trx1 = Arc::new(Trx::new(1));
+        let trx2 = Arc::new(Trx::new(2));
+
+        // Add an S lock from trx1 on a different heap number
+        lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType { lock_mode: LockMode::LockS, lock_type: LOCK_REC },
+            different_heap_no,
+            n_bits,
+            index.clone(),
+            trx1.clone(),
+        );
+
+        // Check if there are any conflicting locks for trx2
+        let result = lock_sys.rec_other_has_conflicting(
+            page_id,
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_REC },
+            rec_heap_no,
+            trx2,
+        );
+
+        // Since the existing lock is for a different heap number,
+        // there should be no conflicts
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_rec_other_has_conflicting_with_conflict() {
+        // Test case where there are conflicting locks
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let n_bits = 100;
+
+        // Create two different transactions
+        let trx1 = Arc::new(Trx::new(1));
+        let trx2 = Arc::new(Trx::new(2));
+
+        // Add an X lock from trx1
+        let lock = lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_REC },
+            rec_heap_no,
+            n_bits,
+            index.clone(),
+            trx1.clone(),
+        );
+
+        // Check if there are any conflicting locks for trx2
+        let result = lock_sys.rec_other_has_conflicting(
+            page_id,
+            LockModeType { lock_mode: LockMode::LockS, lock_type: LOCK_REC },
+            rec_heap_no,
+            trx2,
+        );
+
+        // Since the existing lock is incompatible (X mode) with the requested lock (S mode),
+        // there should be a conflict
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_rec_other_has_conflicting_same_transaction() {
+        // Test case where there are locks from the same transaction
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let n_bits = 100;
+
+        // Create a transaction
+        let trx = Arc::new(Trx::new(1));
+
+        // Add an X lock from trx
+        lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_REC },
+            rec_heap_no,
+            n_bits,
+            index.clone(),
+            trx.clone(),
+        );
+
+        // Check if there are any conflicting locks for the same trx
+        let result = lock_sys.rec_other_has_conflicting(
+            page_id,
+            LockModeType { lock_mode: LockMode::LockS, lock_type: LOCK_REC },
+            rec_heap_no,
+            trx,
+        );
+
+        // Since the existing lock is from the same transaction,
+        // there should be no conflicts (locks from the same transaction don't block each other)
+        assert!(result.is_none());
+    }
 }

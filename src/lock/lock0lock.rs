@@ -540,6 +540,7 @@ impl Display for Lock {
 /// This struct is used to pass both the lock mode (e.g., shared, exclusive) and
 /// lock type (e.g., gap, record) information together when creating or checking locks.
 /// It simplifies method signatures by grouping related lock attributes.
+#[derive(Clone)]
 pub struct LockModeType {
     /// The lock mode of the lock.
     pub lock_mode: LockMode,
@@ -936,5 +937,71 @@ impl LockSys {
         trx.trx_set_deadlock_mark(false);
 
         NoDeadlock
+    }
+
+    /// Checks if some other transaction has a conflicting explicit lock request in the queue.
+    ///
+    /// This function examines the record locks on a specific page to determine if any transaction
+    /// other than the one provided has a lock that conflicts with the specified lock mode and type.
+    /// It is used during lock acquisition to detect potential conflicts that would require waiting.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_id` - The page ID where the record is located
+    /// * `lock_mode_type` - The lock mode and type to check for conflicts against
+    /// * `heap_no` - The heap number identifying the specific record
+    /// * `trx` - The transaction that is attempting to acquire a lock
+    ///
+    /// # Returns
+    ///
+    /// An `Option<Rc<RefCell<Lock>>>` containing a reference to the conflicting lock if one exists,
+    /// or `None` if no conflicting locks are found.
+    ///
+    pub fn rec_other_has_conflicting(
+        &self,
+        page_id: PageId,
+        lock_mode_type: LockModeType,
+        heap_no: usize,
+        trx: Arc<Trx>,
+    ) -> Option<Rc<RefCell<Lock>>> {
+        if let Some(locks) = self.rec_locks.get(&page_id) {
+            for lock in locks {
+                let lock_ref = lock.borrow();
+                ut_ad!(lock_ref.lock_type() == LOCK_REC);
+
+                if lock_ref.rec_is_nth_bit_set(heap_no)
+                    && lock_ref.rec_blocks(
+                        trx.clone(),
+                        lock_mode_type.clone(),
+                        heap_no == PAGE_HEAP_NO_SUPREMUM,
+                    )
+                {
+                    return Some(lock.clone());
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Checks if a transaction has a GRANTED explicit lock on a record that is stronger or equal to the specified mode.
+    ///
+    pub fn rec_has_expl(
+        &self,
+        page_id: PageId,
+        lock_mode_type: LockModeType,
+        heap_no: usize,
+        trx: Arc<Trx>,
+    ) -> Option<Rc<RefCell<Lock>>> {
+        ut_ad!(
+            lock_mode_type.lock_mode == LockX
+                || lock_mode_type.lock_mode == LockS
+        );
+        ut_ad!(!Lock::is_lock_type(
+            lock_mode_type.lock_type,
+            LOCK_INSERT_INTENTION
+        ));
+
+        None
     }
 }
