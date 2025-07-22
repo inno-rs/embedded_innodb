@@ -5,7 +5,6 @@ use std::{
 };
 
 use intrusive_collections::{LinkedList, UnsafeRef};
-use tracing::info;
 
 use crate::{
     buf::{
