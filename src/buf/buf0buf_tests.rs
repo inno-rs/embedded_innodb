@@ -1,8 +1,8 @@
 #[cfg(test)]
 pub(super) mod tests {
-    use libc::poll;
-    use rstest::{fixture, rstest};
     use std::sync::{Arc, Mutex};
+
+    use rstest::{fixture, rstest};
 
     use crate::{
         buf::{
@@ -280,7 +280,7 @@ pub(super) mod tests {
 
         // Manually insert it into the pool’s inner structures as an “in-memory” page:
         {
-            let mut pool = pool_arc.lock().unwrap();
+            let pool = pool_arc.lock().unwrap();
 
             let mut inner = pool.inner().lock().unwrap();
             inner.page_hash_mut().insert(page_id, block.clone());

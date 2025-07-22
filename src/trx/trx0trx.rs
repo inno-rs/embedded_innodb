@@ -4,7 +4,7 @@ use crate::{
     innodb::innodb0types::TxnId,
     lock::lock0types::LockId,
     trx::trx0types::{TrxQueState, UndoNo},
-    ut::ut0dbg::ut_ad,
+    ut::ut0dbg::ut_a,
 };
 
 pub struct Trx {
@@ -58,8 +58,16 @@ impl Trx {
     ///
     /// `lock`: The lock object to wait for.
     ///
-    pub fn set_wait_lock(&self, lock_id: LockId) {
-        self.inner.lock().unwrap().wait_lock.replace(lock_id);
+    pub fn set_wait_lock(&self, lock_id: Option<LockId>) {
+        let mut inner_ref = self.inner.lock().unwrap();
+        match lock_id {
+            None => {
+                inner_ref.wait_lock = None;
+            }
+            Some(lock_id) => {
+                inner_ref.wait_lock = Some(lock_id);
+            }
+        }
     }
 
     /// Get the lock that this transaction is waiting for, if any.
@@ -124,13 +132,23 @@ impl Trx {
     ///
     /// * `lock_id` - The ID of the lock to remove from the transaction's lock list
     ///
-    /// # Panics
-    ///
-    /// Panics in debug mode if the lock was not found in the transaction's lock list
     pub fn remove_lock(&self, lock_id: LockId) {
         let mut inner = self.inner.lock().unwrap();
         let result = inner.trx_locks.remove(&lock_id);
 
-        ut_ad!(result);
+        ut_a!(result);
+    }
+
+    /// Adds the lock from the list of locks reserved by the transaction.
+    ///
+    /// # Arguments
+    ///
+    /// * `lock_id` - The ID of the lock to remove from the transaction's lock list
+    ///
+    pub fn add_lock(&self, lock_id: LockId) {
+        let mut inner = self.inner.lock().unwrap();
+        let result = inner.trx_locks.insert(lock_id);
+
+        ut_a!(result);
     }
 }

@@ -28,11 +28,12 @@ use crate::{
         page0cur::{PAGE_CUR_LE, PageCur},
         page0page::{Page, PageDebug},
     },
+    rem::rem0rec::Record,
     sync::sync0rw::ReadWriteLatch,
     ut::{
         ut0dbg::{ut_a, ut_ad},
         ut0rnd::ut_next_seed,
-        ut0ut::random_string_with_seed,
+        ut0ut::{all_equal_by, random_string_with_seed},
     },
 };
 
@@ -613,12 +614,16 @@ pub fn fill_block_with_uniform_data(
     for dtuple in dtuples.iter_mut() {
         btr_cur.search_to_nth_level(0, dtuple, PAGE_CUR_LE, 0, &mut mtr);
 
-        btr_cur.optimistic_insert(0, dtuple, 0, &mut mtr);
+        let result = btr_cur.optimistic_insert(0, dtuple, 0, &mut mtr);
+
+        if result.is_err() {
+            break;
+        }
     }
 
     let user_recs = page.page_get_user_records();
 
-    // ut_ad!(all_equal_by(&user_recs, |a: &Record, b: &Record| {
-    //     a.rec_offs_size() == b.rec_offs_size()
-    // }));
+    ut_ad!(all_equal_by(&user_recs, |a: &Record, b: &Record| {
+        a.rec_offs_size() == b.rec_offs_size()
+    }));
 }

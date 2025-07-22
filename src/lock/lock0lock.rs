@@ -4,7 +4,7 @@ use std::{
     fmt::{Display, Formatter},
     ops::Deref,
     rc::Rc,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use fixedbitset::FixedBitSet;
@@ -27,7 +27,7 @@ use crate::{
         },
     },
     mtr::mtr0mtr::Mtr,
-    page::page0page::PAGE_HEAP_NO_SUPREMUM,
+    page::{page0cur::PageCur, page0page::PAGE_HEAP_NO_SUPREMUM},
     rem::rem0rec::Record,
     some_or_panic,
     trx::trx0trx::Trx,
@@ -166,6 +166,12 @@ impl Lock {
         }
     }
 
+    /// Returns the unique identifier of the lock.
+    ///
+    /// # Returns
+    ///
+    /// The lock ID as a LockId.
+    ///
     pub fn get_id(&self) -> LockId {
         self.id
     }
@@ -200,7 +206,7 @@ impl Lock {
         self.lock_mode
     }
 
-    /// Check if the lock is in waiting state.
+    /// Check if the lock is in the waiting state.
     pub fn is_waiting(&self) -> bool {
         Lock::is_lock_type(self.lock_type, LOCK_WAIT)
     }
@@ -311,6 +317,20 @@ impl Lock {
         ut_ad!(n < self.n_bits.len());
 
         self.n_bits.set(n, false);
+    }
+
+    /// Resets a waiting lock by removing the LOCK_WAIT flag.
+    ///
+    /// This method transitions a lock from the waiting state to the granted state
+    /// by clearing the LOCK_WAIT flag and removing the wait lock reference from
+    /// the transaction.
+    ///
+    pub fn reset(&mut self) {
+        ut_ad!(self.is_waiting());
+        ut_ad!(self.id == some_or_panic!(self.trx.get_wait_lock()));
+
+        self.lock_type &= !LOCK_WAIT;
+        self.trx.set_wait_lock(None);
     }
 
     /// Resets all bits in the lock bitmap to false.
@@ -578,6 +598,15 @@ impl LockSys {
         }
     }
 
+    /// Generates and returns the next available lock ID.
+    ///
+    /// This method increments the internal lock ID counter to ensure
+    /// each lock has a unique identifier within the lock system.
+    ///
+    /// # Returns
+    ///
+    /// A new unique LockId.
+    ///
     fn get_next_lock_id(&mut self) -> LockId {
         let lock_id = self.lock_id_gen;
         self.lock_id_gen += 1;
@@ -683,7 +712,7 @@ impl LockSys {
     ///
     /// # Returns
     ///
-    /// A new Lock instance configured according to the specified parameters.
+    /// A new Lock instance is configured according to the specified parameters.
     pub fn rec_create_low(
         &mut self,
         page_id: PageId,
@@ -721,9 +750,11 @@ impl LockSys {
             self.rec_locks.insert(page_id, vec![lock.clone()]);
         }
 
+        trx.add_lock(lock.borrow().id);
+
         if Lock::is_lock_type(lock.borrow().lock_type, LOCK_WAIT) {
             self.txn_locks.insert(trx.trx_get_id(), lock.clone());
-            trx.set_wait_lock(lock.borrow().id);
+            trx.set_wait_lock(Some(lock.borrow().id));
         }
 
         lock
@@ -741,6 +772,7 @@ impl LockSys {
     /// # Arguments
     ///
     /// * `lock` - The record lock to be removed from the queue
+    ///
     pub fn rec_deque_from_page(&mut self, lock: Rc<RefCell<Lock>>) {
         // 1. Remove from rec_list.
         let (page_id, lock_id) = {
@@ -799,7 +831,7 @@ impl LockSys {
     ///
     /// A tuple containing:
     /// - An `Option<Rc<RefCell<Lock>>>` with the next lock if found, or None if no more locks exist
-    /// - The next index to use for subsequent searches
+    /// - The next index to use for later searches
     pub fn get_next_rec_lock(
         &self,
         page_id: PageId,
@@ -1003,5 +1035,109 @@ impl LockSys {
         ));
 
         None
+    }
+
+    pub fn rec_add_to_queue(
+        &mut self,
+        lock_mode_type: LockModeType,
+        buf_block: Arc<RwLock<BufBlock>>,
+        heap_no: usize,
+        index: Arc<Index>,
+        trx: Arc<Trx>,
+    ) {
+    }
+
+    /// Moves record locks from an old block to a new block.
+    ///
+    /// This function is used during page splits or merges when records are moved
+    /// from one page to another. It transfers all locks from records in the old block
+    /// to corresponding records in the new block, ensuring lock consistency after
+    /// structural changes to the database.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_block` - The destination buffer block where records are being moved to
+    /// * `old_block` - The source buffer block where records are being moved from
+    /// * `rec` - The record being moved
+    ///
+    pub fn move_rec_list_end(
+        &mut self,
+        new_block: Arc<RwLock<BufBlock>>,
+        old_block: Arc<RwLock<BufBlock>>,
+        rec: Record,
+    ) {
+        struct MoveLockRequest {
+            lock_mode_type: LockModeType,
+            heap_no: usize,
+            trx: Arc<Trx>,
+        }
+
+        let page_id = old_block.read().unwrap().get_page_id();
+        let page = old_block.read().unwrap().get_page();
+        let index = Arc::new(Index::new(page_id));
+        let mut move_lock_requests: Vec<MoveLockRequest> = vec![];
+
+        if let Some(locks) = self.rec_locks.get(&page_id) {
+            for lock in locks {
+                let mut lock_ref = lock.borrow_mut();
+                let lock_mode_type = LockModeType {
+                    lock_mode: lock_ref.lock_mode,
+                    lock_type: lock_ref.lock_type,
+                };
+                let mut old_block_page_cur = PageCur::new(
+                    index.clone(),
+                    Some(rec),
+                    old_block.clone(),
+                    page,
+                );
+
+                if old_block_page_cur.page_cur_is_before_first() {
+                    old_block_page_cur.page_cur_move_to_next();
+                }
+
+                let mut new_block_page_cur =
+                    PageCur::new(index.clone(), None, new_block.clone(), page);
+                new_block_page_cur.page_cur_move_to_next();
+
+                // copy lock requests on user records to the new page, and reset the lock bits on the old.
+
+                while old_block_page_cur.page_cur_is_after_last() == false {
+                    let heap_no = old_block_page_cur
+                        .page_cur_get_rec()
+                        .rec_get_heap_no();
+
+                    if lock_ref.rec_is_nth_bit_set(heap_no) {
+                        lock_ref.rec_set_nth_bit(heap_no);
+
+                        if Lock::is_lock_type(lock_ref.lock_type, LOCK_WAIT) {
+                            lock_ref.reset();
+                        }
+
+                        let heap_no = new_block_page_cur
+                            .page_cur_get_rec()
+                            .rec_get_heap_no();
+
+                        move_lock_requests.push(MoveLockRequest {
+                            lock_mode_type: lock_mode_type.clone(),
+                            heap_no,
+                            trx: lock_ref.trx.clone(),
+                        });
+                    }
+
+                    old_block_page_cur.page_cur_move_to_next();
+                    new_block_page_cur.page_cur_move_to_next();
+                }
+            }
+        }
+
+        for move_lock_request in move_lock_requests {
+            self.rec_add_to_queue(
+                move_lock_request.lock_mode_type,
+                new_block.clone(),
+                move_lock_request.heap_no,
+                index.clone(),
+                move_lock_request.trx,
+            );
+        }
     }
 }

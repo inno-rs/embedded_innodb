@@ -22,7 +22,9 @@ mod tests {
                 LOCK_TABLE, LOCK_WAIT, LockId, LockMode,
             },
         },
+        page::page0page::PageDebug,
         some_or_panic,
+        tests::test0utils::{FieldType, create_records},
         trx::trx0trx::Trx,
     };
 
@@ -1593,5 +1595,195 @@ mod tests {
         // Since the existing lock is from the same transaction,
         // there should be no conflicts (locks from the same transaction don't block each other)
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_move_rec_list_end_basic() {
+        // Test basic functionality of moving locks from one block to another
+        let mut lock_sys = LockSys::new();
+
+        // Create source and destination pages with records
+        let src_owning_page = create_records(
+            5, // 5 records
+            vec![FieldType::String(Some("test".to_string()))],
+        );
+        let dest_owning_page = create_records(
+            0, // No records initially
+            vec![FieldType::String(Some("test".to_string()))],
+        );
+
+        let src_block = src_owning_page.buf_block.clone();
+        let dest_block = dest_owning_page.buf_block.clone();
+
+        // Get the page ID of the source block
+        let page_id = src_block.read().unwrap().get_page_id();
+        let index = Arc::new(Index::new(page_id));
+
+        // Create a transaction
+        let trx = Arc::new(Trx::new(1));
+
+        // Add locks to the source block for different heap numbers
+        let n_bits = 100;
+
+        // Create locks for each record in the source block
+        let src_page = src_block.read().unwrap().get_page();
+        let user_records = src_page.page_get_user_records();
+        assert_eq!(user_records.len(), 5);
+
+        for (i, rec) in user_records.iter().enumerate() {
+            let heap_no = rec.rec_get_heap_no();
+
+            // Create a lock for this record
+            lock_sys.rec_create_low(
+                page_id.clone(),
+                LockModeType {
+                    lock_mode: LockMode::LockX,
+                    lock_type: LOCK_REC,
+                },
+                heap_no,
+                n_bits,
+                index.clone(),
+                trx.clone(),
+            );
+
+            // Verify that the lock was created
+            let (lock, _) =
+                lock_sys.get_next_rec_lock(page_id.clone(), i, heap_no);
+            assert!(lock.is_some());
+            assert!(lock.unwrap().borrow().rec_is_nth_bit_set(heap_no));
+        }
+
+        // Create a waiting lock for one of the records
+        let waiting_heap_no = user_records[2].rec_get_heap_no();
+        lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType {
+                lock_mode: LockMode::LockS,
+                lock_type: LOCK_REC | LOCK_WAIT,
+            },
+            waiting_heap_no,
+            n_bits,
+            index.clone(),
+            Arc::new(Trx::new(2)), // Different transaction
+        );
+
+        // Call move_rec_list_end to move locks from source to destination
+        lock_sys.move_rec_list_end(
+            dest_block.clone(),
+            src_block.clone(),
+            user_records[0], // Start with the first record
+        );
+
+        // Since rec_add_to_queue is empty, we can't verify that locks were added to the destination
+        // Instead, verify that the locks on the source were correctly reset
+
+        // Check that the waiting lock was reset
+        let (locks, _) =
+            lock_sys.get_next_rec_lock(page_id.clone(), 0, waiting_heap_no);
+        assert!(locks.is_some());
+        let lock = locks.unwrap();
+        assert!(!lock.borrow().is_waiting());
+    }
+
+    #[test]
+    fn test_move_rec_list_end_no_locks() {
+        // Test moving locks when there are no locks on the source block
+        let mut lock_sys = LockSys::new();
+
+        // Create source and destination pages with records
+        let src_owning_page = create_records(
+            5, // 5 records
+            vec![FieldType::String(Some("test".to_string()))],
+        );
+        let dest_owning_page = create_records(
+            0, // No records initially
+            vec![FieldType::String(Some("test".to_string()))],
+        );
+
+        let src_block = src_owning_page.buf_block.clone();
+        let dest_block = dest_owning_page.buf_block.clone();
+
+        // Get the page ID of the source block
+        let page_id = src_block.read().unwrap().get_page_id();
+
+        // Get a record from the source block
+        let src_page = src_block.read().unwrap().get_page();
+        let user_records = src_page.page_get_user_records();
+        assert_eq!(user_records.len(), 5);
+
+        // Call move_rec_list_end to move locks from source to destination
+        // This should not cause any errors even though there are no locks
+        lock_sys.move_rec_list_end(
+            dest_block.clone(),
+            src_block.clone(),
+            user_records[0], // Start with the first record
+        );
+
+        // Verify that there are still no locks for the page
+        let (no_locks, _) = lock_sys.get_next_rec_lock(page_id.clone(), 0, 0);
+        assert!(no_locks.is_none());
+    }
+
+    #[test]
+    fn test_move_rec_list_end_no_bits_set() {
+        // Test moving locks when there are locks on the source block but none have bits set for the records being moved
+        let mut lock_sys = LockSys::new();
+
+        // Create source and destination pages with records
+        let src_owning_page = create_records(
+            5, // 5 records
+            vec![FieldType::String(Some("test".to_string()))],
+        );
+        let dest_owning_page = create_records(
+            0, // No records initially
+            vec![FieldType::String(Some("test".to_string()))],
+        );
+
+        let src_block = src_owning_page.buf_block.clone();
+        let dest_block = dest_owning_page.buf_block.clone();
+
+        // Get the page ID of the source block
+        let page_id = src_block.read().unwrap().get_page_id();
+        let index = Arc::new(Index::new(page_id));
+
+        // Create a transaction
+        let trx = Arc::new(Trx::new(1));
+
+        // Add a lock to the source block for a different heap number than any of the records
+        let n_bits = 100;
+        let different_heap_no = 99; // Assuming this is different from any record's heap_no
+
+        lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_REC },
+            different_heap_no,
+            n_bits,
+            index.clone(),
+            trx.clone(),
+        );
+
+        // Verify that the lock was created
+        let (lock, _) =
+            lock_sys.get_next_rec_lock(page_id.clone(), 0, different_heap_no);
+        assert!(lock.is_some());
+        assert!(lock.unwrap().borrow().rec_is_nth_bit_set(different_heap_no));
+
+        // Get a record from the source block
+        let src_page = src_block.read().unwrap().get_page();
+        let user_records = src_page.page_get_user_records();
+        assert_eq!(user_records.len(), 5);
+
+        // Call move_rec_list_end to move locks from source to destination
+        lock_sys.move_rec_list_end(
+            dest_block.clone(),
+            src_block.clone(),
+            user_records[0], // Start with the first record
+        );
+
+        // Verify that the lock still exists and its bit is still set
+        let (lock, _) =
+            lock_sys.get_next_rec_lock(page_id.clone(), 0, different_heap_no);
+        assert!(lock.is_some());
+        assert!(lock.unwrap().borrow().rec_is_nth_bit_set(different_heap_no));
     }
 }
