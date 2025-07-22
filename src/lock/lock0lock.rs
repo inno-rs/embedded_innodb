@@ -584,6 +584,12 @@ pub struct LockSys {
     lock_id_gen: u64,
 }
 
+struct MoveLockRequest {
+    lock_mode_type: LockModeType,
+    heap_no: usize,
+    trx: Arc<Trx>,
+}
+
 impl LockSys {
     /// Creates a new instance of the lock management system.
     ///
@@ -1050,9 +1056,8 @@ impl LockSys {
     /// Moves record locks from an old block to a new block.
     ///
     /// This function is used during page splits or merges when records are moved
-    /// from one page to another. It transfers all locks from records in the old block
-    /// to corresponding records in the new block, ensuring lock consistency after
-    /// structural changes to the database.
+    /// from one page to another.
+    /// It transfers locks for all the records in the old block from the provided `rec` to the end of the list.
     ///
     /// # Arguments
     ///
@@ -1066,12 +1071,6 @@ impl LockSys {
         old_block: Arc<RwLock<BufBlock>>,
         rec: Record,
     ) {
-        struct MoveLockRequest {
-            lock_mode_type: LockModeType,
-            heap_no: usize,
-            trx: Arc<Trx>,
-        }
-
         let page_id = old_block.read().unwrap().get_page_id();
         let page = old_block.read().unwrap().get_page();
         let index = Arc::new(Index::new(page_id));
@@ -1102,6 +1101,93 @@ impl LockSys {
                 // copy lock requests on user records to the new page, and reset the lock bits on the old.
 
                 while old_block_page_cur.page_cur_is_after_last() == false {
+                    let heap_no = old_block_page_cur
+                        .page_cur_get_rec()
+                        .rec_get_heap_no();
+
+                    if lock_ref.rec_is_nth_bit_set(heap_no) {
+                        lock_ref.rec_set_nth_bit(heap_no);
+
+                        if Lock::is_lock_type(lock_ref.lock_type, LOCK_WAIT) {
+                            lock_ref.reset();
+                        }
+
+                        let heap_no = new_block_page_cur
+                            .page_cur_get_rec()
+                            .rec_get_heap_no();
+
+                        move_lock_requests.push(MoveLockRequest {
+                            lock_mode_type: lock_mode_type.clone(),
+                            heap_no,
+                            trx: lock_ref.trx.clone(),
+                        });
+                    }
+
+                    old_block_page_cur.page_cur_move_to_next();
+                    new_block_page_cur.page_cur_move_to_next();
+                }
+            }
+        }
+
+        for move_lock_request in move_lock_requests {
+            self.rec_add_to_queue(
+                move_lock_request.lock_mode_type,
+                new_block.clone(),
+                move_lock_request.heap_no,
+                index.clone(),
+                move_lock_request.trx,
+            );
+        }
+    }
+
+    /// Moves record locks from an old block to a new block.
+    ///
+    /// This function is used during page splits or merges when records are moved
+    /// from one page to another.
+    /// It transfers locks for all the records in the old block from the start to the provided `rec`.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_block` - The destination buffer block where records are being moved to
+    /// * `old_block` - The source buffer block where records are being moved from
+    /// * `rec` - The record being moved
+    ///
+    pub fn move_rec_list_start(
+        &mut self,
+        new_block: Arc<RwLock<BufBlock>>,
+        old_block: Arc<RwLock<BufBlock>>,
+        rec: Record,
+    ) {
+        let page_id = old_block.read().unwrap().get_page_id();
+        let page = old_block.read().unwrap().get_page();
+        let index = Arc::new(Index::new(page_id));
+        let mut move_lock_requests: Vec<MoveLockRequest> = vec![];
+
+        if let Some(locks) = self.rec_locks.get(&page_id) {
+            for lock in locks {
+                let mut lock_ref = lock.borrow_mut();
+                let lock_mode_type = LockModeType {
+                    lock_mode: lock_ref.lock_mode,
+                    lock_type: lock_ref.lock_type,
+                };
+                let mut old_block_page_cur = PageCur::new(
+                    index.clone(),
+                    Some(rec),
+                    old_block.clone(),
+                    page,
+                );
+
+                if old_block_page_cur.page_cur_is_before_first() {
+                    old_block_page_cur.page_cur_move_to_next();
+                }
+
+                let mut new_block_page_cur =
+                    PageCur::new(index.clone(), None, new_block.clone(), page);
+                new_block_page_cur.page_cur_move_to_next();
+
+                // copy lock requests on user records to the new page, and reset the lock bits on the old.
+
+                while old_block_page_cur.page_cur_get_rec() != rec {
                     let heap_no = old_block_page_cur
                         .page_cur_get_rec()
                         .rec_get_heap_no();
