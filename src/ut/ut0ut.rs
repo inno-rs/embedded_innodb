@@ -1,5 +1,6 @@
 use once_cell::sync::Lazy;
 use rand::{Rng, SeedableRng, distr::Alphanumeric, rngs::StdRng};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 
 /// A macro that executes an asynchronous expression on the global runtime.
@@ -72,4 +73,12 @@ where
         Some(first) => items.iter().all(|x| equal(first, x)),
         None => true,
     }
+}
+
+pub fn ut_time_ms() -> u64 {
+    let now = SystemTime::now();
+    let dur = now
+        .duration_since(UNIX_EPOCH)
+        .expect("System time before UNIX EPOCH!");
+    dur.as_secs() * 1_000 + u64::from(dur.subsec_millis())
 }
