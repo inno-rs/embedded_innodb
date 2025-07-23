@@ -151,4 +151,14 @@ impl Trx {
 
         ut_a!(result);
     }
+
+    /// The transaction must be in the TrxQueLockWait state.
+    /// Put it to TrxQueRunning state and releases all the threads that are waiting for it.
+    ///
+    pub fn end_lock_wait(&self) {
+        let que_state = &mut self.inner.lock().unwrap().que_state;
+        ut_a!(*que_state == TrxQueState::TrxQueLockWait);
+
+        *que_state = TrxQueState::TrxQueRunning;
+    }
 }
