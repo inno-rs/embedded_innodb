@@ -157,6 +157,11 @@ pub enum DbErr {
     DbFail(String),
     /// The operating system returned a out of file space error.
     DbOutOfFileSpace,
+    /// A lock request by a transaction resulted in a deadlock. The transaction was rolled back.
+    DbDeadlock,
+    /// A lock request by a transaction resulted in a lock wait.
+    /// The thread is suspended internally, and it is put on the lock wait queue.
+    DbLockWait,
 }
 
 /// Defines the search modes used when positioning a cursor in the B-tree.

@@ -14,7 +14,9 @@ use crate::{
         FIL_PAGE_DATA, FIL_PAGE_DATA_END, FIL_PAGE_NEXT, FIL_PAGE_OFFSET,
         FIL_PAGE_PREV, FIL_PAGE_SPACE_ID, FSEG_PAGE_DATA,
     },
-    innodb::innodb0types::{PageFrame, PageNo, SpaceId, UNIV_PAGE_SIZE},
+    innodb::innodb0types::{
+        PageFrame, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
+    },
     mach::mach0data::{
         mach_read_from_2, mach_read_from_4, mach_read_from_8, mach_write_to_2,
         mach_write_to_4, mach_write_to_8,
@@ -239,6 +241,18 @@ impl Page {
     pub fn page_set_fil_offset(&mut self, new_offset: usize) {
         let page = self.to_page_frame();
         mach_write_to_4(&mut page.0[FIL_PAGE_OFFSET..], new_offset as u32);
+    }
+
+    /// Get the page_id from the page structure.
+    ///
+    /// # Returns
+    ///
+    /// `PageId` object contains space_id and page_no.
+    pub fn page_get_page_id(&self) -> PageId {
+        PageId {
+            space_id: self.page_get_space_id(),
+            page_no: self.page_get_fil_offset() as PageNo,
+        }
     }
 
     /// Converts the page to a PageFrame reference.

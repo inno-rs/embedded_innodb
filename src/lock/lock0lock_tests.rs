@@ -25,7 +25,7 @@ mod tests {
         page::page0page::PageDebug,
         some_or_panic,
         tests::test0utils::{FieldType, create_records},
-        trx::trx0trx::Trx,
+        trx::{trx0trx::Trx, trx0types::TrxQueState::TrxQueLockWait},
     };
 
     #[fixture]
@@ -2118,5 +2118,99 @@ mod tests {
             donor_heap_no,
         );
         assert!(lock.is_none());
+    }
+
+    #[test]
+    fn test_grant() {
+        // Test granting a waiting lock
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let n_bits = 100;
+        let trx = Arc::new(Trx::new(1));
+
+        // Create a waiting lock
+        let lock = lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType {
+                lock_mode: LockMode::LockX,
+                lock_type: LOCK_REC | LOCK_WAIT,
+            },
+            rec_heap_no,
+            n_bits,
+            index.clone(),
+            trx.clone(),
+        );
+
+        // Verify the lock is waiting
+        {
+            let lock_ref = lock.borrow();
+            assert!(lock_ref.is_waiting());
+            assert_eq!(some_or_panic!(trx.get_wait_lock()), lock_ref.get_id());
+        }
+
+        // Grant the lock
+        {
+            let mut lock_ref = lock.borrow_mut();
+            lock_sys.grant(&mut lock_ref);
+        }
+
+        // Verify the lock is no longer waiting
+        {
+            let lock_ref = lock.borrow();
+            assert!(!lock_ref.is_waiting());
+            assert_eq!(lock_ref.lock_type() & LOCK_WAIT, 0);
+            assert!(trx.get_wait_lock().is_none());
+        }
+    }
+
+    #[test]
+    fn test_rec_cancel() {
+        // Test canceling a waiting record lock
+        let mut lock_sys = LockSys::new();
+        let index = Arc::new(Index::new(PageId::dummy()));
+        let page_id = PageId { space_id: 45, page_no: 54 };
+        let rec_heap_no = 10;
+        let n_bits = 100;
+        let trx = Arc::new(Trx::new(1));
+
+        // Create a waiting record lock
+        let lock = lock_sys.rec_create_low(
+            page_id.clone(),
+            LockModeType {
+                lock_mode: LockMode::LockX,
+                lock_type: LOCK_REC | LOCK_WAIT,
+            },
+            rec_heap_no,
+            n_bits,
+            index.clone(),
+            trx.clone(),
+        );
+        // Make the transaction wait
+        trx.trx_set_que_state(TrxQueLockWait);
+
+        // Verify the lock is waiting and the bit is set
+        {
+            let lock_ref = lock.borrow();
+            assert!(lock_ref.is_waiting());
+            assert!(lock_ref.rec_is_nth_bit_set(rec_heap_no));
+            assert_eq!(some_or_panic!(trx.get_wait_lock()), lock_ref.get_id());
+        }
+
+        // Cancel the lock
+        {
+            let mut lock_ref = lock.borrow_mut();
+            lock_sys.rec_cancel(&mut lock_ref);
+        }
+
+        // Verify the lock is no longer waiting and the bit is reset
+        {
+            let lock_ref = lock.borrow();
+            assert!(!lock_ref.is_waiting());
+            assert_eq!(lock_ref.lock_type() & LOCK_WAIT, 0);
+            assert!(!lock_ref.rec_is_nth_bit_set(rec_heap_no));
+            assert!(trx.get_wait_lock().is_none());
+        }
     }
 }
