@@ -140,6 +140,8 @@ pub struct BufPage {
     is_in_flush_list: bool,
     /// Indicates if the page is currently in the LRU list.
     is_in_lru_list: bool,
+    ///this is set to true when fsp frees a page in buffer pool
+    file_page_was_freed: bool,
 
     /// Timestamp (ms) of the **first** time this page was accessed (0 = not yet set).
     access_time: u32,
@@ -184,6 +186,7 @@ impl BufPage {
             is_in_lru_list: false,
             buf_block: Default::default(),
             access_time: 0,
+            file_page_was_freed: false,
         }
     }
 
@@ -449,12 +452,20 @@ impl BufPage {
         self.space_id
     }
 
+    pub fn set_space_id(&mut self, space_id: SpaceId) {
+        self.space_id = space_id;
+    }
+
     /// Gets the page number of this page within its tablespace.
     ///
     /// # Returns
     /// * `PageNo` - The page number within the tablespace
     pub fn get_page_no(&self) -> PageNo {
         self.page_no
+    }
+
+    pub fn set_page_no(&mut self, page_no: PageNo) {
+        self.page_no = page_no;
     }
 
     /// Gets a weak reference to the buffer block containing this page.
@@ -511,6 +522,10 @@ impl BufPage {
     pub fn buf_page_is_accessed(&self) -> u32 {
         assert!(self.in_file(), "buf_page_is_accessed: page must be in_file");
         self.access_time
+    }
+
+    pub fn set_file_page_was_freed(&mut self, file_page_was_freed: bool) {
+        self.file_page_was_freed = file_page_was_freed;
     }
 }
 

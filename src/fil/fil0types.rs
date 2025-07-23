@@ -52,6 +52,10 @@ pub const FIL_NODE_MAGIC_N: usize = 89389;
 // start of the data on the page
 pub const FIL_PAGE_DATA: usize = 38;
 
+pub const FIL_PAGE_TYPE: usize = 24;
+
+pub const FIL_PAGE_FILE_FLUSH_LSN: usize = 26;
+
 pub const FIL_PAGE_SPACE_ID_RANGE: Range<usize> =
     FIL_PAGE_SPACE_ID..FIL_PAGE_SPACE_ID + 4;
 pub const FIL_PAGE_LSN_RANGE: Range<usize> = FIL_PAGE_LSN..FIL_PAGE_LSN + 8;
@@ -316,6 +320,36 @@ pub struct FilSpaceContainer {
 
     /// FilSpace struct.
     pub fil_space: Rc<RefCell<FilSpace>>,
+}
+
+/// The on-disk page type, as stored in the 2-byte `FIL_PAGE_TYPE` field.
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilPageType {
+    /// Freshly allocated page
+    Allocated = 0,
+    /// B+Tree index page
+    Index = 17855,
+    /// Undo log page
+    UndoLog = 2,
+    /// Index node
+    Inode = 3,
+    /// System page
+    Sys = 6,
+    /// Transaction system data
+    TrxSys = 7,
+    /// File space header
+    FspHdr = 8,
+    /// Extent descriptor page
+    Xdes = 9,
+    /// Uncompressed BLOB page
+    Blob = 10,
+}
+
+impl From<FilPageType> for u16 {
+    fn from(t: FilPageType) -> u16 {
+        t as u16
+    }
 }
 
 // Investigate more.

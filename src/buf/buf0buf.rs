@@ -8,6 +8,16 @@ use std::{
 use intrusive_collections::{LinkedList, UnsafeRef};
 use tracing::{error, info};
 
+use crate::fil::fil0types::{
+    FIL_PAGE_FILE_FLUSH_LSN, FIL_PAGE_NEXT, FIL_PAGE_PREV, FIL_PAGE_TYPE,
+    FilPageType,
+};
+use crate::mach::mach0data::{
+    mach_write_to_2, mach_write_to_4, mach_write_to_8,
+};
+use crate::mtr::mtr0mtr::MemoSlot;
+use crate::mtr::mtr0types::FixMode;
+use crate::ut::ut0ut::ut_time_ms;
 use crate::{
     buf::{
         buf0flu::{BufFlush, BufFlushType},
@@ -21,6 +31,7 @@ use crate::{
     },
     fil::fil0fil::Fil,
     innodb::innodb0types::{DbErr, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE},
+    mach_read_from_4,
     mtr::{mtr0mtr::Mtr, mtr0types::MtrState},
     os::os0file::IORequest,
     some_or_panic,
@@ -358,10 +369,10 @@ impl BufPool {
         ut_ad!(state == BufPageState::BufBlockFilePage);
         // Increment the buffix count for the page.
         block_ref.buf_block_get_page().buf_page_io_fix_count();
-        let buf_page = block_ref.buf_block_get_page();
+        let buf_page = block_ref.buf_block_get_page_mut();
         let access_time = self.buf_page_accessed_time(buf_page);
 
-        self.set_accessed_make_young(block_ref, access_time);
+        self.set_accessed_make_young(buf_page, access_time);
 
         match request.rw_latch {
             ReadWriteLatch::SLatch => {
@@ -378,6 +389,13 @@ impl BufPool {
         if access_time == 0 {
             // TODO: Implement logic for read ahead.
         }
+
+        let fix_mode = match request.rw_latch {
+            ReadWriteLatch::SLatch => FixMode::Shared,
+            ReadWriteLatch::XLatch => FixMode::Exclusive,
+            ReadWriteLatch::NoLatch => FixMode::NoLatch,
+        };
+        request.mtr.memo_push(MemoSlot::PageFix(request.page_id, fix_mode));
 
         Some(block.clone())
     }
@@ -650,7 +668,7 @@ impl BufPool {
         {
             let mut blk = buf_block.write().unwrap();
             // buf_block_set_file_page takes &mut BufBlock
-            self.buf_block_set_file_page(&mut *blk);
+            self.buf_block_set_file_page(&mut *blk, space_id, page_no);
         } // drop the block latch
 
         // 2) Insert into the pool’s hash under the pool‐inner mutex
@@ -661,17 +679,24 @@ impl BufPool {
         ut_ad!(result.is_none(), "failed to insert page into hash map");
     }
 
-    /// Sets the state of a buffer block to indicate it is a file page.
-    ///
-    /// #Arguments
-    /// * `buf_block` - The buffer block to set the state for
-    ///
-    fn buf_block_set_file_page(&self, buf_block: &mut BufBlock) {
+    /// Mark this BufBlock as holding a file‐page, and record its
+    /// space_id/page_no in the BufPage.
+    fn buf_block_set_file_page(
+        &self,
+        buf_block: &mut BufBlock,
+        space_id: SpaceId,
+        page_no: PageNo,
+    ) {
+        // 1) flip the state
         buf_block.buf_block_set_state(BufPageState::BufBlockFilePage);
 
-        ut_ad!(
-            buf_block.buf_block_get_state() == BufPageState::BufBlockFilePage
-        );
+        // 2) stash the identifiers on the BufPage
+        let page = buf_block.buf_block_get_page_mut();
+        page.set_space_id(space_id);
+        page.set_page_no(page_no);
+
+        // sanity check
+        ut_ad!(page.in_file());
     }
 
     /// Frees a buffer block and returns it to the free list.
@@ -696,23 +721,21 @@ impl BufPool {
         lru.block_free_non_file_page(&mut *inner, &mut guard);
     }
 
-    /// Creates a new page in the buffer pool.
+    /// Creates a new page in the buffer pool for the given space_id and page_no.
     ///
-    /// This method allocates a buffer block for a new page with the specified
-    /// space ID and page number. It first attempts to get a free block from the
-    /// free list, then initializes it for the new page.
+    /// This function attempts to allocate a free block from the buffer pool and initialize it
+    /// as a file page. If the page already exists in the buffer pool, it will reuse that page
+    /// instead of creating a new one. The page is added to the LRU list as young and its access
+    /// time is updated. The page is also pinned in the mini-transaction (mtr).
     ///
-    /// # Parameters
-    /// * `space_id` - The ID of the tablespace for the new page
+    /// # Arguments
+    /// * `space_id` - The ID of the tablespace containing the page
     /// * `page_no` - The page number within the tablespace
-    /// * `mtr` - The mini-transaction context for logging the operation
+    /// * `mtr` - The mini-transaction that will use this page
     ///
     /// # Returns
-    /// * `Some(Rc<RefCell<BufBlock>>)` - A reference to the newly created buffer block
-    /// * `None` - If no free blocks are available
-    ///
-    /// # Panic
-    /// Panics in debug mode if the mini-transaction is not active
+    /// * `Some(Arc<RwLock<BufBlock>>)` - A reference to the created buffer block if successful
+    /// * `None` - If no free block could be allocated from the buffer pool
     pub fn create(
         &mut self,
         space_id: SpaceId,
@@ -721,27 +744,97 @@ impl BufPool {
     ) -> Option<Arc<RwLock<BufBlock>>> {
         ut_ad!(mtr.get_mtr_state() == MtrState::MtrActive);
 
-        // TODO this implementation is wrong. Lets come back to it soon.
-        let free_block = self.get_free_block();
-        if let Some(block) = free_block {
+        // 1) grab a free block
+        let block = {
+            let mut lru = self.buf_lru.lock().unwrap();
+            lru.get_free_block()
+        }?;
+
+        // 2) if already present, evict the new one and re‐get
+        if {
+            let inner = self.inner.lock().unwrap();
+            inner.page_hash.contains_key(&PageId { space_id, page_no })
+        } {
+            // clear the "was_freed" flag while holding the write lock,
+            // then drop it before calling block_free()
             {
-                let was_in_file = {
-                    let mut buf_block = block.write().unwrap();
-                    let buf_page = buf_block.buf_block_get_page_mut();
-                    buf_page.in_file()
-                };
-                if was_in_file {
-                    // now that the write‐lock is gone, this won’t deadlock
-                    self.block_free(block.clone());
-                }
+                let mut guard = block.write().unwrap();
+                guard.buf_block_get_page_mut().set_file_page_was_freed(false);
             }
-
-            self.page_init(space_id, page_no, block.clone());
-
-            return Some(block.clone());
+            self.block_free(block.clone()); // safe to grab block lock again
+            return self.get(Request {
+                rw_latch: ReadWriteLatch::NoLatch,
+                page_id: PageId { space_id, page_no },
+                mode: BUF_GET_NO_LATCH,
+                mtr,
+            });
         }
 
-        None
+        // 3) initialize as file‐page + hash insert
+        self.page_init(space_id, page_no, block.clone());
+
+        // 4) LRU insert as young
+        {
+            let mut guard = block.write().unwrap();
+            let buf_page = guard.buf_block_get_page_mut();
+            self.add_block(buf_page, false);
+        }
+
+        // 5) bump create‐stat
+        self.stat.n_pages_created.fetch_add(1, Relaxed);
+
+        // 6) timestamp & possible read‐ahead
+        let now = ut_time_ms();
+        {
+            let mut guard = block.write().unwrap();
+            let buf_page = guard.buf_block_get_page_mut();
+            self.set_accessed_make_young(buf_page, now);
+        }
+
+        // 7) pin in MTR
+        mtr.memo_push(MemoSlot::PageFix(
+            PageId { space_id, page_no },
+            FixMode::NoLatch,
+        ));
+
+        // 8) flush‐margin
+        // let mut fl = self.flusher.lock().unwrap();
+        // fl.free_margin();
+
+        // 9) init on-disk header bytes
+        {
+            let guard = block.write().unwrap();
+            let page = guard.get_page();
+            let frame = page.to_page_frame();
+            mach_write_to_4(
+                &mut frame.0[FIL_PAGE_PREV..FIL_PAGE_PREV + 4],
+                u32::MAX,
+            );
+            mach_write_to_4(
+                &mut frame.0[FIL_PAGE_NEXT..FIL_PAGE_NEXT + 4],
+                u32::MAX,
+            );
+            mach_write_to_2(
+                &mut frame.0[FIL_PAGE_TYPE..FIL_PAGE_TYPE + 2],
+                FilPageType::Allocated as u16,
+            );
+            mach_write_to_8(
+                &mut frame.0
+                    [FIL_PAGE_FILE_FLUSH_LSN..FIL_PAGE_FILE_FLUSH_LSN + 8],
+                0,
+            );
+        }
+
+        // 10) sanity
+        ut_ad!(
+            self.inner
+                .lock()
+                .unwrap()
+                .page_hash
+                .contains_key(&PageId { space_id, page_no })
+        );
+
+        Some(block)
     }
 
     /// Invalidates the entire buffer pool.
@@ -935,7 +1028,7 @@ impl BufPool {
     /// * `access_time` - The current access time to compare against the page's last access time
     pub fn set_accessed_make_young(
         &self,
-        buf_page: &mut BufBlock,
+        buf_page: &mut BufPage,
         access_time: u64,
     ) {
     }
@@ -1218,5 +1311,9 @@ impl BufPool {
     #[cfg(test)]
     pub(crate) fn inner(&self) -> &Mutex<BufPoolInner> {
         &self.inner
+    }
+
+    pub(crate) fn stat(&self) -> Arc<BufPoolStats> {
+        self.stat.clone()
     }
 }

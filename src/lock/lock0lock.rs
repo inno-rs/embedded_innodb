@@ -30,7 +30,7 @@ use crate::{
     page::{page0cur::PageCur, page0page::PAGE_HEAP_NO_SUPREMUM},
     rem::rem0rec::Record,
     some_or_panic,
-    trx::trx0trx::Trx,
+    trx::{trx0trx::Trx, trx0types::TrxQueState::TrxQueLockWait},
     ut::ut0dbg::ut_ad,
     ut_panic,
 };
@@ -819,8 +819,59 @@ impl LockSys {
         if !rec_locks_empty {}
     }
 
-    pub fn deadlock_occurs(&self, lock: &Lock, trx: Arc<Trx>) -> bool {
-        false
+    /// Checks if a deadlock occurs when a transaction tries to acquire a lock.
+    ///
+    /// This function performs deadlock detection by recursively traversing the wait-for graph
+    /// of transactions and locks.
+    /// If a deadlock is detected, the function will determine which
+    /// transaction should be rolled back to resolve the deadlock.
+    ///
+    /// # Arguments
+    ///
+    /// * `lock` - The lock that the transaction is trying to acquire
+    /// * `trx` - The transaction that is trying to acquire the lock
+    ///
+    /// # Returns
+    ///
+    /// * `true` if a deadlock is detected and the current transaction should be rolled back
+    /// * `false` if no deadlock is detected
+    pub fn deadlock_occurs(
+        &self,
+        lock: Rc<RefCell<Lock>>,
+        trx: Arc<Trx>,
+    ) -> bool {
+        loop {
+            let result = self.deadlock_recursive(
+                trx.clone(),
+                trx.clone(),
+                lock.clone(),
+                &mut 0,
+                0,
+            );
+
+            match result {
+                LockVictimIsStart => {
+                    info!("*** WE ROLL BACK TRANSACTION (2)");
+                    break;
+                }
+                DeadlockSearchResult::LockVictimIsOther => {
+                    // We chose some other transaction for rollback. Continue checking.
+                }
+                LockExceedMaxDepth => {
+                    info!(
+                        "TOO DEEP OR LONG SEARCH IN THE LOCK TABLE WAITS-FOR GRAPH, WE WILL ROLL BACK FOLLOWING TRANSACTION"
+                    );
+                    info!("\n*** TRANSACTION:\n");
+                    // Print transaction and lock information.
+                    break;
+                }
+                NoDeadlock => {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 
     /// Get the next record lock from the list for a specific page and heap number.
@@ -1044,6 +1095,19 @@ impl LockSys {
         None
     }
 
+    /// Adds a record lock to the queue for a specific buffer block, heap number, and index.
+    ///
+    /// This function is used to add a new lock to a record or to transfer locks during operations
+    /// like page splits or merges. It handles special cases like supremum records and ensures
+    /// proper lock type flags are set.
+    ///
+    /// # Arguments
+    ///
+    /// * `lock_mode_type` - The mode and type of the lock to be added
+    /// * `buf_block` - The buffer block containing the record to be locked
+    /// * `heap_no` - The heap number of the record to be locked
+    /// * `index` - The index to which the record belongs
+    /// * `trx` - The transaction that is requesting the lock
     pub fn rec_add_to_queue(
         &mut self,
         lock_mode_type: LockModeType,
@@ -1243,7 +1307,20 @@ impl LockSys {
         }
     }
 
-    /// Check is the lock exists for a page and heap no.
+    /// Checks if a lock exists for a specific page and heap number.
+    ///
+    /// This function determines whether any lock has been set for the given page ID and heap number.
+    /// It's used to verify lock existence before performing operations like moving locks between records.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_id` - The ID of the page containing the record
+    /// * `heap_no` - The heap number of the record to check for locks
+    ///
+    /// # Returns
+    ///
+    /// * `true` if at least one lock exists for the specified record
+    /// * `false` if no locks exist for the specified record
     fn rec_exists(&self, page_id: PageId, heap_no: usize) -> bool {
         if let Some(locks) = self.rec_locks.get(&page_id) {
             locks.iter().any(|lock| {
@@ -1326,5 +1403,99 @@ impl LockSys {
                 lock_request.trx,
             );
         }
+    }
+
+    /// Grant the lock to a waiting lock request and release the waiting transaction.
+    ///
+    /// # Arguments
+    ///
+    /// `lock`: A reference to the lock object.
+    pub fn grant(&self, lock: &mut Lock) {
+        lock.reset();
+
+        // todo: Why do we need to check this.
+        if lock.trx.trx_get_que_state() == TrxQueLockWait {
+            lock.trx.end_lock_wait();
+        }
+    }
+
+    /// Cancel the waiting record lock request and releases the waiting transaction.
+    ///
+    /// # Arguments
+    ///
+    /// `lock`: Reference to the lock object.
+    ///
+    pub fn rec_cancel(&mut self, lock: &mut Lock) {
+        ut_ad!(Lock::is_lock_type(lock.lock_type, LOCK_REC));
+
+        // 1. Reset the lock bit in the lock bitmap. There can be only one bit set.
+        let nth_bit = lock.rec_find_set_bit();
+        lock.rec_reset_nth_bit(some_or_panic!(nth_bit));
+
+        // 2. Reset the wait flag.
+        lock.reset();
+
+        // 3. Release the trx from lock wait.
+        lock.trx.end_lock_wait()
+    }
+
+    /// Enqueues a waiting request for a lock which cannot be granted immediately and checks for deadlocks.
+    /// If a deadlock is detected, the lock request is removed and an error code is returned.
+    ///
+    /// This function creates a new lock in waiting state and performs deadlock detection.
+    /// If a deadlock is found, it cleans up the lock and returns an error. If no deadlock is found,
+    /// it sets the transaction state to waiting for the lock.
+    ///
+    /// # Arguments
+    ///
+    /// * `lock_mode_type` - The mode and type of the lock being requested
+    /// * `buf_block` - The buffer block containing the record to be locked
+    /// * `heap_no` - The heap number of the record to be locked
+    /// * `index` - The index to which the record belongs
+    /// * `trx` - The transaction that is requesting the lock
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the lock request was successfully enqueued
+    /// * `Err(DbErr::DbDeadlock)` if a deadlock was detected
+    /// * `Err(DbErr::DbLockWait)` if the transaction must wait for the lock
+    pub fn rec_enqueue_waiting(
+        &mut self,
+        lock_mode_type: LockModeType,
+        buf_block: Arc<RwLock<BufBlock>>,
+        heap_no: usize,
+        index: Arc<Index>,
+        trx: Arc<Trx>,
+    ) -> Result<(), DbErr> {
+        let page = buf_block.read().unwrap().get_page();
+        let page_id = page.page_get_page_id();
+        let n_bits = page.page_dir_get_n_heap();
+        let lock = self.rec_create_low(
+            page_id,
+            lock_mode_type,
+            heap_no,
+            n_bits,
+            index,
+            trx.clone(),
+        );
+
+        // 1. Check if a deadlock occurs if we add.
+        // todo: Use std::unlikely
+        if self.deadlock_occurs(lock.clone(), trx.clone()) {
+            let mut lock_ref = lock.borrow_mut();
+            lock_ref.reset();
+            lock_ref.rec_reset_nth_bit(heap_no);
+
+            return Err(DbErr::DbDeadlock);
+        } else if let Some(wait_lock) = trx.get_wait_lock() {
+            trx.trx_set_que_state(TrxQueLockWait);
+            ut_ad!(wait_lock == lock.borrow().id);
+
+            return Err(DbErr::DbLockWait);
+        }
+
+        ut_ad!(trx.get_wait_lock().is_none());
+
+        Ok(())
     }
 }

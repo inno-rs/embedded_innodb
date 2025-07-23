@@ -162,7 +162,7 @@ pub struct OtherResource {
 
 /// Now our MemoSlot is a true Rust enum: each variant has its own fields,
 /// so you can’t mix page‐IDs with latch‐IDs by accident.
-#[derive(PartialEq, Copy, Clone)]
+#[derive(PartialEq, Copy, Clone, Debug)]
 pub enum MemoSlot {
     /// A page “fix” (latch) in shared or exclusive mode.
     PageFix(PageId, FixMode),

@@ -1,9 +1,14 @@
 #[cfg(test)]
 pub(super) mod tests {
+
     use std::sync::{Arc, Mutex};
 
-    use rstest::{fixture, rstest};
-
+    use crate::fil::fil0types::{
+        FIL_PAGE_FILE_FLUSH_LSN, FIL_PAGE_NEXT, FIL_PAGE_PREV, FIL_PAGE_TYPE,
+        FilPageType,
+    };
+    use crate::mtr::mtr0mtr::{MemoSlot, MtrState};
+    use crate::mtr::mtr0types::FixMode;
     use crate::{
         buf::{
             buf0buf::{BufPool, BufPoolInner},
@@ -18,6 +23,9 @@ pub(super) mod tests {
         sync::sync0rw::ReadWriteLatch,
         tests::test0utils,
     };
+    use libc::{pathconf, poll};
+    use rstest::{fixture, rstest};
+    use std::sync::atomic::Ordering::Relaxed;
 
     pub struct BufPoolFixture {
         buf_pool: Arc<Mutex<BufPool>>,
@@ -334,6 +342,156 @@ pub(super) mod tests {
         assert!(
             after_in_free,
             "block_free must push the page onto the free list"
+        );
+    }
+
+    // Test the “new-page” path: when the pool does *not* already
+    /// contain (space=1,page=42), create() must allocate, insert,
+    /// bump stats, initialize the header, and pin in the MTR.
+    #[rstest]
+    fn test_create_new_page_initializes_correctly(
+        buf_pool_fixture: BufPoolFixture,
+    ) {
+        let mut mtr = Mtr::new();
+        mtr.start();
+        assert_eq!(mtr.get_mtr_state(), MtrState::MtrActive);
+
+        let pool = buf_pool_fixture.buf_pool.clone();
+        // 0 pages created yet:
+        assert_eq!(
+            pool.lock().unwrap().stat().n_pages_created.load(Relaxed),
+            0
+        );
+        pool.lock().unwrap().open(10 * UNIV_PAGE_SIZE);
+
+        // 1) call create()
+        let block = {
+            let mut p = pool.lock().unwrap();
+            p.create(1, 42, &mut mtr)
+        };
+        assert!(block.is_some(), "create should return Some for a free block");
+        let block = block.unwrap();
+
+        // 2) after create, stats.n_pages_created == 1
+        assert_eq!(
+            pool.lock().unwrap().stat().n_pages_created.load(Relaxed),
+            1
+        );
+
+        // 3) block must now be in state FilePage, in the pool hash, and in the LRU
+        {
+            let guard = block.read().unwrap();
+            assert_eq!(
+                guard.buf_block_get_state(),
+                BufPageState::BufBlockFilePage
+            );
+            let pid = PageId { space_id: 1, page_no: 42 };
+            let pool_guard = pool.lock().unwrap();
+            let inner = pool_guard.inner().lock().unwrap();
+            assert!(
+                inner.page_hash().contains_key(&pid),
+                "page must be in the hash map"
+            );
+            assert!(
+                guard.buf_block_get_page().is_in_lru_list(),
+                "page must have been pushed into LRU"
+            );
+        }
+
+        // 4) check that we wrote the on-disk header exactly as in InnoDB:
+        {
+            let guard = block.read().unwrap();
+            let page = guard.get_page();
+            let frame = page.to_page_frame();
+            // prev & next both 0xFFFF_FFFF
+            let prev = u32::from_be_bytes(
+                frame.0[FIL_PAGE_PREV..FIL_PAGE_PREV + 4].try_into().unwrap(),
+            );
+            let next = u32::from_be_bytes(
+                frame.0[FIL_PAGE_NEXT..FIL_PAGE_NEXT + 4].try_into().unwrap(),
+            );
+            assert_eq!(prev, 0xFFFF_FFFF);
+            assert_eq!(next, 0xFFFF_FFFF);
+            // type == Allocated
+            let ftype = u16::from_be_bytes(
+                frame.0[FIL_PAGE_TYPE..FIL_PAGE_TYPE + 2].try_into().unwrap(),
+            );
+            assert_eq!(ftype, FilPageType::Allocated as u16);
+            // flush_lsn == 0
+            let flush_lsn = u64::from_be_bytes(
+                frame.0[FIL_PAGE_FILE_FLUSH_LSN..FIL_PAGE_FILE_FLUSH_LSN + 8]
+                    .try_into()
+                    .unwrap(),
+            );
+            assert_eq!(flush_lsn, 0);
+        }
+
+        // 5) and finally, the MTR should have recorded exactly one PageFix slot:
+        let memo = mtr.memo();
+        assert_eq!(memo.len(), 1);
+        assert_eq!(
+            memo[0],
+            MemoSlot::PageFix(
+                PageId { space_id: 1, page_no: 42 },
+                FixMode::NoLatch
+            )
+        );
+    }
+
+    /// Test the “already-in-pool” path: second create() for the same
+    /// (space,page) must evict the *fresh* block and then return the
+    /// *old* block via get(), without bumping n_pages_created.
+    #[rstest]
+    fn test_create_existing_page_eviction_branch(
+        buf_pool_fixture: BufPoolFixture,
+    ) {
+        let mut mtr = Mtr::new();
+        mtr.start();
+        let pool = buf_pool_fixture.buf_pool.clone();
+        pool.lock().unwrap().open(10 * UNIV_PAGE_SIZE);
+
+        // 1) first create => brand-new
+        let b1 = {
+            let mut p = pool.lock().unwrap();
+            p.create(0, 100, &mut mtr).unwrap()
+        };
+
+        // remember how many we’ve created so far
+        let before = pool.lock().unwrap().stat().n_pages_created.load(Relaxed);
+
+        // 2) second create(0,100) => should see “already in hash” path
+        let b2 = {
+            let mut p = pool.lock().unwrap();
+            p.create(0, 100, &mut mtr).unwrap()
+        };
+
+        // 3) we should get back the *same* block that was in the hash:
+        assert!(Arc::ptr_eq(&b1, &b2));
+
+        // 4) n_pages_created should not have increased again
+        let after = pool.lock().unwrap().stat().n_pages_created.load(Relaxed);
+        assert_eq!(
+            after, before,
+            "second create should not bump pages_created"
+        );
+
+        // 5) and the MTR memo must have two fixes (one for each create/get)
+        let memo = mtr.memo();
+        assert_eq!(memo.len(), 2);
+        // both must be PageFix(0,100,NoLatch)
+        assert_eq!(
+            memo[0],
+            MemoSlot::PageFix(
+                PageId { space_id: 0, page_no: 100 },
+                FixMode::NoLatch
+            )
+        );
+        assert_eq!(
+            memo[1],
+            MemoSlot::PageFix(
+                PageId { space_id: 0, page_no: 100 },
+                FixMode::NoLatch
+            )
         );
     }
 }
