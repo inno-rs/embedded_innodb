@@ -32,6 +32,7 @@ use crate::{
     some_or_panic,
     trx::trx0trx::Trx,
     ut::ut0dbg::ut_ad,
+    ut_panic,
 };
 
 /// Restricts the length of the search we do in the wait-for graph of transactions.
@@ -1051,6 +1052,21 @@ impl LockSys {
         index: Arc<Index>,
         trx: Arc<Trx>,
     ) {
+        let mut lock_mode_type = lock_mode_type;
+        // If rec is the supremum record, then we can reset the gap bit as all the locks on the supremum are automatically of the gap type, and we try to avoid unnecessary memory consumption of a record lock struct for a gap type lock.
+        if heap_no == PAGE_HEAP_NO_SUPREMUM {
+            ut_ad!(!Lock::is_lock_type(
+                lock_mode_type.lock_type,
+                LOCK_REC_NOT_GAP
+            ));
+
+            lock_mode_type.lock_type &= !(LOCK_GAP | LOCK_REC_NOT_GAP);
+        }
+
+        let page_id = buf_block.read().unwrap().get_page_id();
+
+        // 1. Check if there is a waiting lock request on the same record or on gap.
+        if let Some(locks) = self.rec_locks.get(&page_id) {}
     }
 
     /// Moves record locks from an old block to a new block.
@@ -1223,6 +1239,91 @@ impl LockSys {
                 move_lock_request.heap_no,
                 index.clone(),
                 move_lock_request.trx,
+            );
+        }
+    }
+
+    /// Check is the lock exists for a page and heap no.
+    fn rec_exists(&self, page_id: PageId, heap_no: usize) -> bool {
+        if let Some(locks) = self.rec_locks.get(&page_id) {
+            locks.iter().any(|lock| {
+                let lock_ref = lock.borrow();
+                lock_ref.rec_is_nth_bit_set(heap_no)
+            })
+        } else {
+            false
+        }
+    }
+
+    /// Moves all locks from a donor record to a receiver record.
+    ///
+    /// This function transfers all locks from a specific record in the donor block to a specific
+    /// record in the receiver block.
+    /// It performs the following operations:
+    /// 1. Verifies that a lock exists for donor record
+    /// 2. For each lock on the donor record:
+    ///    - Resets the lock bit for the donor record
+    ///    - Resets any waiting locks
+    ///    - Creates a lock request to be applied to the receiver record
+    /// 3. Adds new locks to the receiver record using the collected lock requests
+    ///
+    /// # Arguments
+    ///
+    /// * `receiver` - The buffer block containing the record that will receive the locks
+    /// * `donor` - The buffer block containing the record that will donate its locks
+    /// * `receiver_heap_no` - The heap number of the receiver record
+    /// * `donor_heap_no` - The heap number of the donor record
+    pub fn rec_move(
+        &mut self,
+        receiver: Arc<RwLock<BufBlock>>,
+        donor: Arc<RwLock<BufBlock>>,
+        receiver_heap_no: usize,
+        donor_heap_no: usize,
+    ) {
+        let page_id = donor.read().unwrap().get_page_id();
+        ut_ad!(self.rec_exists(page_id, donor_heap_no));
+
+        let mut move_lock_requests: Vec<MoveLockRequest> = vec![];
+
+        if let Some(locks) = self.rec_locks.get(&page_id) {
+            for lock in locks {
+                let mut lock_ref = lock.borrow_mut();
+
+                let lock_mode_type = LockModeType {
+                    lock_mode: lock_ref.lock_mode,
+                    lock_type: lock_ref.lock_type,
+                };
+
+                if lock_ref.rec_is_nth_bit_set(donor_heap_no) {
+                    lock_ref.rec_reset_nth_bit(donor_heap_no);
+                }
+
+                if Lock::is_lock_type(lock_ref.lock_type, LOCK_WAIT) {
+                    lock_ref.reset();
+                }
+
+                let index = match &lock_ref.txn_lock {
+                    TxnLock::RecLock(r) => r.index.clone(),
+                    _ => {
+                        ut_panic!("unexpected lock type");
+                    }
+                };
+
+                move_lock_requests.push(MoveLockRequest {
+                    lock_mode_type,
+                    heap_no: receiver_heap_no,
+                    trx: lock_ref.trx.clone(),
+                });
+            }
+        }
+
+        for lock_request in move_lock_requests {
+            self.rec_add_to_queue(
+                lock_request.lock_mode_type,
+                receiver.clone(),
+                lock_request.heap_no,
+                Arc::new(Index::new(page_id)),
+                lock_request.trx,
             );
         }
     }
