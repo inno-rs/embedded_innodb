@@ -1,6 +1,7 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use once_cell::sync::Lazy;
 use rand::{Rng, SeedableRng, distr::Alphanumeric, rngs::StdRng};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 
 /// A macro that executes an asynchronous expression on the global runtime.

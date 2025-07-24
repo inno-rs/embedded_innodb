@@ -1,10 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use std::{
-        cell::RefCell,
-        rc::Rc,
-        sync::{Arc, Mutex},
-    };
+    use std::{cell::RefCell, rc::Rc, sync::Arc};
 
     use pretty_assertions::assert_eq;
     use rstest::{fixture, rstest};
@@ -34,8 +30,8 @@ mod tests {
     }
 
     #[fixture]
-    fn table() -> Arc<Mutex<Table>> {
-        Arc::new(Mutex::new(Table {}))
+    fn table() -> Arc<Table> {
+        Arc::new(Table::new(100, "table_100".to_string()))
     }
 
     #[fixture]
@@ -49,7 +45,7 @@ mod tests {
     }
 
     #[fixture]
-    fn table_lock(table: Arc<Mutex<Table>>) -> TableLock {
+    fn table_lock(table: Arc<Table>) -> TableLock {
         TableLock { table }
     }
 

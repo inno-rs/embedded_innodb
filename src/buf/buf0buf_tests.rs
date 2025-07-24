@@ -1,14 +1,10 @@
 #[cfg(test)]
 pub(super) mod tests {
 
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, atomic::Ordering::Relaxed};
 
-    use crate::fil::fil0types::{
-        FIL_PAGE_FILE_FLUSH_LSN, FIL_PAGE_NEXT, FIL_PAGE_PREV, FIL_PAGE_TYPE,
-        FilPageType,
-    };
-    use crate::mtr::mtr0mtr::{MemoSlot, MtrState};
-    use crate::mtr::mtr0types::FixMode;
+    use rstest::{fixture, rstest};
+
     use crate::{
         buf::{
             buf0buf::{BufPool, BufPoolInner},
@@ -16,16 +12,22 @@ pub(super) mod tests {
             buf0rea::BufRea,
             buf0types::{BUF_GET_IF_IN_POOL, BufPageState, Request},
         },
-        fil::fil0fil::Fil,
+        fil::{
+            fil0fil::Fil,
+            fil0types::{
+                FIL_PAGE_FILE_FLUSH_LSN, FIL_PAGE_NEXT, FIL_PAGE_PREV,
+                FIL_PAGE_TYPE, FilPageType,
+            },
+        },
         innodb::innodb0types::{PageId, UNIV_PAGE_SIZE},
-        mtr::mtr0mtr::{Mtr, MtrState::MtrActive},
+        mtr::{
+            mtr0mtr::{MemoSlot, Mtr, MtrState, MtrState::MtrActive},
+            mtr0types::FixMode,
+        },
         os::{os0io::OsIo, os0runtime::create_runtime},
         sync::sync0rw::ReadWriteLatch,
         tests::test0utils,
     };
-    use libc::{pathconf, poll};
-    use rstest::{fixture, rstest};
-    use std::sync::atomic::Ordering::Relaxed;
 
     pub struct BufPoolFixture {
         buf_pool: Arc<Mutex<BufPool>>,
