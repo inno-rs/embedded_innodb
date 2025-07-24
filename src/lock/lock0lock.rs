@@ -4,7 +4,7 @@ use std::{
     fmt::{Display, Formatter},
     ops::Deref,
     rc::Rc,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
 };
 
 use fixedbitset::FixedBitSet;
@@ -12,7 +12,7 @@ use tracing::info;
 
 use crate::{
     buf::buf0types::BufBlock,
-    dict::dict0types::{Index, Table},
+    dict::dict0types::{Index, Table, TableId},
     innodb::innodb0types::{DbErr, DbErr::DbFail, PageId, TxnId},
     lock::{
         lock0lock::DeadlockSearchResult::{
@@ -20,8 +20,8 @@ use crate::{
         },
         lock0types::{
             LOCK_COMPATIBILITY_MATRIX, LOCK_GAP, LOCK_INSERT_INTENTION,
-            LOCK_REC, LOCK_REC_NOT_GAP, LOCK_STRENGTH_MATRIX, LOCK_TYPE_MASK,
-            LOCK_WAIT, LockId, LockMode,
+            LOCK_REC, LOCK_REC_NOT_GAP, LOCK_STRENGTH_MATRIX, LOCK_TABLE,
+            LOCK_TYPE_MASK, LOCK_WAIT, LockId, LockMode,
             LockMode::{LockIX, LockS, LockX},
             LockType,
         },
@@ -61,15 +61,15 @@ pub enum DeadlockSearchResult {
 #[derive(Clone)]
 pub struct TableLock {
     /// Database table in dictionary cache.
-    pub table: Arc<Mutex<Table>>,
+    pub table: Arc<Table>,
 }
 
 /// Implements the Display trait for TableLock to provide a string representation.
 ///
 /// This implementation displays the table lock with its associated table information.
 impl Display for TableLock {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "TableLock: {}", self.table.lock().unwrap())
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TableLock: {}", self.table)
     }
 }
 
@@ -89,7 +89,7 @@ pub struct RecLock {
 ///
 /// This implementation displays the record lock with its page ID information.
 impl Display for RecLock {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "RecLock {{ page_id: {} }}", self.page_id)
     }
 }
@@ -108,7 +108,7 @@ pub enum TxnLock {
 /// This implementation displays either a table lock or record lock based on the variant,
 /// delegating to the respective Display implementations.
 impl Display for TxnLock {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             TxnLock::TableLock(table_lock) => {
                 write!(f, "TableLock: {}", table_lock)
@@ -577,6 +577,8 @@ pub struct LockModeType {
 pub struct LockSys {
     /// Map of record locks, where the key is the PageId and the value is a vector of RecLocks.
     rec_locks: HashMap<PageId, Vec<Rc<RefCell<Lock>>>>,
+    /// Map of table locks, where the key is the TableId and the value is a vector of TableLocks.
+    table_locks: HashMap<TableId, Vec<Rc<RefCell<Lock>>>>,
     /// Map of transaction wait for locks.
     /// This mapping is exactly the same as the one present in wait_lock in Txn.
     /// All txns with que_state == TrxQueLockWait are present here.
@@ -600,6 +602,7 @@ impl LockSys {
     pub fn new() -> Self {
         LockSys {
             rec_locks: Default::default(),
+            table_locks: Default::default(),
             txn_locks: Default::default(),
             lock_id_gen: 1,
         }
@@ -1497,5 +1500,60 @@ impl LockSys {
         ut_ad!(trx.get_wait_lock().is_none());
 
         Ok(())
+    }
+
+    /// Remove the lock request, waiting or granted, from the queue.
+    ///
+    /// # Arguments
+    ///
+    /// `lock`: Lock request to be removed.
+    ///
+    pub fn rec_discard(&mut self, lock: &mut Lock) {
+        ut_ad!(Lock::is_lock_type(lock.lock_type, LOCK_REC));
+
+        let page_id = match &lock.txn_lock {
+            TxnLock::RecLock(rec_lock) => rec_lock.page_id,
+            _ => {
+                ut_panic!("unexpected lock type");
+            }
+        };
+
+        let ret = self.rec_locks.remove(&page_id);
+        ut_ad!(ret.is_some());
+
+        lock.trx.remove_lock(lock.id);
+    }
+
+    /// Create a table lock object and add it to the lock queue.
+    /// This method does not check for deadlock or lock compatibility.
+    ///
+    /// # Arguments
+    ///
+    /// * `table` - The table to be locked
+    /// * `lock_mode_type` - The mode and type of the lock being requested
+    /// * `trx` - The transaction that is requesting the lock
+    ///
+    pub fn table_create(
+        &mut self,
+        table: Arc<Table>,
+        lock_mode_type: LockModeType,
+        trx: Arc<Trx>,
+    ) {
+        let lock_id = self.get_next_lock_id();
+        let lock = Rc::new(RefCell::new(Lock::new(
+            lock_id,
+            trx.clone(),
+            0, /* todo: Remove this.*/
+            TxnLock::TableLock(TableLock { table: table.clone() }),
+            lock_mode_type.lock_mode,
+            lock_mode_type.lock_type | LOCK_TABLE,
+        )));
+
+        trx.add_lock(lock_id);
+        if let Some(locks) = self.table_locks.get_mut(&table.get_id()) {
+            locks.push(lock.clone());
+        } else {
+            self.table_locks.insert(table.get_id(), vec![lock.clone()]);
+        }
     }
 }

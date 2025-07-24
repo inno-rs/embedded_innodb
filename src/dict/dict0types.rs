@@ -399,10 +399,34 @@ pub struct Column {
     pub dtype: DType,
 }
 
-pub struct Table {}
+#[derive(Hash, Clone, Copy, Eq, PartialEq)]
+pub struct TableId(pub u64);
+
+pub struct Table {
+    /// Table identifier.
+    id: TableId,
+    /// Table name
+    name: String,
+}
+
+impl Table {
+    pub fn new(id: u64, name: String) -> Self {
+        Table { id: TableId(id), name }
+    }
+
+    pub fn get_id(&self) -> TableId {
+        self.id
+    }
+
+    pub fn get_name(&self) -> &str {
+        self.name.as_str()
+    }
+}
 
 impl Display for Table {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Table")
+        write!(f, "Table")?;
+        write!(f, "id: {}", self.id.0)?;
+        write!(f, "name: {}", self.name)
     }
 }

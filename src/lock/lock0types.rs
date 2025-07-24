@@ -1,5 +1,7 @@
 use std::fmt::{Display, Formatter};
 
+use strum_macros::Display;
+
 /// Lock types
 pub type LockType = u16;
 
@@ -60,7 +62,7 @@ impl Display for LockId {
 }
 
 /// Basic Lock Mode.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Display)]
 #[repr(u16)]
 pub enum LockMode {
     /// Intention shared.
