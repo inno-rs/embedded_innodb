@@ -1556,4 +1556,89 @@ impl LockSys {
             self.table_locks.insert(table.get_id(), vec![lock.clone()]);
         }
     }
+
+    /// Check if other transactions have an incompatible lock mode request in the lock queue.
+    ///
+    /// This function checks if there are any locks on the specified table from other transactions
+    /// that are incompatible with the requested lock mode. A lock is considered incompatible if:
+    /// 1. It belongs to a different transaction
+    /// 2. Its lock mode is not compatible with the requested lock mode
+    /// 3. It is not a waiting lock (only active locks are considered)
+    ///
+    /// # Arguments
+    ///
+    /// * `trx` - The transaction that is requesting the lock
+    /// * `table` - The table to check for incompatible locks
+    /// * `lock_mode_type` - The mode and type of the lock being requested
+    ///
+    /// # Returns
+    ///
+    /// * `Some(lock)` - If an incompatible lock is found, returns the first such lock
+    /// * `None` - If no incompatible locks are found
+    ///
+    pub fn table_other_has_incompatible(
+        &self,
+        trx: Arc<Trx>,
+        table: Arc<Table>,
+        lock_mode_type: LockModeType,
+    ) -> Option<Rc<RefCell<Lock>>> {
+        if let Some(locks) = self.table_locks.get(&table.get_id()) {
+            for lock in locks {
+                let lock_ref = lock.borrow();
+                if lock_ref.trx.trx_get_id() != trx.trx_get_id()
+                    && !Lock::mode_compatible(
+                        lock_ref.lock_mode,
+                        lock_mode_type.lock_mode,
+                    )
+                    && !lock_ref.is_waiting()
+                {
+                    return Some(lock.clone());
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Check if the waiting lock request has to still wait in the queue.
+    ///
+    /// This function determines if a waiting lock request for a table still needs to wait
+    /// in the queue. It checks all locks on the specified table to see if any of them
+    /// would block the waiting lock. A waiting lock needs to continue waiting if:
+    /// 1. There is at least one lock ahead of it in the queue that it has to wait for
+    /// 2. The waiting lock is not found in the queue (which should not happen)
+    ///
+    /// # Arguments
+    ///
+    /// * `wait_lock` - The waiting lock request to check
+    ///
+    /// # Returns
+    ///
+    /// * `true` - If the lock still needs to wait
+    /// * `false` - If the lock no longer needs to wait
+    ///
+    pub fn table_has_to_wait_in_queue(&self, wait_lock: &Lock) -> bool {
+        ut_ad!(wait_lock.is_waiting());
+
+        let table_id = match &wait_lock.txn_lock {
+            TxnLock::TableLock(table_lock) => table_lock.table.get_id(),
+            TxnLock::RecLock(_) => {
+                ut_panic!("unexpected lock type");
+            }
+        };
+
+        let locks = some_or_panic!(self.table_locks.get(&table_id));
+
+        for lock in locks {
+            if lock.borrow().id == wait_lock.id {
+                return false;
+            }
+
+            if wait_lock.has_to_wait_for(lock.borrow().deref(), None) {
+                return true;
+            }
+        }
+
+        false
+    }
 }
