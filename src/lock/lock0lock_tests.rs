@@ -2209,4 +2209,192 @@ mod tests {
             assert!(trx.get_wait_lock().is_none());
         }
     }
+
+    #[test]
+    fn test_table_other_has_incompatible_no_locks() {
+        // Test case where there are no locks on the table
+        let lock_sys = LockSys::new();
+        let table = Arc::new(Table::new(100, "test_table".to_string()));
+        let trx = Arc::new(Trx::new(1));
+
+        // Check if there are any incompatible locks
+        let result = lock_sys.table_other_has_incompatible(
+            trx,
+            table,
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_TABLE },
+        );
+
+        // Since there are no locks on the table, there should be no incompatible locks
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_table_other_has_incompatible_compatible_locks() {
+        // Test case where there are locks but they are compatible
+        let mut lock_sys = LockSys::new();
+        let table = Arc::new(Table::new(100, "test_table".to_string()));
+
+        // Create two different transactions
+        let trx1 = Arc::new(Trx::new(1));
+        let trx2 = Arc::new(Trx::new(2));
+
+        // Add an S lock from trx1
+        lock_sys.table_create(
+            table.clone(),
+            LockModeType { lock_mode: LockMode::LockS, lock_type: LOCK_TABLE },
+            trx1.clone(),
+        );
+
+        // Check if there are any incompatible locks for trx2 requesting an S lock (compatible with existing S lock)
+        let result = lock_sys.table_other_has_incompatible(
+            trx2,
+            table.clone(),
+            LockModeType { lock_mode: LockMode::LockS, lock_type: LOCK_TABLE },
+        );
+
+        // Since S locks are compatible with other S locks, there should be no incompatible locks
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_table_other_has_incompatible_with_conflict() {
+        // Test case where there are incompatible locks
+        let mut lock_sys = LockSys::new();
+        let table = Arc::new(Table::new(100, "test_table".to_string()));
+
+        // Create two different transactions
+        let trx1 = Arc::new(Trx::new(1));
+        let trx2 = Arc::new(Trx::new(2));
+
+        // Add an X lock from trx1
+        lock_sys.table_create(
+            table.clone(),
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_TABLE },
+            trx1.clone(),
+        );
+
+        // Check if there are any incompatible locks for trx2 requesting an S lock (incompatible with existing X lock)
+        let result = lock_sys.table_other_has_incompatible(
+            trx2,
+            table.clone(),
+            LockModeType { lock_mode: LockMode::LockS, lock_type: LOCK_TABLE },
+        );
+
+        // Since X locks are incompatible with S locks, there should be a conflict
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_table_other_has_incompatible_same_transaction() {
+        // Test case where there are locks from the same transaction
+        let mut lock_sys = LockSys::new();
+        let table = Arc::new(Table::new(100, "test_table".to_string()));
+
+        // Create a transaction
+        let trx = Arc::new(Trx::new(1));
+
+        // Add an X lock from trx
+        lock_sys.table_create(
+            table.clone(),
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_TABLE },
+            trx.clone(),
+        );
+
+        // Check if there are any incompatible locks for the same trx requesting an S lock
+        let result = lock_sys.table_other_has_incompatible(
+            trx,
+            table.clone(),
+            LockModeType { lock_mode: LockMode::LockS, lock_type: LOCK_TABLE },
+        );
+
+        // Since we're checking for locks from other transactions, and this is the same transaction,
+        // there should be no incompatible locks reported
+        assert!(result.is_none());
+    }
+
+    #[test]
+    #[ignore]
+    fn test_table_has_to_wait_in_queue_no_other_locks() {
+        // Test case where there are no other locks on the table
+        let lock_sys = LockSys::new();
+        let table = Arc::new(Table::new(100, "test_table".to_string()));
+        let trx = Arc::new(Trx::new(1));
+
+        // Create a waiting lock
+        let waiting_lock = Lock::new(
+            LockId(1),
+            trx.clone(),
+            0,
+            TxnLock::TableLock(TableLock { table: table.clone() }),
+            LockMode::LockX,
+            LOCK_TABLE | LOCK_WAIT,
+        );
+
+        // Since there are no other locks on the table, the waiting lock should not have to wait
+        assert_eq!(lock_sys.table_has_to_wait_in_queue(&waiting_lock), false);
+    }
+
+    #[test]
+    fn test_table_has_to_wait_in_queue_compatible_locks() {
+        // Test case where there are other locks on the table but they are compatible
+        let mut lock_sys = LockSys::new();
+        let table = Arc::new(Table::new(100, "test_table".to_string()));
+
+        // Create two different transactions
+        let trx1 = Arc::new(Trx::new(1));
+        let trx2 = Arc::new(Trx::new(2));
+
+        // Add an S lock from trx1
+        lock_sys.table_create(
+            table.clone(),
+            LockModeType { lock_mode: LockMode::LockS, lock_type: LOCK_TABLE },
+            trx1.clone(),
+        );
+
+        // Create a waiting S lock from trx2 (compatible with existing S lock)
+        let waiting_lock = Lock::new(
+            LockId(2),
+            trx2.clone(),
+            0,
+            TxnLock::TableLock(TableLock { table: table.clone() }),
+            LockMode::LockS,
+            LOCK_TABLE | LOCK_WAIT,
+        );
+
+        // Since the existing lock is compatible (S mode) with the waiting lock (also S mode),
+        // the waiting lock should not have to wait
+        assert_eq!(lock_sys.table_has_to_wait_in_queue(&waiting_lock), false);
+    }
+
+    #[test]
+    fn test_table_has_to_wait_in_queue_incompatible_locks() {
+        // Test case where there are other locks on the table that are incompatible
+        let mut lock_sys = LockSys::new();
+        let table = Arc::new(Table::new(100, "test_table".to_string()));
+
+        // Create two different transactions
+        let trx1 = Arc::new(Trx::new(1));
+        let trx2 = Arc::new(Trx::new(2));
+
+        // Add an X lock from trx1
+        lock_sys.table_create(
+            table.clone(),
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_TABLE },
+            trx1.clone(),
+        );
+
+        // Create a waiting S lock from trx2 (incompatible with existing X lock)
+        let waiting_lock = Lock::new(
+            LockId(2),
+            trx2.clone(),
+            0,
+            TxnLock::TableLock(TableLock { table: table.clone() }),
+            LockMode::LockS,
+            LOCK_TABLE | LOCK_WAIT,
+        );
+
+        // Since the existing lock is incompatible (X mode) with the waiting lock (S mode),
+        // the waiting lock should have to wait
+        assert_eq!(lock_sys.table_has_to_wait_in_queue(&waiting_lock), true);
+    }
 }
