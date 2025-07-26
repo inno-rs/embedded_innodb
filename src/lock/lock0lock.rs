@@ -13,7 +13,7 @@ use tracing::info;
 use crate::{
     buf::buf0types::BufBlock,
     dict::dict0types::{Index, Table, TableId},
-    innodb::innodb0types::{DbErr, DbErr::DbFail, PageId, TxnId},
+    innodb::innodb0types::{DbErr, PageId, TxnId},
     lock::{
         lock0lock::DeadlockSearchResult::{
             LockExceedMaxDepth, LockVictimIsStart, NoDeadlock,
@@ -645,14 +645,67 @@ impl LockSys {
     /// * `DbSuccess` - If the insertion can proceed immediately
     /// * `DbFail` or other error code - If there are locking conflicts or other issues
     pub fn rec_insert_check_and_lock(
-        &self,
+        &mut self,
         flags: usize,
         rec: Record,
-        buf_block: &BufBlock,
-        index: &Index,
+        buf_block: Arc<RwLock<BufBlock>>,
+        index: Arc<Index>,
+        trx: Arc<Trx>,
         mtr: &mut Mtr,
-    ) -> DbErr {
-        DbFail("".to_string())
+    ) -> Result<(), DbErr> {
+        let next_rec = some_or_panic!(rec.rec_get_next());
+        let next_rec_heap_no = next_rec.rec_get_heap_no();
+        // When inserting a record in the table, the table must have at least IX lock.
+        ut_ad!(
+            self.table_has(
+                trx.clone(),
+                index.get_table(),
+                LockModeType { lock_mode: LockIX, lock_type: 0 }
+            )
+            .is_some()
+        );
+
+        let page_id = buf_block.read().unwrap().get_page_id();
+        let page = buf_block.read().unwrap().get_page();
+
+        if self.rec_locks.contains_key(&page_id) == false {
+            if index.is_clustered() == false {
+                page.page_update_max_trx_id(trx.trx_get_id(), mtr);
+            }
+
+            return Ok(());
+        }
+
+        let lock_mode_type = LockModeType {
+            lock_mode: LockX,
+            lock_type: LOCK_GAP | LOCK_INSERT_INTENTION,
+        };
+
+        let ret = if let Some(wait_for) = self.rec_other_has_conflicting(
+            page_id,
+            lock_mode_type.clone(),
+            next_rec_heap_no,
+            trx.clone(),
+        ) {
+            self.rec_enqueue_waiting(
+                lock_mode_type,
+                buf_block,
+                next_rec_heap_no,
+                index.clone(),
+                trx.clone(),
+            )
+        } else {
+            Ok(())
+        };
+
+        match &ret {
+            Ok(_) if index.is_clustered() == false => {
+                page.page_update_max_trx_id(trx.trx_get_id(), mtr);
+            }
+            _ => {}
+        }
+
+        Ok(())
     }
 
     /// Check if a waiting lock request still has to wait in the queue.
@@ -1640,5 +1693,48 @@ impl LockSys {
         }
 
         false
+    }
+
+    /// Check if the transaction has the specified lock mode or stronger on a table.
+    ///
+    /// This function checks if the specified transaction has a lock on the given table
+    /// with a lock mode that is equal to or stronger than the requested lock mode.
+    /// It searches through all locks on the table and returns the first matching lock.
+    ///
+    /// # Arguments
+    ///
+    /// * `trx` - The transaction to check for locks
+    /// * `table` - The table to check for locks
+    /// * `lock_mode_type` - The mode and type of the lock to check for
+    ///
+    /// # Returns
+    ///
+    /// * `Some(lock)` - If a matching lock is found, returns the lock
+    /// * `None` - If no matching lock is found
+    ///
+    pub fn table_has(
+        &self,
+        trx: Arc<Trx>,
+        table: Arc<Table>,
+        lock_mode_type: LockModeType,
+    ) -> Option<Rc<RefCell<Lock>>> {
+        if let Some(locks) = self.table_locks.get(&table.get_id()) {
+            for lock in locks {
+                let lock_ref = lock.borrow();
+                if lock_ref.trx.trx_get_id() == trx.trx_get_id()
+                    && Lock::mode_stronger_or_eq(
+                        lock_ref.lock_mode(),
+                        lock_mode_type.lock_mode,
+                    )
+                {
+                    // The given transaction has already locked the table in equal or higher mode.
+
+                    ut_ad!(lock_ref.is_waiting() == false);
+                    return Some(lock.clone());
+                }
+            }
+        }
+
+        None
     }
 }

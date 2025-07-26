@@ -21,7 +21,7 @@ use crate::{
     fsp::fsp0types::Direction,
     innodb::innodb0types::{
         DbErr,
-        DbErr::{DbFail, DbSuccess, DbTooBigRecord},
+        DbErr::{DbFail, DbTooBigRecord},
         PageId, PageNo,
     },
     lock::lock0lock::LockSys,
@@ -36,6 +36,7 @@ use crate::{
     rem::{rem0cmp::cmp_dtuple_rec, rem0rec::Record},
     some_or_panic,
     sync::sync0rw::ReadWriteLatch,
+    trx::trx0trx::Trx,
     ut::ut0dbg::ut_ad,
     ut_panic,
 };
@@ -347,28 +348,24 @@ impl<'a> BTreeCursor<'a> {
         &self,
         flags: usize,
         dtuple: &DTuple,
+        trx: Arc<Trx>,
         mtr: &mut Mtr,
     ) -> Result<(), DbErr> {
         let rec = self.get_rec().unwrap();
 
-        {
-            let lock_sys = self.lock_sys.lock().unwrap();
-            let buf_block = self.buf_block.as_ref().unwrap();
-            let buf_block_ref = buf_block.read().unwrap();
-            let err = lock_sys.rec_insert_check_and_lock(
-                flags,
-                rec,
-                buf_block_ref.deref(),
-                self.index.deref(),
-                mtr,
-            );
+        let mut lock_sys = self.lock_sys.lock().unwrap();
+        let buf_block = self.buf_block.as_ref().unwrap();
 
-            if err != DbSuccess {
-                return Err(err);
-            }
-        }
+        let ret = lock_sys.rec_insert_check_and_lock(
+            flags,
+            rec,
+            buf_block.clone(),
+            self.index.clone(),
+            trx,
+            mtr,
+        );
 
-        Ok(())
+        ret
     }
 
     /// Reorganizes a page to create more free space.

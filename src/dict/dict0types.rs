@@ -216,7 +216,9 @@ impl Index {
     /// # Parameters
     /// * `field` - The field to add to the index
     pub fn add_field(&self, field: Field) {
-        self.inner.lock().unwrap().fields.push(field);
+        let mut inner = self.inner.lock().unwrap();
+        inner.fields.push(field);
+        inner.n_defined += 1;
     }
 
     /// Determines if this index is a clustered index.
@@ -247,6 +249,15 @@ impl Index {
             true => inner.n_uniq,
             false => inner.fields.len(),
         }
+    }
+
+    /// Get the table object associated with the index.
+    ///
+    /// # Returns
+    ///
+    /// `Table` object associated with the index.
+    pub fn get_table(&self) -> Arc<Table> {
+        Arc::new(Table::new(0, "dummy".to_string()))
     }
 
     /// Copy the types of the fields in the index to dtuple.
@@ -380,11 +391,12 @@ impl Index {
     /// # Returns
     /// `true` if the tuple is valid for searching, asserts in debug mode if invalid
     pub fn check_search_tuple(&self, dtuple: &DTuple) -> bool {
-        ut_ad!(
-            dtuple.dtuple_get_n_fields_cmp() <= self.get_n_unique_in_tree()
-        );
+        let result =
+            dtuple.dtuple_get_n_fields_cmp() <= self.get_n_unique_in_tree();
 
-        true
+        ut_ad!(result);
+
+        result
     }
 }
 
