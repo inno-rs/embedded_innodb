@@ -2397,4 +2397,125 @@ mod tests {
         // the waiting lock should have to wait
         assert_eq!(lock_sys.table_has_to_wait_in_queue(&waiting_lock), true);
     }
+
+    #[test]
+    fn test_table_has_no_locks() {
+        // Test case where there are no locks on the table
+        let lock_sys = LockSys::new();
+        let table = Arc::new(Table::new(100, "test_table".to_string()));
+        let trx = Arc::new(Trx::new(1));
+
+        // Check if the transaction has an S lock on the table
+        let result = lock_sys.table_has(
+            trx,
+            table,
+            LockModeType { lock_mode: LockMode::LockS, lock_type: LOCK_TABLE },
+        );
+
+        // Since there are no locks on the table, the result should be None
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_table_has_exact_mode() {
+        // Test case where the transaction has a lock with the exact same mode
+        let mut lock_sys = LockSys::new();
+        let table = Arc::new(Table::new(100, "test_table".to_string()));
+        let trx = Arc::new(Trx::new(1));
+
+        // Add an S lock from the transaction
+        lock_sys.table_create(
+            table.clone(),
+            LockModeType { lock_mode: LockMode::LockS, lock_type: LOCK_TABLE },
+            trx.clone(),
+        );
+
+        // Check if the transaction has an S lock on the table
+        let result = lock_sys.table_has(
+            trx,
+            table,
+            LockModeType { lock_mode: LockMode::LockS, lock_type: LOCK_TABLE },
+        );
+
+        // Since the transaction has an S lock, the result should be Some
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_table_has_stronger_mode() {
+        // Test case where the transaction has a lock with a stronger mode
+        let mut lock_sys = LockSys::new();
+        let table = Arc::new(Table::new(100, "test_table".to_string()));
+        let trx = Arc::new(Trx::new(1));
+
+        // Add an X lock from the transaction (stronger than S)
+        lock_sys.table_create(
+            table.clone(),
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_TABLE },
+            trx.clone(),
+        );
+
+        // Check if the transaction has an S lock on the table
+        let result = lock_sys.table_has(
+            trx,
+            table,
+            LockModeType { lock_mode: LockMode::LockS, lock_type: LOCK_TABLE },
+        );
+
+        // Since the transaction has an X lock (stronger than S), the result should be Some
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_table_has_weaker_mode() {
+        // Test case where the transaction has a lock with a weaker mode
+        let mut lock_sys = LockSys::new();
+        let table = Arc::new(Table::new(100, "test_table".to_string()));
+        let trx = Arc::new(Trx::new(1));
+
+        // Add an S lock from the transaction (weaker than X)
+        lock_sys.table_create(
+            table.clone(),
+            LockModeType { lock_mode: LockMode::LockS, lock_type: LOCK_TABLE },
+            trx.clone(),
+        );
+
+        // Check if the transaction has an X lock on the table
+        let result = lock_sys.table_has(
+            trx,
+            table,
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_TABLE },
+        );
+
+        // Since the transaction has an S lock (weaker than X), the result should be None
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_table_has_different_transaction() {
+        // Test case where there are locks but from different transactions
+        let mut lock_sys = LockSys::new();
+        let table = Arc::new(Table::new(100, "test_table".to_string()));
+
+        // Create two different transactions
+        let trx1 = Arc::new(Trx::new(1));
+        let trx2 = Arc::new(Trx::new(2));
+
+        // Add an X lock from trx1
+        lock_sys.table_create(
+            table.clone(),
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_TABLE },
+            trx1.clone(),
+        );
+
+        // Check if trx2 has an X lock on the table
+        let result = lock_sys.table_has(
+            trx2,
+            table,
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_TABLE },
+        );
+
+        // Since the lock is from a different transaction, the result should be None
+        assert!(result.is_none());
+    }
 }
