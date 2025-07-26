@@ -137,8 +137,6 @@ impl PageId {
 /// The partial error codes reflect the substate of an operation within InnoDB.
 #[derive(Eq, PartialEq, Debug, Display)]
 pub enum DbErr {
-    /// A successful result.
-    DbSuccess,
     /// Internal error cannot proceed.
     DbPanic,
 
