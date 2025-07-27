@@ -186,6 +186,24 @@ impl MLog {
         self.buf.push(MlogType::MLOG_MULTI_REC_END as u8);
     }
 
+    /// Concatenate the given u64 int in a compressed form to the log buffer.
+    pub(in crate::mtr) fn mlog_catenate_u64_compressed(
+        &mut self,
+        val: u64,
+        log_mode: MtrLogMode,
+    ) {
+        // 1) If logging is disabled, do nothing
+        if log_mode == MTR_LOG_NONE {
+            return;
+        }
+
+        // 2) Append compressed u64
+        let mut buf = [0; 10];
+        let bytes_length = mach_uint64_write_compressed(&mut buf, val);
+
+        self.buf.extend_from_slice(&buf[0..bytes_length]);
+    }
+
     /// Append (concatenate) a string into the MTR log, if logging is enabled.
     pub(in crate::mtr) fn mlog_catenate_string(
         &mut self,
@@ -201,6 +219,7 @@ impl MLog {
         // 2) Append exactly those bytes
         self.buf.extend_from_slice(&page[offset..offset + len]);
     }
+
     /// Write the “fast” redo-record header:
     /// [1B type][varint space_id][varint page_no]
     /// Returns the buffer index immediately after the header.
@@ -253,7 +272,7 @@ impl MLog {
         ut_ad!(t <= MlogType::MLOG_BIGGEST_TYPE as u8);
         ut_ad!(t > MlogType::MLOG_8BYTES as u8);
 
-        // 2) “mlog_open(mtr, 11)” → skip entirely if logging‐mode is NONE
+        // 2) `mlog_open(mtr, 11)` → skip entirely if logging‐mode is NONE
         if log_mode == MTR_LOG_NONE {
             return;
         }

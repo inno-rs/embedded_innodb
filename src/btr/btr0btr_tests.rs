@@ -665,7 +665,7 @@ mod tests {
                 records.push(r.clone());
             }
 
-            curr_page_no = BTree::page_get_next(&page) as usize;
+            curr_page_no = BTree::page_get_next(&page);
         }
 
         let mut user_rec_data: Vec<String> = vec![];

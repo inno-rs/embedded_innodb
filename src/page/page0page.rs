@@ -32,7 +32,7 @@ use crate::{
         ut0math::ut_align_down,
     },
     ut_panic,
-    utils::TxnId,
+    utils::TrxId,
 };
 
 pub type SlotId = usize;
@@ -232,9 +232,9 @@ impl Page {
     /// # Returns
     ///
     /// * The file page offset as a `usize`.
-    pub fn page_get_fil_offset(&self) -> usize {
+    pub fn page_get_fil_offset(&self) -> PageNo {
         let page = self.to_page_frame();
-        mach_read_from_4(&page.0[FIL_PAGE_OFFSET..]) as usize
+        mach_read_from_4(&page.0[FIL_PAGE_OFFSET..]) as PageNo
     }
 
     /// Write a new 4-byte page-offset field (little-endian).
@@ -281,7 +281,7 @@ impl Page {
     /// * `()`: This function does not return a value.
     pub fn page_set_max_trx_id(
         &self,
-        max_trx_id: TxnId,
+        max_trx_id: TrxId,
         mtr: Option<&mut Mtr>,
     ) {
         /* It is not necessary to write this change to the redo log as
@@ -306,7 +306,7 @@ impl Page {
     /// Retrieves the maximum transaction ID stored in the page.
     /// # Returns
     /// The maximum transaction ID (`TxnId`) stored in the page.
-    pub fn page_get_max_trx_id(&self) -> TxnId {
+    pub fn page_get_max_trx_id(&self) -> TrxId {
         let page = self.to_page_frame();
         mach_read_from_8(&page.0[PAGE_HEADER + PAGE_MAX_TRX_ID..])
     }
@@ -1498,7 +1498,7 @@ impl Page {
     ///
     /// # Note
     /// This method only operates on leaf pages and will assert in debug mode if called on a non-leaf page.
-    pub fn page_update_max_trx_id(&self, txn_id: TxnId, mtr: &mut Mtr) {
+    pub fn page_update_max_trx_id(&self, txn_id: TrxId, mtr: &mut Mtr) {
         ut_ad!(self.page_is_leaf());
 
         let mut mtr = mtr;

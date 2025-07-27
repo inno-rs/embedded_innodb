@@ -45,12 +45,12 @@ impl Mtr {
     /// This constructor initializes a new MTR with default values:
     /// - State is set to `MtrUndefined`
     /// - Log mode is set to `MTR_LOG_NONE` (no logging)
-    /// - No modifications flag is set to false
+    /// - No modification flag is set to false
     /// - Log record count is initialized to 0
     /// - Empty memo list for tracking resources
     /// - Empty log buffer
     /// - Empty savepoints list
-    /// - Double-write buffer creation flag is set to false
+    /// - a Double-write buffer creation flag is set to false
     /// - Magic number is set to the constant value for validation
     ///
     /// # Returns
@@ -136,17 +136,15 @@ impl Mtr {
         self.memo.iter().any(|&x| x == *slot)
     }
 
-    /// Returns a mutable reference to the mini-transaction's log buffer.
+    /// Releases a specific resource from the mini-transaction's memo list.
     ///
-    /// This method provides access to the log buffer, allowing operations
-    /// to be recorded in the mini-transaction log.
+    /// This method finds and removes a specific memo slot from the memo list,
+    /// then performs the appropriate release action based on the type of resource.
+    /// The resource is completely released from the mini-transaction's control.
     ///
-    /// # Returns
-    /// A mutable reference to the MLog buffer
-    pub fn mlog(&mut self) -> &mut MLog {
-        &mut self.log_buffer
-    }
-
+    /// # Arguments
+    /// * `to_release` - The memo slot representing the resource to be released
+    ///
     pub fn memo_release(&mut self, to_release: &MemoSlot) {
         ut_ad!(
             self.mtr_state == MtrState::MtrActive,
@@ -211,7 +209,16 @@ impl Mtr {
         old
     }
 
-    /// Release a single memo slot in-place (C++ `mtr_memo_slot_release`).
+    /// Releases a single memo slot in-place (C++ `mtr_memo_slot_release`).
+    ///
+    /// This method releases a specific memo slot by replacing it with a dummy slot
+    /// and then performing the appropriate release action based on the type of resource.
+    /// Unlike `memo_release`, this method modifies the slot in-place rather than
+    /// removing it from the memo list.
+    ///
+    /// # Arguments
+    /// * `slot` - A mutable reference to the memo slot to be released
+    ///
     pub fn memo_slot_release(&mut self, slot: &mut MemoSlot) {
         // Swap out the slot with a dummy so we don't double-release
         let owned = std::mem::replace(
@@ -241,6 +248,19 @@ impl Mtr {
         }
     }
 
+    /// Commits the mini-transaction, making all its changes permanent.
+    ///
+    /// This method transitions the mini-transaction from the ACTIVE state to COMMITTING,
+    /// flushes the log buffer to the shared redo-log, releases all remaining resources
+    /// in the memo list, and finally transitions to the COMMITTED and then UNDEFINED state.
+    ///
+    /// # Implementation Details
+    /// The commit process involves:
+    /// 1. Flushing the log buffer to the shared redo-log
+    /// 2. Releasing all remaining memo slots (similar to rollback_to_savepoint(0))
+    /// 3. Clearing all savepoints
+    /// 4. Transitioning through state changes: ACTIVE -> COMMITTING -> COMMITTED -> UNDEFINED
+    ///
     pub fn commit(&mut self) {
         ut_ad!(self.mtr_state == MtrState::MtrActive);
         self.mtr_state = MtrState::MtrCommitting;
@@ -542,6 +562,20 @@ impl Mtr {
         self.dblwr_create_in_progress
     }
 
+    /// Reserves space in the log buffer and writes the mini-transaction's log records to it.
+    ///
+    /// This method attempts to write the mini-transaction's log buffer to the shared redo log.
+    /// It first tries a fast path to fit the data in the current log block. If that fails,
+    /// it falls back to a more comprehensive write operation.
+    ///
+    /// # Arguments
+    /// * `recovery` - A recovery flag used by the log system
+    /// * `log` - A thread-safe reference to the log system
+    ///
+    /// # Returns
+    /// * `Ok(())` if the write operation was successful
+    /// * `Err(String)` with an error message if the write operation failed
+    ///
     pub fn log_reserve_and_write(
         &mut self,
         recovery: u32,
@@ -605,6 +639,22 @@ impl Mtr {
         self.inc_n_log_records();
     }
 
+    /// Concatenates a 64-bit unsigned integer in a compressed format to the log buffer.
+    ///
+    /// This method appends a compressed representation of a 64-bit integer to the
+    /// mini-transaction's log buffer. The compression reduces the space required
+    /// for storing large integers in the log, especially when many high-order bits are zero.
+    ///
+    /// # Arguments
+    /// * `val` - The 64-bit unsigned integer to be compressed and appended to the log buffer
+    ///
+    /// # Implementation Details
+    /// The compression is performed by the underlying log buffer's `mlog_catenate_u64_compressed` method,
+    /// which uses the current log mode to determine whether logging is enabled.
+    pub fn catenate_u64_compressed(&mut self, val: u64) {
+        self.log_buffer.mlog_catenate_u64_compressed(val, self.log_mode)
+    }
+
     /// Writes a byte string to the log buffer.
     ///
     /// # Arguments
@@ -644,6 +694,30 @@ impl Mtr {
             self.n_log_records += 1;
         }
         payload
+    }
+
+    /// Writes the initial part of a log record consisting of a one-byte type and four-byte space id and page number.
+    ///
+    /// This method writes the header portion of a log record to the mini-transaction's log buffer.
+    /// The header includes the log record type, space ID, and page number, which are essential
+    /// for identifying the affected page during recovery.
+    ///
+    /// # Arguments
+    /// * `page` - The page being modified, which provides the space ID and page number
+    /// * `mlog_type` - The type of log record to create
+    /// * `log_mode` - The logging mode that determines whether logging is enabled
+    ///
+    /// # Implementation Details
+    /// The method delegates to the log buffer's `mlog_write_initial_log_record` method,
+    /// passing the page, log type, log mode, and a flag indicating this is not a multi-record operation.
+    pub fn write_initial_log_record(
+        &mut self,
+        page: &Page,
+        mlog_type: MlogType,
+        log_mode: MtrLogMode,
+    ) {
+        self.log_buffer
+            .mlog_write_initial_log_record(page, mlog_type, log_mode, false)
     }
 
     /// Marks the end of a multi-record log entry.

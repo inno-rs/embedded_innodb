@@ -179,7 +179,7 @@ mod tests {
     #[rstest]
     fn test_page_set_max_trx_id(page_fixture: PageFixture) {
         let page = &page_fixture.page;
-        let max_trx_id: crate::utils::TxnId = 2352325;
+        let max_trx_id: crate::utils::TrxId = 2352325;
 
         page.page_set_max_trx_id(max_trx_id, None);
 
