@@ -17,3 +17,11 @@ pub enum TrxQueState {
     /// The Transaction is committing.
     TrxQueCommitting,
 }
+
+pub struct UndoRecord {}
+
+impl UndoRecord {
+    pub fn new() -> Self {
+        Self {}
+    }
+}

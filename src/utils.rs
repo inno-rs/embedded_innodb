@@ -1,1 +1,1 @@
-pub type TxnId = u64;
+pub type TrxId = u64;

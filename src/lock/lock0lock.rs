@@ -183,7 +183,7 @@ impl Lock {
     ///
     /// The transaction id of the lock.
     ///
-    pub fn trx_id(&self) -> crate::utils::TxnId {
+    pub fn trx_id(&self) -> crate::utils::TrxId {
         self.trx.trx_get_id()
     }
 
