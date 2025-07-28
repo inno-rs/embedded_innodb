@@ -161,4 +161,9 @@ impl Trx {
 
         *que_state = TrxQueState::TrxQueRunning;
     }
+
+    /// Get the undo no of the transaction.
+    pub fn get_undo_no(&self) -> UndoNo {
+        self.inner.lock().unwrap().undo_no
+    }
 }

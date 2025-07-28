@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use strum_macros::Display;
 
 /// # Transaction Undo Log Management
@@ -20,15 +22,24 @@ use strum_macros::Display;
 /// The undo log pages are managed within rollback segments, which are allocated from tablespaces.
 use crate::fil::fil0types::{FIL_PAGE_TYPE, FSEG_PAGE_DATA, FilPageType};
 use crate::{
+    data::data0types::DTuple,
+    dict::dict0types::Index,
     fsp::fsp0fsp::FLST_NODE_SIZE,
-    innodb::innodb0types::{PageFrame, PageNo, SpaceId},
-    mach::mach0data::{mach_read_from_2, mach_write_to_2},
+    innodb::innodb0types::{PageFrame, PageNo, SpaceId, UNIV_PAGE_SIZE},
+    mach::mach0data::{
+        mach_read_from_2, mach_uint64_write_compressed, mach_write_compressed,
+        mach_write_to_1, mach_write_to_2,
+    },
     mtr::{
-        mtr0mtr::{Mtr, MtrLogMode::MTR_LOG_MODE_ALL},
-        mtr0types::MlogType::MLOG_UNDO_INIT,
+        mtr0mtr::{
+            Mtr,
+            MtrLogMode::{MTR_LOG_MODE_ALL, MTR_LOG_SHORT_INSERTS},
+        },
+        mtr0types::MlogType::{MLOG_UNDO_INIT, MLOG_UNDO_INSERT},
     },
     page::page0page::Page,
-    trx::trx0types::UndoRecord,
+    trx::{trx0rec::TRX_UNDO_INSERT_REC, trx0trx::Trx, trx0types::UndoRecord},
+    ut::ut0dbg::ut_ad,
     utils::TrxId,
 };
 
@@ -115,9 +126,11 @@ impl UndoPage {
     /// Creates a new UndoPage instance from a Page.
     ///
     /// # Arguments
+    ///
     /// * `page` - The underlying page to wrap as an undo page
     ///
     /// # Returns
+    ///
     /// A new UndoPage instance
     pub fn new(page: Page) -> Self {
         Self { page }
@@ -126,6 +139,7 @@ impl UndoPage {
     /// Gets the page number of this undo page.
     ///
     /// # Returns
+    ///
     /// The page number in the tablespace
     pub fn page_get_page_no(&self) -> PageNo {
         self.page.page_get_fil_offset()
@@ -134,22 +148,64 @@ impl UndoPage {
     /// Converts the undo page to a page frame for direct memory access.
     ///
     /// # Returns
+    ///
     /// A PageFrame representing the raw memory of the page
     pub fn page_to_frame(&self) -> PageFrame {
         self.page.to_page_frame()
     }
 
+    /// Gets the undo type of the page.
+    ///
+    /// Each undo page is designated for either insert or update operations.
+    /// This method reads the type from the undo page header.
+    ///
+    /// # Returns
+    ///
+    /// `TrxUndoType` specifying the type of undo (insert, update, or unknown).
+    pub fn page_get_undo_type(&self) -> TrxUndoType {
+        let page_frame = self.page.to_page_frame();
+        let val = mach_read_from_2(
+            &page_frame.0[TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_TYPE..],
+        );
+        match val as usize {
+            TRX_UNDO_INSERT => TrxUndoType::UndoInsert,
+            TRX_UNDO_UPDATE => TrxUndoType::UndoUpdate,
+            _ => TrxUndoType::Unknown,
+        }
+    }
+
     /// Gets the offset of the first free byte on the undo page.
     ///
     /// This is used to determine where new undo records can be written.
+    /// The free location is stored in the undo page header.
     ///
     /// # Returns
+    ///
     /// The offset of the first free byte on the page
-    pub fn page_get_undo_page_free(&self) -> usize {
+    pub fn page_get_first_free(&self) -> usize {
         let page_frame = self.page.to_page_frame();
         mach_read_from_2(
             &page_frame.0[TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_FREE..],
         ) as usize
+    }
+
+    /// Sets the first free location in the undo page header.
+    ///
+    /// This is called after writing a new undo record to update the free space pointer.
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - The new offset value to set as the first free location
+    ///
+    /// # Effects
+    ///
+    /// Updates the undo page header to reflect the new free space position
+    pub fn page_set_first_free(&mut self, val: usize) {
+        let page_frame = self.page.to_page_frame();
+        mach_write_to_2(
+            &mut page_frame.0[TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_FREE..],
+            val as u16,
+        );
     }
 
     /// Initialize the fields in an undo log segment.
@@ -158,10 +214,12 @@ impl UndoPage {
     /// initializes it for use as either an insert or update undo log.
     ///
     /// # Arguments
+    ///
     /// * `undo_type` - The type of undo log (insert or update)
     /// * `mtr` - The mini-transaction that will log this operation
     ///
     /// # Effects
+    ///
     /// - Sets the undo page type (insert or update)
     /// - Initializes the start and free pointers to point after the header
     /// - Sets the page type to UndoLog
@@ -207,6 +265,142 @@ impl UndoPage {
         // Log the undo type
         mtr.catenate_u64_compressed(undo_type as u64);
     }
+
+    /// Reports a record insert operation in the undo log.
+    ///
+    /// This method creates an undo record for an insert operation, which can be used
+    /// to roll back the insert if needed.
+    /// The undo record contains information about
+    /// the inserted record's key fields.
+    ///
+    /// # Arguments
+    ///
+    /// * `trx` - The transaction performing the insert
+    /// * `index` - The clustered index where the record is being inserted
+    /// * `dtuple` - The data tuple containing the record data being inserted
+    /// * `mtr` - The mini-transaction that will log this operation
+    ///
+    /// # Effects
+    ///
+    /// - Writes an undo record to the undo page
+    /// - Updates the free space pointer on the page
+    /// - Logs the undo record creation in the mini-transaction log
+    pub fn trx_undo_page_report_insert(
+        &mut self,
+        trx: Arc<Trx>,
+        index: Arc<Index>,
+        dtuple: &DTuple,
+        mtr: &mut Mtr,
+    ) {
+        ut_ad!(index.is_clustered());
+        ut_ad!(self.page_get_undo_type() == TrxUndoType::UndoInsert);
+
+        let free_location = self.page_get_first_free();
+        ut_ad!(free_location < UNIV_PAGE_SIZE);
+
+        let page_frame = self.page.to_page_frame();
+
+        const TRX_UNDO_LOG_REC_NEXT: usize = 0;
+        const TRX_UNDO_LOG_REC_TYPE: usize = 2;
+
+        let mut offset = 0usize;
+        // 0. Leave 2 bytes for storing the offset to the next log record.
+        // It can only be calculated if we know the size of the current record.
+        offset += 2;
+
+        // 1. Write general parameters of the undo record.
+        mach_write_to_1(
+            &mut page_frame.0[free_location + offset..],
+            TRX_UNDO_INSERT_REC as u8,
+        );
+        offset += 1;
+
+        // 2. Write undo no
+        offset += mach_uint64_write_compressed(
+            &mut page_frame.0[free_location + offset..],
+            trx.get_undo_no(),
+        );
+
+        // 3. Write table id.
+        let table_id = index.get_table().get_id();
+        offset += mach_uint64_write_compressed(
+            &mut page_frame.0[free_location + offset..],
+            table_id.0,
+        );
+
+        // 4. Store the fields required to uniquely determine the record to be inserted in the clustered index.
+        for i in 0..index.get_n_unique_in_tree() {
+            let dfield = dtuple.dtuple_get_nth_field(i);
+            let field_length = dfield.dfield_get_len();
+
+            let field_length_val = match dfield.dfield_is_null() {
+                true => u32::MAX,
+                false => field_length as u32,
+            };
+
+            offset += mach_write_compressed(
+                &mut page_frame.0[free_location + offset..],
+                field_length_val,
+            );
+
+            // Write the data.
+            if dfield.dfield_is_null() == false {
+                let data = dfield.dfield_get_data();
+                page_frame.0[free_location + offset..][..field_length]
+                    .copy_from_slice(data);
+                offset += data.len();
+            }
+        }
+
+        let next_free_location = offset;
+
+        // 5. Set the previous ptr for the next log record.
+        mach_write_to_2(
+            &mut page_frame.0[free_location..],
+            next_free_location as u16,
+        );
+
+        // 6. Update the value of the free location.
+        self.page_set_first_free(next_free_location);
+        ut_ad!(free_location + offset == next_free_location);
+
+        // 7. Write the log entry to the log.
+        self.trx_undo_page_add_undo_rec_log(
+            free_location,
+            next_free_location,
+            mtr,
+        );
+    }
+
+    /// Writes the mini-transaction log entry for an inserted undo log record.
+    ///
+    /// This method logs the changes made to the undo page when a new undo record is inserted.
+    /// The log entry can be used during recovery to replay the undo record creation.
+    ///
+    /// # Arguments
+    ///
+    /// * `old_free` - The previous free space offset before the undo record was inserted
+    /// * `new_free` - The new free space offset after the undo record was inserted
+    /// * `mtr` - The mini-transaction that will log this operation
+    ///
+    /// # Effects
+    /// - Writes a log record of type MLOG_UNDO_INSERT to the mini-transaction log
+    /// - Appends the content of the newly created undo record to the log
+    pub fn trx_undo_page_add_undo_rec_log(
+        &mut self,
+        old_free: usize,
+        new_free: usize,
+        mtr: &mut Mtr,
+    ) {
+        mtr.write_initial_log_record(
+            &self.page,
+            MLOG_UNDO_INSERT,
+            MTR_LOG_SHORT_INSERTS,
+        );
+
+        // Write the newly created page contents to the log.
+        mtr.catenate_string(&self.page, old_free + 2, new_free - old_free - 4);
+    }
 }
 
 /// Represents the type of an undo log.
@@ -215,12 +409,14 @@ impl UndoPage {
 /// - Insert undo logs: Used for rolling back inserts
 /// - Update undo logs: Used for rolling back updates and deletes
 #[repr(u16)]
-#[derive(Display, Clone, Debug)]
+#[derive(Display, Clone, Debug, Eq, PartialEq)]
 pub enum TrxUndoType {
     /// Undo log for insert operations
     UndoInsert = TRX_UNDO_INSERT as u16,
     /// Undo log for update and delete operations
     UndoUpdate = TRX_UNDO_UPDATE as u16,
+    /// Unknown type of undo type.
+    Unknown = u16::MAX,
 }
 
 /// Represents the state of an undo log.
@@ -274,6 +470,7 @@ impl TrxUndo {
     /// Creates a new transaction undo log with default values.
     ///
     /// # Returns
+    ///
     /// A new TrxUndo instance initialized with default values
     pub fn new() -> Self {
         Self {
@@ -292,12 +489,14 @@ impl TrxUndo {
     /// This method retrieves the next undo record in the sequence from the current one.
     ///
     /// # Arguments
+    ///
     /// * `rec` - The current undo record
     /// * `page_no` - The page number where the record is located
     /// * `offset` - The offset within the page
     /// * `mtr` - The mini-transaction for logging
     ///
     /// # Returns
+    ///
     /// The next undo record in the sequence
     pub fn get_next_rec(
         &self,
@@ -315,11 +514,13 @@ impl TrxUndo {
     /// for traversing the undo log.
     ///
     /// # Arguments
+    ///
     /// * `undo_page` - The undo page containing the record
     /// * `page_no` - The page number to check
     /// * `offset` - The offset of the undo record
     ///
     /// # Returns
+    ///
     /// The end offset of the undo record on the page
     pub fn trx_undo_page_get_end(
         &self,
@@ -332,13 +533,13 @@ impl TrxUndo {
             let end = mach_read_from_2(&page_frame.0[offset..]);
             if end == 0 {
                 // If the end offset is 0, use the free space pointer
-                undo_page.page_get_undo_page_free()
+                undo_page.page_get_first_free()
             } else {
                 end as usize
             }
         } else {
             // If we're checking a different page, use the free space pointer
-            undo_page.page_get_undo_page_free()
+            undo_page.page_get_first_free()
         }
     }
 
@@ -348,11 +549,13 @@ impl TrxUndo {
     /// for traversing the undo log.
     ///
     /// # Arguments
+    ///
     /// * `undo_page` - The undo page to check
     /// * `page_no` - The page number to check
     /// * `offset` - The offset within the page
     ///
     /// # Returns
+    ///
     /// The start offset of the undo records on the page
     pub fn trx_undo_page_get_start(
         &self,

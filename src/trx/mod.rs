@@ -1,3 +1,4 @@
+mod trx0rec;
 pub(crate) mod trx0sys;
 pub(crate) mod trx0trx;
 mod trx0trx_tests;

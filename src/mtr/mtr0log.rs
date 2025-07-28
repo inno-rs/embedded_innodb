@@ -13,33 +13,53 @@ use crate::{
     ut_panic,
 };
 
+/// Mini-transaction log buffer that stores log records for database operations.
+///
+/// This struct is responsible for writing and managing log records that track
+/// changes to database pages, ensuring durability and recoverability.
 pub(in crate::mtr) struct MLog {
+    /// Buffer that stores the log records
     pub buf: Vec<u8>,
 }
 
 impl MLog {
+    /// Creates a new empty mini-transaction log buffer.
+    ///
+    /// # Returns
+    ///
+    /// A new `MLog` instance with an empty buffer.
     pub(in crate::mtr) fn new() -> Self {
         MLog { buf: Vec::new() }
     }
 
+    /// Clears all log records from the buffer.
+    ///
+    /// This method empties the log buffer without deallocating memory.
     pub(in crate::mtr) fn clear(&mut self) {
         self.buf.clear();
     }
+
+    /// Appends the given bytes to the log buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - The byte slice to append to the log buffer.
     pub(in crate::mtr) fn append(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
     }
 
-    /// Write 1-4 bytes to file page buffered in the buffer pool. And, write the corresponding log recording to the mini-transaction log.
+    /// Writes 1-4 bytes to a file page buffered in the buffer pool and writes the corresponding log record.
     ///
     /// # Arguments
     ///
     /// * `page` - The page to write to.
+    /// * `offset` - The offset within the page to write at.
     /// * `val` - The value to write.
-    /// * `mlog_type` - The type of log to write.
-    /// * `mtr` - The mini-transaction to write to.
+    /// * `mlog_type` - The type of log to write (MLOG_1BYTE, MLOG_2BYTES, or MLOG_4BYTES).
+    /// * `log_mode` - The logging mode to use.
     ///
-    /// Write 1/2/4 bytes into the page at `offset`, and emit a complete
-    /// redo-log record: [header][offset][value].
+    /// This method writes 1/2/4 bytes into the page at `offset` and emits a complete
+    /// redo-log record with the format: [header][offset][value].
     pub(in crate::mtr) fn mlog_write_u32(
         &mut self,
         page: &Page,
@@ -91,8 +111,16 @@ impl MLog {
         self.buf.truncate(pos);
     }
 
-    /// Write an 8-byte LE value at `offset` in `page` and log it exactly like
-    /// Exactly like C++ `mlog_write_uint64`, but using your PageFrame API
+    /// Writes an 8-byte little-endian value at the specified offset in the page and logs it.
+    ///
+    /// # Arguments
+    ///
+    /// * `page` - The page to write to.
+    /// * `offset` - The offset within the page to write at.
+    /// * `val` - The 64-bit value to write.
+    /// * `log_mode` - The logging mode to use.
+    ///
+    /// This method writes an 8-byte value to the page and creates a corresponding log record.
     pub(in crate::mtr) fn mlog_write_uint64(
         &mut self,
         page: &Page,
@@ -137,6 +165,17 @@ impl MLog {
         self.buf.truncate(pos);
     }
 
+    /// Writes a byte string to the specified offset in the page and logs it.
+    ///
+    /// # Arguments
+    ///
+    /// * `page` - The page to write to.
+    /// * `offset` - The offset within the page to write at.
+    /// * `data` - The byte slice to write to the page.
+    /// * `log_mode` - The logging mode to use.
+    ///
+    /// This method copies the provided data to the page at the specified offset
+    /// and creates a corresponding log record with the format: [header][offset][length][data].
     pub(in crate::mtr) fn mlog_write_string(
         &mut self,
         page: &Page,
@@ -145,7 +184,6 @@ impl MLog {
         log_mode: MtrLogMode,
     ) {
         // 1) In‐memory update
-
         let frame = page.to_page_frame();
         frame.0[offset..offset + data.len()].copy_from_slice(data);
 
@@ -181,12 +219,26 @@ impl MLog {
         self.buf[pos..pos + data.len()].copy_from_slice(data);
     }
 
-    /// Emit the end-of-sequence marker for multi-record writes.
+    /// Emits the end-of-sequence marker for multi-record writes.
+    ///
+    /// This method appends a special marker (MLOG_MULTI_REC_END) to the log buffer
+    /// to indicate the end of a sequence of related log records. This is used in
+    /// operations that generate multiple log records that need to be processed
+    /// together during recovery.
     pub(in crate::mtr) fn mlog_multi_rec_end(&mut self) {
         self.buf.push(MlogType::MLOG_MULTI_REC_END as u8);
     }
 
-    /// Concatenate the given u64 int in a compressed form to the log buffer.
+    /// Appends a 64-bit integer in compressed form to the log buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - The 64-bit value to append in compressed form.
+    /// * `log_mode` - The logging mode to use.
+    ///
+    /// This method uses a variable-length encoding to efficiently store the value
+    /// in the log buffer.
+    /// If logging is disabled (MTR_LOG_NONE), no action is taken.
     pub(in crate::mtr) fn mlog_catenate_u64_compressed(
         &mut self,
         val: u64,
@@ -204,10 +256,20 @@ impl MLog {
         self.buf.extend_from_slice(&buf[0..bytes_length]);
     }
 
-    /// Append (concatenate) a string into the MTR log, if logging is enabled.
+    /// Appends a portion of a byte slice to the log buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `buf` - The source byte slice.
+    /// * `offset` - The starting offset within the source byte slice.
+    /// * `len` - The number of bytes to append.
+    /// * `log_mode` - The logging mode to use.
+    ///
+    /// This method appends the specified portion of the byte slice to the log buffer.
+    /// If logging is disabled (MTR_LOG_NONE), no action is taken.
     pub(in crate::mtr) fn mlog_catenate_string(
         &mut self,
-        page: &[u8],
+        buf: &[u8],
         offset: usize,
         len: usize,
         log_mode: MtrLogMode,
@@ -217,12 +279,25 @@ impl MLog {
             return;
         }
         // 2) Append exactly those bytes
-        self.buf.extend_from_slice(&page[offset..offset + len]);
+        self.buf.extend_from_slice(&buf[offset..offset + len]);
     }
 
-    /// Write the “fast” redo-record header:
+    /// Writes the initial "fast" redo-record header to the log buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `page` - The page being modified.
+    /// * `mlog_type` - The type of log record.
+    /// * `log_pos` - The position in the log buffer to start writing.
+    ///
+    /// # Returns
+    ///
+    /// The position in the log buffer immediately after the header.
+    ///
+    /// This method writes a header with the format:
     /// [1B type][varint space_id][varint page_no]
-    /// Returns the buffer index immediately after the header.
+    ///
+    /// The header identifies the type of operation and the page being modified.
     pub(in crate::mtr) fn mlog_write_initial_log_record_fast(
         &mut self,
         page: &Page,
@@ -260,6 +335,17 @@ impl MLog {
         log_pos
     }
 
+    /// Writes the initial log record for operations on a page.
+    ///
+    /// # Arguments
+    ///
+    /// * `page` - The page being modified.
+    /// * `mlog_type` - The type of log record (must be greater than MLOG_8BYTES and not exceed MLOG_BIGGEST_TYPE).
+    /// * `log_mode` - The logging mode to use.
+    /// * `dblwr_create_in_progress` - Flag indicating whether double-write buffer creation is in progress.
+    ///
+    /// This method writes the initial log record for an operation on a page. If logging is disabled
+    /// or if double-write buffer creation is in progress, the behavior is modified accordingly.
     pub(in crate::mtr) fn mlog_write_initial_log_record(
         &mut self,
         page: &Page,
@@ -293,15 +379,22 @@ impl MLog {
 
     /// Attempt to parse an MLOG_WRITE_STRING record from `input`.
     ///
-    /// - `input` is the bytes remaining in the log (must contain at least 4 bytes for
-    ///   offset+length, plus the payload).
-    /// - `page` is an optional mutable page buffer; if `Some`, we write the payload
-    ///   into `page[offset..offset+len]`. In plain terms: by making page an Option,
-    /// we give callers a choice—either just parse and skip the memory write (None),
+    /// We give callers a choice: either parse and skip the writing to memory (None),
     /// or parse and apply the change (Some(page))—all with one shared function rather than two separate ones.
     ///
-    /// Returns `Some(remaining)` on success, where `remaining` is the slice after
-    /// consuming the 4 + len bytes. Returns `None` on any underflow or bounds failure.
+    /// # Arguments
+    ///
+    /// * `input` - is the bytes remaining in the log (must contain at least 4 bytes for
+    ///   offset+length, plus the payload).
+    /// * `page` - is an optional mutable page buffer; if `Some`, we write the payload
+    ///   into `page[offset..offset+len]`.
+    /// In plain terms: by making page an Option,
+    ///
+    /// # Returns
+    ///
+    /// `Some(remaining)` on success, where `remaining` is the slice after consuming the 4 + len bytes.
+    /// Returns `None` on any underflow or bounds failure.
+    ///
     pub(in crate::mtr) fn mlog_parse_string<'a>(
         &mut self,
         mut input: &'a [u8],
@@ -349,6 +442,20 @@ impl MLog {
     ///	Otherwise it grows the log buffer by 11 + 16 bytes, writes the 1-byte type and reserves room for the varints.
     /// 3.	Fill in the 16-byte payload at the returned pointer.
     ///
+    ///
+    /// Reserves log space for an index write operation and prepares a buffer for the payload.
+    ///
+    /// # Arguments
+    ///
+    /// * `page` - The page being modified.
+    /// * `mlog_type` - The type of log record.
+    /// * `size` - The size of the payload in bytes.
+    /// * `mtr_log_mode` - The logging mode to use.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(&mut [u8])` - A mutable slice where the caller can write the payload.
+    /// * `None` - If logging is disabled.
     ///
     pub(in crate::mtr) fn mlog_open_and_write_index(
         &mut self,

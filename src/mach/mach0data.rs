@@ -81,6 +81,7 @@ pub fn mach_read_from_8(buf: &[u8]) -> u64 {
     let low = mach_read_from_4(&buf[4..8]) as u64;
     (high << 32) | low
 }
+
 /// Encode `v` in InnoDB's compressed-ULINT varint format into `buf`.
 /// Returns the number of bytes written (1..5).
 ///
@@ -226,8 +227,8 @@ pub fn mach_parse_compressed(buf: &[u8]) -> Option<(u32, usize)> {
     }
     None
 }
+
 /// Parse a compressed 64-bit integer: first a compressed high‐32 bits, then 4 raw bytes.
-/// Mirrors C++ `mach_uint64_parse_compressed(byte* ptr, byte* end_ptr, uint64_t* v)`.
 /// Returns `Some((value, total_bytes_consumed))` or `None` on underflow.
 pub fn mach_uint64_parse_compressed(buf: &[u8]) -> Option<(u64, usize)> {
     // need at least 5 bytes for high varint + 4-byte low
