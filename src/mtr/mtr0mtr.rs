@@ -666,6 +666,24 @@ impl Mtr {
         self.inc_n_log_records();
     }
 
+    /// Catenate string to the log buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `page` - The page to copy contents from.
+    /// * `offset` - Offset in the page to copy from.
+    /// * `len` - Length of bytes to copy.
+    ///
+    pub fn catenate_string(&mut self, page: &Page, offset: usize, len: usize) {
+        let page_frame = page.to_page_frame();
+        self.log_buffer.mlog_catenate_string(
+            &page_frame.0[offset..],
+            offset,
+            len,
+            self.log_mode,
+        );
+    }
+
     /// Reserves space and writes an index payload to the log buffer.
     ///
     /// This method allocates space in the log buffer for an index-related
