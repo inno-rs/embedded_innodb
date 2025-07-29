@@ -88,7 +88,7 @@ pub(super) mod tests {
         let mut buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
 
         let mut mtr = Mtr::new();
-        mtr.set_mtr_state(MtrActive);
+        mtr.start();
 
         // Try creating when there are no pages in the pool.
         let result = buf_pool.create(0, 0, &mut mtr);
@@ -182,7 +182,6 @@ pub(super) mod tests {
         let space_id = 0;
         let page_no = 42;
         let owning_page = test0utils::create_raw_page();
-        let buf_page = owning_page.page.clone();
         let block = owning_page.buf_block.clone();
 
         // 4) Initialize the page in the pool (this sets in_file & hashes it).
@@ -284,7 +283,6 @@ pub(super) mod tests {
         let page_id = PageId { space_id, page_no };
         let owning_page = test0utils::create_raw_page();
 
-        let buf_page = owning_page.page.clone();
         let block = owning_page.buf_block.clone();
 
         // Manually insert it into the pool’s inner structures as an “in-memory” page:
@@ -373,7 +371,7 @@ pub(super) mod tests {
         assert!(block.is_some(), "create should return Some for a free block");
         let block = block.unwrap();
 
-        // 2) after create, stats.n_pages_created == 1
+        // 2) after creation, stats.n_pages_created == 1
         assert_eq!(
             pool.lock().unwrap().stat().n_pages_created.load(Relaxed),
             1
@@ -494,5 +492,29 @@ pub(super) mod tests {
                 FixMode::NoLatch
             )
         );
+    }
+
+    #[rstest]
+    fn test_block_alloc(buf_pool_fixture: BufPoolFixture) {
+        let mut buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        buf_pool.open(10 * UNIV_PAGE_SIZE);
+
+        assert_eq!(buf_pool.get_free_list_size(), 10);
+
+        // 1. We should be able to get the first 10 pages by calling block_alloc 10 times.
+        for _ in 0..10 {
+            let resp = buf_pool.block_alloc();
+            assert!(resp.is_some());
+        }
+
+        // Any further calls should return none
+
+        let resp = buf_pool.block_alloc();
+        assert!(resp.is_none());
+
+        assert_eq!(buf_pool.get_free_list_size(), 0);
     }
 }

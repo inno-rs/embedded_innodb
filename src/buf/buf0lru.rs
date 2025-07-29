@@ -346,7 +346,7 @@ impl BufLRU {
     /// * `Some(BufBlock)` - A free buffer block
     /// * `None` - If no blocks could be freed (should not happen in a properly sized buffer pool)
     pub fn get_free_block(&mut self) -> Option<Arc<RwLock<BufBlock>>> {
-        // First try to get a block from the free list
+        // First, try to get a block from the free list
         if let Some(block) = self.get_free_only() {
             return Some(block);
         }

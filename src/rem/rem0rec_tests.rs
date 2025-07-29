@@ -229,8 +229,8 @@ mod tests {
         }
     }
 
-    #[test]
     #[ignore]
+    #[test]
     fn test_rec_field_external_2byte_format() {
         let owning_page = create_records(
             10,
@@ -325,7 +325,31 @@ mod tests {
 
     #[ignore]
     #[test]
-    fn test_rec_field_external_many_fields_external() {}
+    fn test_rec_field_external_many_fields_external() {
+        let owning_page = create_records(
+            10,
+            vec![
+                FieldType::String(Some("Hello World 2".to_string())),
+                FieldType::String(Some(random_string_with_seed(127, 42))),
+                FieldType::String(Some(random_string_with_seed(1246, 42))),
+            ],
+        );
+        let page = owning_page.page;
+
+        for rec in page.page_get_user_records() {
+            assert_eq!(rec.rec_get_1byte_offs_flag(), false);
+            if page.page_rec_is_user_rec(rec) {
+                let n_fields = rec.rec_get_n_fields();
+                for i in 0..n_fields {
+                    if i == 0 {
+                        assert!(!rec.rec_nth_external(i));
+                    } else {
+                        assert!(rec.rec_nth_external(i));
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_rec_needs_external() {
@@ -677,8 +701,8 @@ mod tests {
         );
     }
 
-    #[test]
     #[ignore]
+    #[test]
     fn test_rec_set_2byte_offs_flag() {
         let owning_page = create_records(
             1,
@@ -722,8 +746,8 @@ mod tests {
         assert_eq!(rec.rec_offs_size(), 49);
     }
 
-    #[test]
     #[ignore]
+    #[test]
     fn test_rec_offs_size_with_2byte_flag() {
         let owning_page = create_records(
             1,

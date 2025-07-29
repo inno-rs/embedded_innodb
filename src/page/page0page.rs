@@ -206,6 +206,11 @@ impl Page {
     }
 
     /// Copy the page to a destination buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer` - The destination buffer to write to.
+    ///
     pub fn copy_to(&self, buffer: &mut [u8; UNIV_PAGE_SIZE]) {
         let src = self.to_page_frame();
         ut_a!(src.0.len() == buffer.len());
@@ -1248,7 +1253,7 @@ impl Page {
         }
     }
 
-    /// Copies records from source page to the destination page.
+    /// Copies records from the source page to the destination page.
     ///
     /// This method copies records from the specified record to the end of the source page.
     /// Infimum and Supremum records are not copied.
@@ -1344,7 +1349,7 @@ impl Page {
     /// (after infimum) and continuing up to (but not including) the specified record.
     /// It uses a page cursor to navigate and delete each record individually.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `rec` - The record up to which deletion should occur (exclusive)
     /// * `buf_block` - The buffer block containing the page
     /// * `index` - Index to which the records belong
@@ -1370,8 +1375,7 @@ impl Page {
 
         // page_delete_rec_list_write_log
 
-        let mut page_cur =
-            PageCur::new(index, Some(rec), buf_block, self.clone());
+        let mut page_cur = PageCur::new(Some(rec), buf_block);
 
         page_cur.page_cur_set_before_first();
         page_cur.page_cur_move_to_next();
@@ -1395,7 +1399,7 @@ impl Page {
     /// and continuing to the end of the page (before the supremum record). It updates the page
     /// directory, record links, and page metadata to maintain consistency after deletion.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `rec` - The first record to be deleted (and all records after it)
     /// * `n_recs` - Optional number of records being deleted (if known)
     /// * `size` - Optional total size of records being deleted in bytes (if known)
@@ -1594,7 +1598,7 @@ impl Page {
         // Uncomment
         // page_copy_rec_list_to_created_page_write_log
 
-        let dest_page_cur = PageCur::new(index, None, buf_block, dest_page);
+        let dest_page_cur = PageCur::new(None, buf_block);
         while cur_rec != rec {
             dest_page_cur.page_cur_insert_rec_low(cur_rec, mtr);
             cur_rec = some_or_panic!(cur_rec.rec_get_next());
@@ -1645,8 +1649,7 @@ impl Page {
         // Uncomment
         // page_copy_rec_list_to_created_page_write_log
 
-        let mut dest_page_cur =
-            PageCur::new(index, None, buf_block, dest_page);
+        let mut dest_page_cur = PageCur::new(None, buf_block);
         while self.page_rec_is_supremum(rec) == false {
             dest_page_cur.page_cur_insert_rec_low(rec, mtr);
             dest_page_cur.page_cur_move_to_next();

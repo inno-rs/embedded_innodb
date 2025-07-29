@@ -39,7 +39,7 @@ mod tests {
         tests::test0utils::{
             FieldType, create_blocks_in_buf_pool, create_dtuple,
             create_dtuples_from_input_data_chunk,
-            fill_block_with_uniform_data,
+            fill_block_with_uniform_data, make_block_fragmented,
         },
         ut::{ut0dbg::ut_ad, ut0ut::random_string_with_seed},
     };
@@ -50,6 +50,7 @@ mod tests {
         buf_pool: Arc<Mutex<BufPool>>,
         lock_sys: Arc<Mutex<LockSys>>,
         page_count: usize,
+        free_page_count: usize,
     }
 
     #[fixture]
@@ -81,7 +82,10 @@ mod tests {
             index.clone(),
             btree_fill_factor,
         );
+
         let page_count = 20;
+        let free_page_count = 10;
+
         let field_name = "test";
         index.add_field(Field {
             col: Arc::new(Mutex::new(Column {
@@ -96,7 +100,11 @@ mod tests {
         });
         index.set_n_uniq(1);
 
-        create_blocks_in_buf_pool(buf_pool.clone(), page_count);
+        create_blocks_in_buf_pool(
+            buf_pool.clone(),
+            page_count,
+            free_page_count,
+        );
 
         BTreeFixture {
             btree: Arc::new(btree),
@@ -104,6 +112,7 @@ mod tests {
             buf_pool,
             lock_sys,
             page_count,
+            free_page_count,
         }
     }
 
@@ -1420,4 +1429,88 @@ mod tests {
         assert_eq!(right_page_level, 0);
     }
     /* End Root Split Operations */
+
+    #[rstest]
+    fn test_page_reorganize_with_fragmented_page(fixture: BTreeFixture) {
+        let btree = fixture.btree.clone();
+        let buf_pool = fixture.buf_pool.clone();
+        let lock_sys = fixture.lock_sys.clone();
+
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+        ut_ad!(buf_block.is_some());
+
+        let buf_block = some_or_panic!(buf_block);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            buf_block.read().unwrap().get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        // Initialize the page.
+        btree.page_create(buf_block.clone(), 0, &mut mtr);
+
+        make_block_fragmented(
+            btree.clone(),
+            buf_block.clone(),
+            buf_pool,
+            lock_sys,
+            556,
+        );
+
+        let page = buf_block.read().unwrap().get_page();
+        assert_eq!(page.page_get_n_recs(), 144);
+
+        assert_eq!(page.page_get_max_insert_size(1), 20);
+
+        let success = btree.page_reorganize(buf_block, &mut mtr);
+        assert!(success);
+
+        // We should have a good amount of space after re-organization.
+        assert_eq!(page.page_get_max_insert_size(1), 8338);
+    }
+
+    #[rstest]
+    fn test_page_reorganize_with_not_fragmented_page(
+        fixture_with_full_page_and_small_data: BTreeFixture,
+    ) {
+        let fixture = fixture_with_full_page_and_small_data;
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let btree = &fixture.btree;
+        let buf_pool = &fixture.buf_pool;
+
+        let buf_block = buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        let buf_block = some_or_panic!(buf_block);
+        let page = buf_block.read().unwrap().get_page();
+
+        mtr.memo_push(MemoSlot::PageFix(
+            page.page_get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        assert_eq!(page.page_get_n_recs(), 719);
+
+        assert_eq!(page.page_get_max_insert_size(1), 13);
+
+        let success = btree.page_reorganize(buf_block, &mut mtr);
+        assert_eq!(success, false);
+
+        // After re-organize, we should see the same available space.
+        assert_eq!(page.page_get_max_insert_size(1), 13);
+    }
 }

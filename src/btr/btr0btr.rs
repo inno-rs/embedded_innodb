@@ -21,7 +21,10 @@ use crate::{
     mach::mach0data::{mach_read_from_2, mach_read_from_4, mach_read_from_8},
     mtr::{
         mtr0mtr::Mtr,
-        mtr0types::{FixMode, MemoSlot, MlogType},
+        mtr0types::{
+            FixMode, MemoSlot, MlogType, MlogType::MLOG_PAGE_REORGANIZE,
+            MtrLogMode,
+        },
     },
     page::{
         page0cur::PageCur,
@@ -582,6 +585,90 @@ impl BTree {
         u32::from_le_bytes(data.as_bytes().try_into().unwrap()) as PageNo
     }
 
+    /// Reorganizes a page to create more free space.
+    ///
+    /// This method rearranges the records on a page to eliminate fragmentation
+    /// and maximize the available free space. This is typically called when
+    /// an insert operation fails due to insufficient space.
+    ///
+    /// # Parameters
+    /// * `buf_block` - The buf block to reorganize.
+    /// * `mtr` - Mini-transaction for managing locks and logging
+    ///
+    /// # Returns
+    /// `true` if the reorganization was successful, `false` otherwise
+    pub fn page_reorganize(
+        &self,
+        buf_block: Arc<RwLock<BufBlock>>,
+        mtr: &mut Mtr,
+    ) -> bool {
+        let page = buf_block.read().unwrap().get_page();
+        let page_id = page.page_get_page_id();
+
+        ut_ad!(
+            mtr.memo_contains(&MemoSlot::PageFix(page_id, FixMode::Exclusive))
+        );
+
+        let old_page_size = page.page_get_max_insert_size(1);
+
+        // 1. Write the log record.
+        mtr.open_and_write_index(&page, MLOG_PAGE_REORGANIZE, 0);
+
+        // Turn logging off
+        let mtr_log_mode = mtr.set_log_mode(MtrLogMode::MTR_LOG_NONE);
+
+        // 2. Get a temp block from buf_pool.
+        let temp_block = self.buf_pool.lock().unwrap().block_alloc();
+        let temp_buf_block = some_or_panic!(temp_block);
+
+        // 3. Copy the contents of the old page to the new page.
+        let temp_page = temp_buf_block.write().unwrap().get_page();
+        page.copy_to(temp_page.to_page_frame().0);
+
+        // 4. Re-initialize page
+        {
+            let buf_block = buf_block.write().unwrap();
+            Page::page_create(
+                self.index.deref(),
+                buf_block.deref(),
+                Some(mtr),
+            );
+        }
+
+        // 5. Copy the records from the temporary space to the re-created page.
+        temp_page.page_copy_rec_list_end(
+            buf_block.clone(),
+            temp_page.page_get_infimum_rec(),
+            self.index.clone(),
+            mtr,
+        );
+
+        if self.index.is_clustered() == false && page.page_is_leaf() {
+            let max_trx_id = temp_page.page_get_max_trx_id();
+            page.page_set_max_trx_id(max_trx_id, Some(mtr));
+        }
+
+        self.lock_sys
+            .lock()
+            .unwrap()
+            .move_reorganize_page(temp_buf_block.clone(), buf_block.clone());
+
+        let mut success = false;
+        let new_page_size = page.page_get_max_insert_size(1);
+        if new_page_size != old_page_size {
+            success = true;
+        }
+
+        // Free the block.
+        self.buf_pool.lock().unwrap().block_free(temp_buf_block);
+
+        // Restore logging mode
+        let old_log_mode = mtr.set_log_mode(mtr_log_mode);
+        ut_ad!(old_log_mode == MtrLogMode::MTR_LOG_NONE);
+
+        success
+    }
+
     /// Validates the entire B-tree index.
     ///
     /// This function checks the integrity of the B-tree structure by traversing
@@ -630,8 +717,7 @@ impl BTree {
     pub fn level_validate(&self, level: usize, mtr: &mut Mtr) -> bool {
         let root_block = self.root_get(mtr);
         let root_page = root_block.read().unwrap().get_page();
-        let mut page_cursor =
-            PageCur::new(self.index.clone(), None, root_block, root_page);
+        let mut page_cursor = PageCur::new(None, root_block);
         page_cursor.page_cur_set_before_first();
         page_cursor.page_cur_move_to_next();
 
@@ -659,12 +745,7 @@ impl BTree {
 
             let buf_block = some_or_panic!(buf_block);
 
-            page_cursor = PageCur::new(
-                self.index.clone(),
-                None,
-                buf_block.clone(),
-                buf_block.read().unwrap().get_page(),
-            );
+            page_cursor = PageCur::new(None, buf_block.clone());
 
             page = page_cursor.page_cur_get_page();
             page_cursor.page_cur_set_before_first();

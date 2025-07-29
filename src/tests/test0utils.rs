@@ -131,12 +131,8 @@ pub fn create_records_in_page(
 ) {
     let dtuples = create_dtuples(n, fields);
 
-    let mut page_cur = PageCur::new(
-        index,
-        Some(page.page_get_infimum_rec()),
-        buf_block,
-        page.clone(),
-    );
+    let mut page_cur =
+        PageCur::new(Some(page.page_get_infimum_rec()), buf_block);
 
     let mut mtr = Mtr::new();
     let index = Index::new(PageId::dummy());
@@ -516,21 +512,28 @@ pub fn create_new_fields(n: usize) -> Vec<Field> {
 ///
 /// * `buf_pool` - The buffer pool to add blocks to
 /// * `count` - The number of blocks to add to the buffer pool
-pub fn create_blocks_in_buf_pool(buf_pool: Arc<Mutex<BufPool>>, count: usize) {
+pub fn create_blocks_in_buf_pool(
+    buf_pool: Arc<Mutex<BufPool>>,
+    count: usize,
+    free_page_count: usize,
+) {
     let mut buf_pool = buf_pool.lock().unwrap();
 
     let mut mtr = Mtr::new();
     mtr.start();
 
     // Add some pages, and then retry creating.
-    buf_pool.open(count * UNIV_PAGE_SIZE);
-    ut_ad!(buf_pool.get_free_list_size() == count);
-    ut_ad!(buf_pool.get_curr_size() == count * UNIV_PAGE_SIZE);
+    let total_pages = count + free_page_count;
+    buf_pool.open((total_pages) * UNIV_PAGE_SIZE);
+    ut_ad!(buf_pool.get_free_list_size() == total_pages);
+    ut_ad!(buf_pool.get_curr_size() == total_pages * UNIV_PAGE_SIZE);
 
     for i in 0..count as PageNo {
         let resp = buf_pool.create(0, i, &mut mtr);
         ut_ad!(resp.is_some());
     }
+
+    ut_ad!(buf_pool.get_free_list_size() == free_page_count);
 
     let mut prev_frame_address: Option<usize> = None;
     for i in 0..count as PageNo {
@@ -574,6 +577,7 @@ pub fn create_blocks_in_buf_pool(buf_pool: Arc<Mutex<BufPool>>, count: usize) {
 /// * `buf_pool` - The buffer pool for managing pages
 /// * `lock_sys` - The lock system for managing locks
 /// * `seed` - A seed value for random string generation
+///
 pub fn fill_block_with_uniform_data(
     btree: Arc<BTree>,
     buf_block: Arc<RwLock<BufBlock>>,
@@ -626,4 +630,82 @@ pub fn fill_block_with_uniform_data(
     ut_ad!(all_equal_by(&user_recs, |a: &Record, b: &Record| {
         a.rec_offs_size() == b.rec_offs_size()
     }));
+}
+
+/// Fills a buffer block with uniform data for testing purposes, but also makes it fragmented in the process.
+///
+/// To make the block fragmented, we add two records and delete one of them.
+/// Since the deleted record space goes back to free list, the block becomes fragmented.
+///
+/// # Arguments
+/// * `btree` - The B-tree to insert records into
+/// * `buf_block` - The buffer block to fill with data
+/// * `buf_pool` - The buffer pool for managing pages
+/// * `lock_sys` - The lock system for managing locks
+/// * `seed` - A seed value for random string generation
+///
+pub fn make_block_fragmented(
+    btree: Arc<BTree>,
+    buf_block: Arc<RwLock<BufBlock>>,
+    buf_pool: Arc<Mutex<BufPool>>,
+    lock_sys: Arc<Mutex<LockSys>>,
+    seed: u64,
+) {
+    let page: Page = buf_block.read().unwrap().get_page();
+    let record = page.page_get_infimum_rec();
+
+    ut_ad!(page.page_validate());
+
+    let btree = btree.deref();
+    let mut btr_cur = BTreeCursor::new(
+        btree,
+        btree.get_index().clone(),
+        buf_pool.clone(),
+        lock_sys,
+    );
+    btr_cur.position(record, buf_block.clone());
+
+    let low_limit = 0;
+    let up_limit = 725;
+    let mut input: Vec<[FieldType; 1]> = vec![];
+    let mut current_seed = seed;
+    for i in low_limit..up_limit {
+        let str = random_string_with_seed((i + 1) % 100, current_seed);
+        input.push([FieldType::String(Some(str))]);
+
+        current_seed = ut_next_seed(current_seed);
+    }
+
+    let mut dtuples = create_dtuples_from_input_data_chunk(input);
+
+    let mut mtr = Mtr::new();
+    mtr.start();
+    mtr.memo_push(MemoSlot::PageFix(
+        PageId { space_id: 0, page_no: 0 },
+        FixMode::Exclusive,
+    ));
+
+    for (i, dtuple) in dtuples.iter_mut().enumerate() {
+        btr_cur.search_to_nth_level(0, dtuple, PAGE_CUR_LE, 0, &mut mtr);
+
+        let result = btr_cur.optimistic_insert(0, dtuple, 0, &mut mtr);
+
+        // we delete every other rec to make it fragmented
+        if i % 2 == 0 {
+            let old_recs = page.page_get_user_records();
+
+            let mut page_cur = PageCur::new(None, buf_block.clone());
+            page_cur.page_cur_move_to_next();
+
+            page_cur.page_cur_delete_rec(None);
+
+            let new_recs = page.page_get_user_records();
+
+            ut_ad!(old_recs.len() == new_recs.len() + 1);
+        }
+
+        if result.is_err() {
+            break;
+        }
+    }
 }
