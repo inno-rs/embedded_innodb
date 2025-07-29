@@ -31,11 +31,11 @@ use crate::{
         mach_write_to_1, mach_write_to_2,
     },
     mtr::{
-        mtr0mtr::{
-            Mtr,
+        mtr0mtr::Mtr,
+        mtr0types::{
+            MlogType::{MLOG_UNDO_INIT, MLOG_UNDO_INSERT},
             MtrLogMode::{MTR_LOG_MODE_ALL, MTR_LOG_SHORT_INSERTS},
         },
-        mtr0types::MlogType::{MLOG_UNDO_INIT, MLOG_UNDO_INSERT},
     },
     page::page0page::Page,
     trx::{trx0rec::TRX_UNDO_INSERT_REC, trx0trx::Trx, trx0types::UndoRecord},

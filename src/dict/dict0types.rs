@@ -7,6 +7,7 @@ use crate::{
     data::data0types::{
         DATA_NOT_NULL, DATA_SYS_CHILD, DFieldBuilder, DTuple, DType,
     },
+    dict::dict0table::Table,
     innodb::innodb0types::{PageId, PageNo},
     rem::rem0rec::{REC_STATUS_NODE_PTR, Record},
     some_or_panic,
@@ -53,7 +54,7 @@ pub struct Index {
 pub struct IndexInner {
     /// Type of index,
     index_type: IndexType,
-    /// Number of user defined columns in the index. In the internal representation, we have more.
+    /// Number of user-defined columns in the index. In the internal representation, we have more.
     n_user_defined_cols: usize,
     /// Number of fields from the beginning that can help determine an entry in the index uniquely.
     n_uniq: usize,
@@ -409,36 +410,4 @@ pub struct Column {
     pub ord_part: usize,
     /// Type of the column.
     pub dtype: DType,
-}
-
-#[derive(Hash, Clone, Copy, Eq, PartialEq)]
-pub struct TableId(pub u64);
-
-pub struct Table {
-    /// Table identifier.
-    id: TableId,
-    /// Table name
-    name: String,
-}
-
-impl Table {
-    pub fn new(id: u64, name: String) -> Self {
-        Table { id: TableId(id), name }
-    }
-
-    pub fn get_id(&self) -> TableId {
-        self.id
-    }
-
-    pub fn get_name(&self) -> &str {
-        self.name.as_str()
-    }
-}
-
-impl Display for Table {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Table")?;
-        write!(f, "id: {}", self.id.0)?;
-        write!(f, "name: {}", self.name)
-    }
 }

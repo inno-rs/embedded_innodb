@@ -2,16 +2,16 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-pub(crate) use crate::mtr::mtr0types::{
-    LatchHandle, LockMode, MemoSlot, MtrLogMode, MtrState, Savepoint,
-};
 use crate::{
     buf::buf0types::BufBlock,
     log::log0log::Log,
     mach::mach0data::{mach_read_from_1, mach_read_from_2, mach_read_from_4},
     mtr::{
         mtr0log::MLog,
-        mtr0types::{MlogType, OtherResource},
+        mtr0types::{
+            LatchHandle, LockMode, MemoSlot, MlogType, MtrLogMode, MtrState,
+            OtherResource, Savepoint,
+        },
     },
     page::page0page::Page,
     ut::ut0dbg::ut_ad,

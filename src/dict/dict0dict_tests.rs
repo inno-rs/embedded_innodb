@@ -6,7 +6,10 @@ mod tests {
 
     use crate::{
         data::data0types::{DATA_INT, DTYPE_INT, DTuple, DType},
-        dict::dict0types::{Column, Field, Index, IndexType, Table},
+        dict::{
+            dict0table::Table,
+            dict0types::{Column, Field, Index, IndexType},
+        },
         innodb::innodb0types::PageId,
         rem::rem0rec::OrphanRecord,
     };

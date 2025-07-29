@@ -20,8 +20,8 @@ use crate::{
     lock::lock0lock::LockSys,
     mach::mach0data::{mach_read_from_2, mach_read_from_4, mach_read_from_8},
     mtr::{
-        mtr0mtr::{MemoSlot, Mtr},
-        mtr0types::{FixMode, MlogType},
+        mtr0mtr::Mtr,
+        mtr0types::{FixMode, MemoSlot, MlogType},
     },
     page::{
         page0cur::PageCur,

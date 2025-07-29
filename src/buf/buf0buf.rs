@@ -29,8 +29,8 @@ use crate::{
     innodb::innodb0types::{DbErr, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE},
     mach::mach0data::{mach_write_to_2, mach_write_to_4, mach_write_to_8},
     mtr::{
-        mtr0mtr::{MemoSlot, Mtr},
-        mtr0types::{FixMode, MtrState},
+        mtr0mtr::Mtr,
+        mtr0types::{FixMode, MemoSlot, MtrState},
     },
     os::os0file::IORequest,
     some_or_panic,

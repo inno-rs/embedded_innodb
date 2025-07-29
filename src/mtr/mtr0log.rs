@@ -4,10 +4,7 @@ use crate::{
         mach_uint64_write_compressed, mach_write_compressed, mach_write_to_1,
         mach_write_to_2, mach_write_to_4, mach_write_to_8,
     },
-    mtr::{
-        mtr0mtr::MtrLogMode,
-        mtr0types::{MlogType, MtrLogMode::MTR_LOG_NONE},
-    },
+    mtr::mtr0types::{MlogType, MtrLogMode, MtrLogMode::MTR_LOG_NONE},
     page::page0page::Page,
     ut::ut0dbg::ut_ad,
     ut_panic,

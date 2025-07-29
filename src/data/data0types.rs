@@ -134,6 +134,9 @@ Column Definition → dtype_t → Record Format
    └── TEXT                      → 20-byte external pointer
 */
 
+/// Number of system-defined columns
+pub const DATA_N_SYS_COLS: usize = 3;
+
 #[derive(Clone, Builder, Debug)]
 pub struct DType {
     /// Main data type.

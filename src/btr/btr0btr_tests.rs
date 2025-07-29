@@ -25,8 +25,8 @@ mod tests {
         innodb::innodb0types::PageId,
         lock::lock0lock::LockSys,
         mtr::{
-            mtr0mtr::{MemoSlot, Mtr, MtrState::MtrActive},
-            mtr0types::FixMode,
+            mtr0mtr::Mtr,
+            mtr0types::{FixMode, MemoSlot, MtrState::MtrActive},
         },
         os::{os0io::OsIo, os0runtime::create_runtime},
         page::{
