@@ -1,6 +1,5 @@
 #[cfg(test)]
 pub(super) mod tests {
-
     use std::sync::{Arc, Mutex, atomic::Ordering::Relaxed};
 
     use rstest::{fixture, rstest};
@@ -21,8 +20,8 @@ pub(super) mod tests {
         },
         innodb::innodb0types::{PageId, UNIV_PAGE_SIZE},
         mtr::{
-            mtr0mtr::{MemoSlot, Mtr, MtrState, MtrState::MtrActive},
-            mtr0types::FixMode,
+            mtr0mtr::Mtr,
+            mtr0types::{FixMode, MemoSlot, MtrState, MtrState::MtrActive},
         },
         os::{os0io::OsIo, os0runtime::create_runtime},
         sync::sync0rw::ReadWriteLatch,

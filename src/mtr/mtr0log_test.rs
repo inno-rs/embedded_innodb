@@ -1,14 +1,13 @@
 #[cfg(test)]
 mod tests {
-
     use crate::{
         fil::fil0types::{FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID},
         innodb::innodb0types::UNIV_PAGE_SIZE,
         mach::mach0data::{mach_parse_compressed, mach_write_to_4},
         mtr::{
             mtr0log::MLog,
-            mtr0mtr::{Mtr, MtrLogMode},
-            mtr0types::MlogType,
+            mtr0mtr::Mtr,
+            mtr0types::{MlogType, MtrLogMode},
         },
         page::page0page::Page,
     };

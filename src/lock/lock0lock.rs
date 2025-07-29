@@ -12,7 +12,10 @@ use tracing::info;
 
 use crate::{
     buf::buf0types::BufBlock,
-    dict::dict0types::{Index, Table, TableId},
+    dict::{
+        dict0table::{Table, TableId},
+        dict0types::Index,
+    },
     innodb::innodb0types::{DbErr, PageId, TxnId},
     lock::{
         lock0lock::DeadlockSearchResult::{

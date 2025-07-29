@@ -6,7 +6,7 @@ mod tests {
     use rstest::{fixture, rstest};
 
     use crate::{
-        dict::dict0types::{Index, Table},
+        dict::{dict0table::Table, dict0types::Index},
         innodb::innodb0types::PageId,
         lock::{
             lock0lock::{
