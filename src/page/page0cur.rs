@@ -88,8 +88,6 @@ impl Default for MatchCache {
 /// It maintains a reference to the current record, the page, and the index.
 #[derive(Clone)]
 pub struct PageCur {
-    /// The index to which the cursor belongs
-    index: Arc<Index>,
     /// The record to which the cursor points
     rec: Record,
     /// The buffer block containing the page
@@ -103,21 +101,16 @@ impl PageCur {
     ///
     /// # Arguments
     ///
-    /// * `index`: The index to which the cursor belongs.
     /// * `rec`: The record to which the cursor points.
     /// * `block`: The buffer block containing the page.
     ///
     /// # Returns
     ///
     /// * A new `PageCur` instance.
-    pub fn new(
-        index: Arc<Index>,
-        rec: Option<Record>,
-        block: Arc<RwLock<BufBlock>>,
-        page: Page,
-    ) -> Self {
+    pub fn new(rec: Option<Record>, block: Arc<RwLock<BufBlock>>) -> Self {
+        let page = block.read().unwrap().get_page();
         let rec = rec.unwrap_or(page.page_get_infimum_rec());
-        PageCur { index, rec, block, page }
+        PageCur { rec, block, page }
     }
 
     /// Gets the page associated with the cursor.
@@ -309,6 +302,19 @@ impl PageCur {
         }
     }
 
+    /// Insert a data tuple at the given cursor position.
+    ///
+    /// # Arguments
+    ///
+    /// * `dtuple` - A data tuple object to be inserted.
+    /// * `index` - The data index for the record.
+    /// * `n_ext` - Number of externally stored records.
+    /// * `mtr` - Mini Transaction object.
+    ///
+    /// # Returns
+    ///
+    /// The inserted record if successful.
+    /// None, otherwise.
     pub fn page_cur_tuple_insert(
         &self,
         dtuple: &DTuple,
@@ -361,10 +367,12 @@ impl PageCur {
         /* 2. Find a suitable space from page memory management. */
         let mut insert_rec_opt: Option<Record> = None;
 
-        let free_list = self.page.page_header_get_page_free();
+        let free_list =
+            self.page.page_header_get_page_free().and_then(|_| return None);
+
         match free_list {
             Some(head) => {
-                todo!("found some element in the free list, utilize it.")
+                insert_rec_opt.replace(head);
             }
             None => {
                 let heap_location = self.page.page_mem_alloc_heap(rec_size)?;

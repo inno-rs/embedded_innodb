@@ -58,12 +58,7 @@ mod tests {
             let infimum_rec = page.page_get_infimum_rec();
             PageCurFixture {
                 ptr: frame,
-                page_cur: PageCur::new(
-                    Arc::new(Index::new(PageId::dummy())),
-                    Some(infimum_rec),
-                    buf_block,
-                    page,
-                ),
+                page_cur: PageCur::new(Some(infimum_rec), buf_block),
                 page,
             }
         }
@@ -162,10 +157,8 @@ mod tests {
         assert_eq!(page.page_get_user_records().len(), 1);
 
         let mut page_cur = PageCur::new(
-            index,
             Some(page.page_get_user_records()[0]),
             owning_page.buf_block.clone(),
-            page,
         );
 
         page_cur.page_cur_delete_rec(Some(&mut mtr));
@@ -180,12 +173,7 @@ mod tests {
         let index = Arc::new(Index::new(PageId::dummy()));
         let owning_page = create_records(0, vec![]);
         let page = owning_page.page;
-        let mut page_cur = PageCur::new(
-            index.clone(),
-            None,
-            owning_page.buf_block.clone(),
-            page,
-        );
+        let mut page_cur = PageCur::new(None, owning_page.buf_block.clone());
 
         let page = owning_page.page;
         let limit = 700;
@@ -222,12 +210,7 @@ mod tests {
         let index = Arc::new(Index::new(PageId::dummy()));
         let owning_page = create_records(0, vec![]);
         let page = owning_page.page;
-        let mut page_cur = PageCur::new(
-            index.clone(),
-            None,
-            owning_page.buf_block.clone(),
-            page,
-        );
+        let mut page_cur = PageCur::new(None, owning_page.buf_block.clone());
 
         for i in 0..limit {
             let dtuples = create_dtuples_from_input_data_chunk(vec![[
@@ -272,12 +255,7 @@ mod tests {
     fn test_page_cur_is_before_first() {
         let index = Arc::new(Index::new(PageId::dummy()));
         let owning_page = create_records(20, vec![Int(Some(45))]);
-        let mut page_cur = PageCur::new(
-            index,
-            None,
-            owning_page.buf_block.clone(),
-            owning_page.page,
-        );
+        let mut page_cur = PageCur::new(None, owning_page.buf_block.clone());
 
         page_cur.page_cur_set_before_first();
 
@@ -290,12 +268,7 @@ mod tests {
     fn test_page_cur_is_after_last() {
         let index = Arc::new(Index::new(PageId::dummy()));
         let owning_page = create_records(20, vec![Int(Some(45))]);
-        let mut page_cur = PageCur::new(
-            index,
-            None,
-            owning_page.buf_block.clone(),
-            owning_page.page,
-        );
+        let mut page_cur = PageCur::new(None, owning_page.buf_block.clone());
 
         page_cur.page_cur_set_after_last();
 

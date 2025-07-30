@@ -1211,7 +1211,6 @@ impl LockSys {
         rec: Record,
     ) {
         let page_id = old_block.read().unwrap().get_page_id();
-        let page = old_block.read().unwrap().get_page();
         let index = Arc::new(Index::new(page_id));
         let mut move_lock_requests: Vec<MoveLockRequest> = vec![];
 
@@ -1222,19 +1221,15 @@ impl LockSys {
                     lock_mode: lock_ref.lock_mode,
                     lock_type: lock_ref.lock_type,
                 };
-                let mut old_block_page_cur = PageCur::new(
-                    index.clone(),
-                    Some(rec),
-                    old_block.clone(),
-                    page,
-                );
+                let mut old_block_page_cur =
+                    PageCur::new(Some(rec), old_block.clone());
 
                 if old_block_page_cur.page_cur_is_before_first() {
                     old_block_page_cur.page_cur_move_to_next();
                 }
 
                 let mut new_block_page_cur =
-                    PageCur::new(index.clone(), None, new_block.clone(), page);
+                    PageCur::new(None, new_block.clone());
                 new_block_page_cur.page_cur_move_to_next();
 
                 // copy lock requests on user records to the new page, and reset the lock bits on the old.
@@ -1309,19 +1304,15 @@ impl LockSys {
                     lock_mode: lock_ref.lock_mode,
                     lock_type: lock_ref.lock_type,
                 };
-                let mut old_block_page_cur = PageCur::new(
-                    index.clone(),
-                    Some(rec),
-                    old_block.clone(),
-                    page,
-                );
+                let mut old_block_page_cur =
+                    PageCur::new(Some(rec), old_block.clone());
 
                 if old_block_page_cur.page_cur_is_before_first() {
                     old_block_page_cur.page_cur_move_to_next();
                 }
 
                 let mut new_block_page_cur =
-                    PageCur::new(index.clone(), None, new_block.clone(), page);
+                    PageCur::new(None, new_block.clone());
                 new_block_page_cur.page_cur_move_to_next();
 
                 // copy lock requests on user records to the new page, and reset the lock bits on the old.
@@ -1461,6 +1452,86 @@ impl LockSys {
                 Arc::new(Index::new(page_id)),
                 lock_request.trx,
             );
+        }
+    }
+
+    /// Update the lock table when a page has been re-organized.
+    ///
+    /// # Arguments
+    /// * `new_buf_block` - The new buffer block that has the records.
+    /// * `old_buf_block` - The old buffer block which is being reorganized.
+    ///
+    pub fn move_reorganize_page(
+        &mut self,
+        new_buf_block: Arc<RwLock<BufBlock>>,
+        old_buf_block: Arc<RwLock<BufBlock>>,
+    ) {
+        let new_page = new_buf_block.read().unwrap().get_page();
+        let old_page = old_buf_block.read().unwrap().get_page();
+
+        let page_id = new_page.page_get_page_id();
+
+        let mut old_locks: Vec<Rc<RefCell<Lock>>> = vec![];
+        if let Some(locks) = self.rec_locks.get(&page_id) {
+            for lock in locks {
+                let mut lock_ref = lock.borrow_mut();
+
+                if lock_ref.is_waiting() {
+                    lock_ref.reset();
+                }
+
+                old_locks.push(lock.clone());
+            }
+        }
+
+        let dummy_index = Arc::new(Index::new(page_id));
+        let mut new_page_cur = PageCur::new(None, new_buf_block);
+        let mut old_page_cur = PageCur::new(None, old_buf_block.clone());
+
+        loop {
+            let old_rec = old_page_cur.page_cur_get_rec();
+            let old_heap_no = old_rec.rec_get_heap_no();
+
+            let new_rec = new_page_cur.page_cur_get_rec();
+            let new_heap_no = new_rec.rec_get_heap_no();
+
+            for lock in &old_locks {
+                let mut lock_ref = lock.borrow_mut();
+                if lock_ref.rec_is_nth_bit_set(old_heap_no) {
+                    lock_ref.rec_reset_nth_bit(old_heap_no);
+
+                    lock_ref.rec_set_nth_bit(new_heap_no);
+
+                    let index = match &lock_ref.txn_lock {
+                        TxnLock::RecLock(rec) => rec.index.clone(),
+                        TxnLock::TableLock(tbl) => {
+                            ut_panic!("unexpected lock type");
+                        }
+                    };
+
+                    self.rec_add_to_queue(
+                        LockModeType {
+                            lock_mode: lock_ref.lock_mode,
+                            lock_type: lock_ref.lock_type,
+                        },
+                        old_buf_block.clone(),
+                        new_heap_no,
+                        index,
+                        lock_ref.trx.clone(),
+                    );
+
+                    break;
+                }
+            }
+
+            if old_page.page_rec_is_supremum(old_rec) {
+                // We have iterated through all the records.
+                ut_ad!(new_page.page_rec_is_supremum(new_rec));
+                break;
+            }
+
+            old_page_cur.page_cur_move_to_next();
+            new_page_cur.page_cur_move_to_next();
         }
     }
 

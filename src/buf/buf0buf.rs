@@ -402,6 +402,26 @@ impl BufPool {
         Some(block.clone())
     }
 
+    /// Allocate a buffer block.
+    ///
+    /// # Returns
+    ///
+    /// `Arc<RwLock<BufBlock>>` if we are able to find a free block in the lru list.
+    /// `None`, otherwise.
+    pub fn block_alloc(&self) -> Option<Arc<RwLock<BufBlock>>> {
+        let mut lru = self.buf_lru.lock().unwrap();
+        let buf_block = lru.get_free_block();
+
+        if let Some(buf_block) = &buf_block {
+            buf_block
+                .write()
+                .unwrap()
+                .buf_block_set_state(BufPageState::BufBlockMemory)
+        }
+
+        buf_block
+    }
+
     /// Calculates the size of the read-ahead area.
     ///
     /// This method determines the appropriate size for read-ahead operations
@@ -634,7 +654,6 @@ impl BufPool {
         unsafe {
             inner.flush_list.push_back(UnsafeRef::from_raw(buf_page));
         }
-        // inner lock drops here
 
         // 2) Mark the page’s flag (this still needs the block‐level latch)
         buf_page.set_is_in_flush_list(true);
@@ -671,7 +690,7 @@ impl BufPool {
             let mut blk = buf_block.write().unwrap();
             // buf_block_set_file_page takes &mut BufBlock
             self.buf_block_set_file_page(&mut *blk, space_id, page_no);
-        } // drop the block latch
+        }
 
         // 2) Insert into the pool’s hash under the pool‐inner mutex
         let mut inner = self.inner.lock().unwrap();
@@ -870,7 +889,6 @@ impl BufPool {
                 // TODO implement flusher
                 //self.flusher.wait_batch_end(BufFlushType::from(i));
             }
-            // end of scope: pool lock is dropped here
         }
 
         // ─── Phase 2: ensure everything’s freed ───
@@ -917,8 +935,6 @@ impl BufPool {
         // Zero‐out stats
         self.stat = Arc::from(BufPoolStats::new());
         //   self.refresh_io_stats();
-
-        // pool lock drops here
     }
 
     /// Returns the number of blocks in the free list.
@@ -1078,7 +1094,6 @@ impl BufPool {
         let mut lru = self.buf_lru.lock().unwrap();
         // 3) Call the LRU’s private helper, passing the locked‐pool reference
         lru.search_and_free_block(&mut *inner, &self.stat, n_iterations)
-        // both locks are dropped here
     }
 
     // ——————————————————————————————————————————————————

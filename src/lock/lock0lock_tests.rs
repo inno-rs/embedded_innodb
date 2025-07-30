@@ -18,6 +18,7 @@ mod tests {
                 LOCK_TABLE, LOCK_WAIT, LockId, LockMode,
             },
         },
+        mtr::mtr0mtr::Mtr,
         page::page0page::PageDebug,
         some_or_panic,
         tests::test0utils::{FieldType, create_records},
@@ -1626,6 +1627,16 @@ mod tests {
         let user_records = src_page.page_get_user_records();
         assert_eq!(user_records.len(), 5);
 
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        src_page.page_copy_rec_list_end(
+            dest_block.clone(),
+            user_records[0],
+            index.clone(),
+            &mut mtr,
+        );
+
         for (i, rec) in user_records.iter().enumerate() {
             let heap_no = rec.rec_get_heap_no();
 
@@ -1667,10 +1678,10 @@ mod tests {
         lock_sys.move_rec_list_end(
             dest_block.clone(),
             src_block.clone(),
-            user_records[0], // Start with the first record
+            src_page.page_get_infimum_rec(), // Start with the first record
         );
 
-        // Since rec_add_to_queue is empty, we can't verify that locks were added to the destination
+        // Since rec_add_to_queue is empty, we can't verify that locks were added to the destination.
         // Instead, verify that the locks on the source were correctly reset
 
         // Check that the waiting lock was reset
@@ -1732,7 +1743,7 @@ mod tests {
         );
         let dest_owning_page = create_records(
             0, // No records initially
-            vec![FieldType::String(Some("test".to_string()))],
+            vec![FieldType::String(None)],
         );
 
         let src_block = src_owning_page.buf_block.clone();
@@ -1768,6 +1779,17 @@ mod tests {
         let src_page = src_block.read().unwrap().get_page();
         let user_records = src_page.page_get_user_records();
         assert_eq!(user_records.len(), 5);
+
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let dest_page = dest_block.read().unwrap().get_page();
+        src_page.page_copy_rec_list_end(
+            dest_block.clone(),
+            user_records[0],
+            index,
+            &mut mtr,
+        );
 
         // Call move_rec_list_end to move locks from source to destination
         lock_sys.move_rec_list_end(
@@ -1859,7 +1881,7 @@ mod tests {
             user_records[3], // Stop at the fourth record (index 3)
         );
 
-        // Since rec_add_to_queue is empty, we can't verify that locks were added to the destination
+        // Since rec_add_to_queue is empty, we can't verify that locks were added to the destination.
         // Instead, verify that the locks on the source were correctly reset
 
         // Check that the waiting lock was reset

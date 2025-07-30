@@ -708,9 +708,11 @@ impl Mtr {
             size,
             self.log_mode(),
         );
+
         if payload.is_some() {
             self.n_log_records += 1;
         }
+
         payload
     }
 

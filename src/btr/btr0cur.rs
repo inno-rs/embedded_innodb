@@ -242,7 +242,7 @@ impl<'a> BTreeCursor<'a> {
         let reorg = false;
 
         if insert_rec.is_none() && !reorg {
-            let success = self.page_reorganize(self.index.deref(), mtr);
+            let success = self.page_reorganize(mtr);
         }
 
         if insert_rec.is_none() {
@@ -375,14 +375,13 @@ impl<'a> BTreeCursor<'a> {
     /// an insert operation fails due to insufficient space.
     ///
     /// # Parameters
-    /// * `index` - The index to which the page belongs
     /// * `mtr` - Mini-transaction for managing locks and logging
     ///
     /// # Returns
     /// `true` if the reorganization was successful, `false` otherwise
-    pub fn page_reorganize(&self, index: &Index, mtr: &mut Mtr) -> bool {
-        // Reorganize the page.
-        true
+    pub fn page_reorganize(&self, mtr: &mut Mtr) -> bool {
+        let buf_block = some_or_panic!(&self.buf_block).clone();
+        self.btree.page_reorganize(buf_block, mtr)
     }
 
     /// Searches the B-tree down to the specified level.
@@ -474,8 +473,7 @@ impl<'a> BTreeCursor<'a> {
             }
 
             // Create a page cursor for the current page
-            let mut page_cur =
-                PageCur::new(self.index.clone(), None, block.clone(), page);
+            let mut page_cur = PageCur::new(None, block.clone());
 
             // Search for the position of the data tuple in the current page
             page_cur.page_cur_search_with_match(
@@ -512,12 +510,7 @@ impl<'a> BTreeCursor<'a> {
         ut_ad!(page.is_page_record(rec));
 
         self.buf_block = Some(buf_block.clone());
-        self.page_cur = Some(PageCur::new(
-            self.index.clone(),
-            Some(rec),
-            buf_block.clone(),
-            page,
-        ))
+        self.page_cur = Some(PageCur::new(Some(rec), buf_block.clone()))
     }
 
     /// Calculates a split record such that the tuple will certainly fit on its half-page when the split is performed.
@@ -774,10 +767,8 @@ impl<'a> BTreeCursor<'a> {
             self.index.build_smallest_inner_node(dest_page_id.page_no);
 
         let root_page_cur = PageCur::new(
-            self.index.clone(),
             Some(root_page.page_get_infimum_rec()),
             some_or_panic!(&self.buf_block).clone(),
-            root_page,
         );
 
         root_page_cur.page_cur_tuple_insert(
