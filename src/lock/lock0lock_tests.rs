@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc, sync::Arc};
+    use std::{cell::RefCell, ops::Deref, rc::Rc, sync::Arc};
 
     use pretty_assertions::assert_eq;
     use rstest::{fixture, rstest};
 
     use crate::{
         dict::{dict0table::Table, dict0types::Index},
-        innodb::innodb0types::PageId,
+        innodb::innodb0types::{DbErr::DbLockWait, PageId, UNIV_PAGE_SIZE},
         lock::{
             lock0lock::{
                 DeadlockSearchResult::{LockVictimIsStart, NoDeadlock},
@@ -19,11 +19,19 @@ mod tests {
             },
         },
         mtr::mtr0mtr::Mtr,
-        page::page0page::PageDebug,
+        page::page0page::{Page, PageDebug},
         some_or_panic,
-        tests::test0utils::{FieldType, create_records},
+        tests::{
+            test0fixture::CommonFixture,
+            test0utils::{FieldType, create_records, create_records_in_page},
+        },
         trx::{trx0trx::Trx, trx0types::TrxQueState::TrxQueLockWait},
     };
+
+    #[fixture]
+    fn common_fixture() -> CommonFixture {
+        Default::default()
+    }
 
     #[fixture]
     fn trx() -> Arc<Trx> {
@@ -36,8 +44,11 @@ mod tests {
     }
 
     #[fixture]
-    fn index() -> Arc<Index> {
-        Arc::new(Index::new(PageId { space_id: 0, page_no: 0 }))
+    fn index(table: Arc<Table>) -> Arc<Index> {
+        let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
+        index.set_table(table);
+
+        Arc::new(index)
     }
 
     #[fixture]
@@ -2335,10 +2346,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_table_has_to_wait_in_queue_no_other_locks() {
         // Test case where there are no other locks on the table
-        let lock_sys = LockSys::new();
+        let mut lock_sys = LockSys::new();
         let table = Arc::new(Table::new(100, "test_table".to_string()));
         let trx = Arc::new(Trx::new(1));
 
@@ -2539,5 +2549,173 @@ mod tests {
 
         // Since the lock is from a different transaction, the result should be None
         assert!(result.is_none());
+    }
+
+    #[rstest]
+    fn test_rec_insert_check_and_lock(
+        table: Arc<Table>,
+        index: Arc<Index>,
+        common_fixture: CommonFixture,
+    ) {
+        let mut mtr = Mtr::new();
+        mtr.start();
+        let mut lock_sys = LockSys::new();
+        let buf_pool = &common_fixture.buf_pool;
+        let mut buf_pool_ref = buf_pool.lock().unwrap();
+        buf_pool_ref.open(10 * UNIV_PAGE_SIZE);
+
+        let buf_block = some_or_panic!(buf_pool_ref.block_alloc());
+
+        let page = buf_block.read().unwrap().get_page();
+        Page::page_create(
+            index.deref(),
+            buf_block.read().unwrap().deref(),
+            Some(&mut mtr),
+        );
+
+        create_records_in_page(
+            100,
+            vec![FieldType::String(Some("test".to_string()))],
+            &page,
+            index.clone(),
+            buf_block.clone(),
+        );
+
+        let trx = Arc::new(Trx::new(1));
+
+        let user_records = page.page_get_user_records();
+
+        // get IX lock on table.
+        lock_sys.table_create(
+            table.clone(),
+            LockModeType {
+                lock_mode: LockMode::LockIX,
+                lock_type: LOCK_TABLE,
+            },
+            trx.clone(),
+        );
+
+        for rec in user_records {
+            let ret = lock_sys.rec_insert_check_and_lock(
+                0,
+                rec,
+                buf_block.clone(),
+                index.clone(),
+                trx.clone(),
+                &mut mtr,
+            );
+
+            assert!(ret.is_ok());
+        }
+    }
+
+    #[rstest]
+    fn test_rec_insert_check_and_lock_with_conflict(
+        table: Arc<Table>,
+        index: Arc<Index>,
+        common_fixture: CommonFixture,
+    ) {
+        // Some other transaction trying to get insert lock should not block
+        // as INSERT_INTENTION locks are compatible with each other.
+        let mut mtr = Mtr::new();
+        mtr.start();
+        let mut lock_sys = LockSys::new();
+        let buf_pool = &common_fixture.buf_pool;
+        let mut buf_pool_ref = buf_pool.lock().unwrap();
+        buf_pool_ref.open(10 * UNIV_PAGE_SIZE);
+
+        let buf_block = some_or_panic!(buf_pool_ref.block_alloc());
+
+        let page = buf_block.read().unwrap().get_page();
+        Page::page_create(
+            index.deref(),
+            buf_block.read().unwrap().deref(),
+            Some(&mut mtr),
+        );
+
+        create_records_in_page(
+            100,
+            vec![FieldType::String(Some("test".to_string()))],
+            &page,
+            index.clone(),
+            buf_block.clone(),
+        );
+
+        let trx1 = Arc::new(Trx::new(1));
+
+        let user_records = page.page_get_user_records();
+
+        // get IX lock on table.
+        lock_sys.table_create(
+            table.clone(),
+            LockModeType {
+                lock_mode: LockMode::LockIX,
+                lock_type: LOCK_TABLE,
+            },
+            trx1.clone(),
+        );
+
+        // skip the first rec to get X later.
+        // We have to skip 2 as the lock is the next key lock.
+        for rec in user_records.iter().skip(2) {
+            let ret = lock_sys.rec_insert_check_and_lock(
+                0,
+                rec.clone(),
+                buf_block.clone(),
+                index.clone(),
+                trx1.clone(),
+                &mut mtr,
+            );
+
+            assert!(ret.is_ok());
+        }
+
+        let trx2 = Arc::new(Trx::new(2));
+        // get IX lock on table.
+        lock_sys.table_create(
+            table.clone(),
+            LockModeType {
+                lock_mode: LockMode::LockIX,
+                lock_type: LOCK_TABLE,
+            },
+            trx2.clone(),
+        );
+
+        for rec in user_records.iter().skip(2) {
+            let ret = lock_sys.rec_insert_check_and_lock(
+                0,
+                rec.clone(),
+                buf_block.clone(),
+                index.clone(),
+                trx2.clone(),
+                &mut mtr,
+            );
+
+            assert!(ret.is_ok());
+        }
+
+        // Get a X lock on the first rec and then try again
+        let rec = user_records[0].clone();
+        let heap_no = user_records[1].rec_get_heap_no();
+        let ret = lock_sys.rec_enqueue_waiting(
+            LockModeType { lock_mode: LockMode::LockX, lock_type: LOCK_REC },
+            buf_block.clone(),
+            heap_no,
+            index.clone(),
+            trx1.clone(),
+        );
+        assert_eq!(ret.err().unwrap(), DbLockWait);
+
+        // Not trx2 should fail to insert
+        let ret = lock_sys.rec_insert_check_and_lock(
+            0,
+            rec.clone(),
+            buf_block.clone(),
+            index.clone(),
+            trx2.clone(),
+            &mut mtr,
+        );
+
+        assert!(ret.is_err());
     }
 }

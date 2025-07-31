@@ -20,15 +20,16 @@ mod tests {
     }
 
     #[fixture]
-    fn index(page_id: PageId) -> Arc<Index> {
-        Arc::new(Index::new(page_id))
-    }
-
-    #[fixture]
     fn table() -> Arc<Table> {
         Arc::new(Table::new(100, "test_table".to_string()))
     }
+    #[fixture]
+    fn index(page_id: PageId, table: Arc<Table>) -> Arc<Index> {
+        let mut index = Index::new(page_id);
+        index.set_table(table);
 
+        Arc::new(index)
+    }
     #[fixture]
     fn column() -> Arc<Mutex<Column>> {
         Arc::new(Mutex::new(Column {
@@ -223,8 +224,8 @@ mod tests {
     fn test_get_table(index: Arc<Index>) {
         // get_table() returns a dummy table
         let table = index.get_table();
-        assert_eq!(table.get_id().0, 0);
-        assert_eq!(table.get_name(), "dummy");
+        assert_eq!(table.get_id().0, 100);
+        assert_eq!(table.get_name(), "test_table");
     }
 
     #[rstest]

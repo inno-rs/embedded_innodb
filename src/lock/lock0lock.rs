@@ -259,7 +259,7 @@ impl Lock {
     /// * `n` - The index of the bit to set.
     ///
     pub fn rec_set_nth_bit(&mut self, n: usize) {
-        ut_ad!(self.lock_type() == LOCK_REC);
+        ut_ad!(Lock::is_lock_type(self.lock_type, LOCK_REC));
         ut_ad!(n < self.n_bits.len());
 
         self.n_bits.set(n, true);
@@ -317,7 +317,7 @@ impl Lock {
     /// * `n` - The index of the bit to reset.
     ///
     pub fn rec_reset_nth_bit(&mut self, n: usize) {
-        ut_ad!(self.lock_type() == LOCK_REC);
+        ut_ad!(Lock::is_lock_type(self.lock_type, LOCK_REC));
         ut_ad!(n < self.n_bits.len());
 
         self.n_bits.set(n, false);
@@ -645,7 +645,7 @@ impl LockSys {
     ///
     /// # Returns
     ///
-    /// * `DbSuccess` - If the insertion can proceed immediately
+    /// * `()` - If the insertion can proceed immediately
     /// * `DbFail` or other error code - If there are locking conflicts or other issues
     pub fn rec_insert_check_and_lock(
         &mut self,
@@ -708,7 +708,7 @@ impl LockSys {
             _ => {}
         }
 
-        Ok(())
+        ret
     }
 
     /// Check if a waiting lock request still has to wait in the queue.
@@ -798,6 +798,8 @@ impl LockSys {
 
             lock_type &= !(LOCK_GAP | LOCK_REC_NOT_GAP);
         }
+
+        lock_type |= LOCK_REC;
 
         let lock = Rc::new(RefCell::new(Lock::new(
             self.get_next_lock_id(),
@@ -1572,7 +1574,7 @@ impl LockSys {
     /// Enqueues a waiting request for a lock which cannot be granted immediately and checks for deadlocks.
     /// If a deadlock is detected, the lock request is removed and an error code is returned.
     ///
-    /// This function creates a new lock in waiting state and performs deadlock detection.
+    /// This function creates a new lock in the waiting state and performs deadlock detection.
     /// If a deadlock is found, it cleans up the lock and returns an error. If no deadlock is found,
     /// it sets the transaction state to waiting for the lock.
     ///
@@ -1597,6 +1599,11 @@ impl LockSys {
         index: Arc<Index>,
         trx: Arc<Trx>,
     ) -> Result<(), DbErr> {
+        let lock_mode_type = LockModeType {
+            lock_mode: lock_mode_type.lock_mode,
+            lock_type: lock_mode_type.lock_type | LOCK_WAIT,
+        };
+
         let page = buf_block.read().unwrap().get_page();
         let page_id = page.page_get_page_id();
         let n_bits = page.page_dir_get_n_heap();
@@ -1744,7 +1751,7 @@ impl LockSys {
     /// * `true` - If the lock still needs to wait
     /// * `false` - If the lock no longer needs to wait
     ///
-    pub fn table_has_to_wait_in_queue(&self, wait_lock: &Lock) -> bool {
+    pub fn table_has_to_wait_in_queue(&mut self, wait_lock: &Lock) -> bool {
         ut_ad!(wait_lock.is_waiting());
 
         let table_id = match &wait_lock.txn_lock {
@@ -1754,7 +1761,7 @@ impl LockSys {
             }
         };
 
-        let locks = some_or_panic!(self.table_locks.get(&table_id));
+        let locks = self.table_locks.entry(table_id).or_insert(vec![]);
 
         for lock in locks {
             if lock.borrow().id == wait_lock.id {

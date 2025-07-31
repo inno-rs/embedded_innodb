@@ -39,6 +39,8 @@ pub struct Index {
     id: usize,
     /// The page ID of the root page of this index in the B-tree structure.
     page_id: PageId,
+    /// Reference to the table object.
+    table: Option<Arc<Table>>,
     /// Inner struct which requires mutability.
     inner: Arc<Mutex<IndexInner>>,
 }
@@ -68,6 +70,7 @@ impl Index {
         Self {
             id: 0,
             page_id,
+            table: None, /* Move this to argument */
             inner: Arc::new(Mutex::new(IndexInner {
                 index_type: IndexType::DictClustered,
                 n_user_defined_cols: 0,
@@ -255,7 +258,13 @@ impl Index {
     ///
     /// `Table` object associated with the index.
     pub fn get_table(&self) -> Arc<Table> {
-        Arc::new(Table::new(0, "dummy".to_string()))
+        some_or_panic!(&self.table).clone()
+    }
+
+    /// Set the table associated with the index.
+    /// todo: delete this (This should be set during construction).
+    pub fn set_table(&mut self, table: Arc<Table>) {
+        self.table = Some(table);
     }
 
     /// Copy the types of the fields in the index to dtuple.

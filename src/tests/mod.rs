@@ -1,3 +1,4 @@
+pub(crate) mod test0fixture;
 /// Test utilities' module.
 ///
 /// This module contains utility functions and structures for testing purposes,
