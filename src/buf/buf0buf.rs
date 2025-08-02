@@ -116,7 +116,6 @@ impl BufPoolInner {
         &self.page_hash
     }
 
-    #[cfg(test)]
     pub(crate) fn page_hash_mut(
         &mut self,
     ) -> &mut HashMap<PageId, Arc<RwLock<BufBlock>>> {
@@ -1319,6 +1318,27 @@ impl BufPool {
                 mtr: &mut mtr,
             };
             let _ = self.get(req);
+        }
+    }
+
+    /// Check the “flush-ended” counter
+    ///There’s a shared counter, lru_flush_ended, that tells us how many pages were just flushed (and so are now eligible for eviction).
+    ///Loop until all “ended” work is done
+    ///As long as that counter is > 0, we call search_and_free_block(1) to evict exactly one page, then re-check the counter.
+    ///Exit when the counter hits zeroOnce we’ve evicted as many pages as were flushed, we stop.
+    pub(crate) fn try_free_flushed_blocks(&mut self) {
+        loop {
+            // peek whether there’s still work to do
+            let has_work = {
+                let inner = self.inner.lock().unwrap();
+                inner.lru_flush_ended > 0
+            };
+            if !has_work {
+                break;
+            }
+            // free exactly one block (this bumps freed_page_clock, advances modify_clock, etc.)
+            // we ignore the boolean result here and just loop until the counter is zero
+            let _ = self.search_and_free_block(1);
         }
     }
 
