@@ -6,7 +6,7 @@ pub(super) mod tests {
 
     use crate::{
         buf::{
-            buf0buf::{BufPool, BufPoolInner},
+            buf0buf::BufPool,
             buf0lru::BufLRU,
             buf0rea::BufRea,
             buf0types::{BUF_GET_IF_IN_POOL, BufPageState, Request},
@@ -39,7 +39,6 @@ pub(super) mod tests {
             let fil = Arc::new(Mutex::new(Fil::new(1, os_io, runtime)));
             let buf_rea = Arc::new(Mutex::new(BufRea::new(fil.clone())));
             let buf_lru = Arc::new(Mutex::new(BufLRU::new()));
-            let inner_pool = Arc::new(Mutex::new(BufPoolInner::new()));
             let buf_pool = Arc::new(Mutex::new(BufPool::new(
                 fil,
                 buf_lru.clone(),
@@ -170,6 +169,95 @@ pub(super) mod tests {
                 i
             );
         }
+    }
+
+    #[rstest]
+    fn test_buf_pool_get_page_with_latch(buf_pool_fixture: BufPoolFixture) {
+        let mut buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
+
+        let mut mtr = Mtr::new();
+        mtr.set_mtr_state(MtrActive);
+
+        // Initialize a chunk to have some pages.
+        buf_pool.open(10 * UNIV_PAGE_SIZE);
+        assert_eq!(buf_pool.get_free_list_size(), 10);
+        assert_eq!(buf_pool.get_curr_size(), 10 * UNIV_PAGE_SIZE);
+
+        // Get a page from the pool with S latch
+        {
+            let resp = buf_pool.create(0, 0, &mut mtr);
+            assert!(resp.is_some());
+
+            let page = buf_pool.get(Request {
+                rw_latch: ReadWriteLatch::SLatch,
+                page_id: PageId { space_id: 0, page_no: 0 },
+                mode: BUF_GET_IF_IN_POOL,
+                mtr: &mut mtr,
+            });
+            assert!(page.is_some());
+            assert_eq!(
+                page.unwrap().read().unwrap().is_frame_s_latched(),
+                true
+            );
+        }
+
+        // Get a page from the pool with X latch
+        {
+            let resp = buf_pool.create(0, 1, &mut mtr);
+            assert!(resp.is_some());
+
+            let page = buf_pool.get(Request {
+                rw_latch: ReadWriteLatch::XLatch,
+                page_id: PageId { space_id: 0, page_no: 1 },
+                mode: BUF_GET_IF_IN_POOL,
+                mtr: &mut mtr,
+            });
+            assert!(page.is_some());
+            assert_eq!(
+                page.unwrap().read().unwrap().is_frame_x_latched(),
+                true
+            );
+        }
+    }
+
+    #[rstest]
+    fn test_buf_pool_get_page_multiple_s_latch(
+        buf_pool_fixture: BufPoolFixture,
+    ) {
+        let mut buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
+
+        let mut mtr = Mtr::new();
+        mtr.set_mtr_state(MtrActive);
+
+        // Initialize a chunk to have some pages.
+        buf_pool.open(10 * UNIV_PAGE_SIZE);
+        assert_eq!(buf_pool.get_free_list_size(), 10);
+        assert_eq!(buf_pool.get_curr_size(), 10 * UNIV_PAGE_SIZE);
+
+        // Get a page from the pool with S latch
+
+        let resp = buf_pool.create(0, 0, &mut mtr);
+        assert!(resp.is_some());
+
+        let page = buf_pool.get(Request {
+            rw_latch: ReadWriteLatch::SLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_IF_IN_POOL,
+            mtr: &mut mtr,
+        });
+        assert!(page.is_some());
+        assert_eq!(page.unwrap().read().unwrap().is_frame_s_latched(), true);
+
+        // calling a second time should not fail.
+        let page = buf_pool.get(Request {
+            rw_latch: ReadWriteLatch::SLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_IF_IN_POOL,
+            mtr: &mut mtr,
+        });
+
+        assert!(page.is_some());
+        assert_eq!(page.unwrap().read().unwrap().is_frame_s_latched(), true);
     }
 
     #[rstest]

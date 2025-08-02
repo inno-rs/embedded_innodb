@@ -585,18 +585,16 @@ impl BufBlock {
     /// * `true` if the block is latched in shared mode, `false` otherwise
     ///
     pub fn is_frame_s_latched(&self) -> bool {
-        self.rw_lock.is_locked()
+        self.is_frame_x_latched() == false && self.rw_lock.is_locked() /* is_locked only tells if it is locked in any form */
     }
 
     /// X latch the page frame.
     pub fn frame_x_latch(&self) {
-        ut_ad!(self.is_frame_x_latched() == false);
         unsafe { self.rw_lock.raw().lock_exclusive() };
     }
 
     /// S latch the page frame.
     pub fn frame_s_latch(&self) {
-        ut_ad!(self.is_frame_s_latched() == false);
         unsafe { self.rw_lock.raw().lock_shared() };
     }
 

@@ -342,8 +342,8 @@ impl<'a> BTreeCursor<'a> {
     ///
     /// # Returns
     ///
-    /// * `DbSuccess` - If the operation can proceed
-    /// * Other `DbErr` values - If there are locking conflicts or other issues
+    /// * `()` - If the operation can proceed
+    /// * `DbErr` - If there are locking conflicts or other issues
     pub fn ins_lock_and_undo(
         &self,
         flags: usize,
