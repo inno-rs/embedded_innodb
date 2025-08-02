@@ -12,6 +12,7 @@ pub mod mach;
 pub mod mtr;
 pub mod os;
 pub mod page;
+pub mod que;
 pub mod rem;
 pub mod row;
 pub mod srv;
