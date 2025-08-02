@@ -6,6 +6,7 @@ use std::{
 
 use intrusive_collections::{LinkedList, UnsafeRef};
 
+use crate::buf::buf0types::BufPageState::BufBlockRemoveHash;
 use crate::{
     buf::{
         buf0buf::BufPoolInner,
@@ -416,33 +417,74 @@ impl BufLRU {
     /// It verifies that the page is in a file and in the LRU list, and checks
     /// whether the page can be relocated and if it has been modified.
     ///
-    /// # Parameters
-    /// * `buf_page` - The buffer page to attempt to free
+
+    /// Evict *this* page from the LRU *and* the hash, bump both clocks,
+    /// wipe its on-disk header, and push it onto the free-list.
     ///
-    /// # Returns
-    /// * `BlockStatus` - The status indicating whether the block was freed and if not, why
-    pub fn free_block(&mut self, buf_page: &mut BufPage) -> BlockStatus {
-        ut_ad!(buf_page.in_file());
-        ut_ad!(buf_page.is_in_lru_list());
-        // If page in flush_list, then it needs to be modified.
-        // If not modified, then it should not be present in the flush list.
-        ut_ad!(
-            (buf_page.is_in_flush_list() && buf_page.buf_page_modified())
-                || (!buf_page.is_in_flush_list()
-                    && !buf_page.buf_page_modified())
+    /// Returns `true` iff the page was actually freed.
+    fn free_block(
+        &mut self,
+        pool_inner: &mut BufPoolInner,
+        stats: &Arc<BufPoolStats>,
+        block_guard: &mut RwLockWriteGuard<BufBlock>,
+    ) -> bool {
+        // ——— sanity checks on the page ———
+        {
+            let buf_page = block_guard.buf_block_get_page_mut();
+            ut_a!(buf_page.in_file());
+            ut_a!(buf_page.is_in_lru_list());
+            ut_ad!(
+                (buf_page.is_in_flush_list() && buf_page.buf_page_modified())
+                    || (!buf_page.is_in_flush_list()
+                        && !buf_page.buf_page_modified())
+            );
+            if buf_page.buf_page_modified()
+                || !buf_page.buf_page_can_relocate()
+            {
+                return false;
+            }
+            // now we drop `buf_page` at the end of this block
+        }
+
+        // 1) unlink from LRU
+        unsafe {
+            let buf_page = block_guard.buf_block_get_page_mut();
+            let mut cursor = self.lru_list.cursor_mut_from_ptr(buf_page);
+            cursor.remove();
+            buf_page.set_is_in_lru_list(false);
+        }
+        
+        // 2) bump global freed‐page clock
+        pool_inner.set_freed_page_clock(
+            pool_inner.freed_page_clock().wrapping_add(1),
         );
 
-        if buf_page.buf_page_can_relocate() == false {
-            return BlockStatus::CannotRelocate;
+        // 3) bump block clock + mark REMOVE_HASH + zap header
+
+        {
+            block_guard.buf_block_incr_clock();
+            block_guard.buf_block_set_state(BufPageState::BufBlockRemoveHash);
+            let mut page_frame = block_guard.get_page();
+            page_frame.page_set_space_id(0xFF);
+            page_frame.page_set_fil_offset(0xFF);
         }
 
-        if buf_page.buf_page_modified() {
-            return BlockStatus::NotFreed;
-        }
+        {
+            // 4) remove from hash
+            let buf_page = block_guard.buf_block_get_page_mut();
+            let pid = buf_page.get_page_id();
+            pool_inner.page_hash_mut().remove(&pid);
+            buf_page.set_is_in_hash_map(false);
 
-        BlockStatus::Freed
+            // 5) clear other list flags
+            buf_page.set_is_in_flush_list(false);
+
+            // 6) push to free list
+            self.add_to_free_list_front(buf_page);
+            
+        }
+        true
     }
-
     /// Frees a non-file-backed page and returns it to the buffer‐pool’s free list.
     ///
     /// This is used for blocks that do _not_ contain on‐disk pages (e.g. internal
@@ -560,7 +602,6 @@ impl BufLRU {
     /// 3. **Phase 2**: for each candidate:
     ///    - Assert that its `is_in_lru_list` and `in_file` flags are still true  
     ///      (safe because the pool lock is still held).  
-    ///    - Atomically upgrade its `Weak` back‐pointer to an `Arc<RwLock<BufBlock>>`.  
     ///    - Lock the block’s latch (`write()`), then call `self.free_block(page_mut)`.  
     ///      On `BlockStatus::Freed` it will remove the node from the LRU and
     ///      publish it to the free list.  
@@ -598,7 +639,6 @@ impl BufLRU {
             ut_a!(buf_page.is_in_lru_list());
             ut_a!(buf_page.in_file());
 
-            // Record first‐access timestamp
             let accessed = buf_page.buf_page_is_accessed();
 
             // Lock the actual block and call free_block
@@ -608,30 +648,14 @@ impl BufLRU {
                 .expect("BufBlock was dropped");
             let mut block_guard = block_arc.write().unwrap();
 
-            let status = {
-                let page_mut = block_guard.buf_block_get_page_mut();
-                // free_block will unlink from the LRU list on FREED,
-                // leave it in place on NOT_FREED
-                self.free_block(page_mut)
-            };
-
-            drop(block_guard);
-
-            match status {
-                BlockStatus::Freed => {
-                    // bump readahead‐eviction stat if untouched
-                    if accessed == 0 {
-                        stats.n_ra_pages_evicted.fetch_add(1, Relaxed);
-                    }
-                    return true;
+            // free_block will unlink from the LRU list on FREED,
+            // leave it in place on NOT_FREED
+            if self.free_block(pool, stats, &mut block_guard) {
+                // bump readahead-eviction stat _only_ if it was cold
+                if accessed == 0 {
+                    stats.n_ra_pages_evicted.fetch_add(1, Relaxed);
                 }
-                BlockStatus::NotFreed => {
-                    // page stayed in LRU exactly where it was—try next
-                    continue;
-                }
-                BlockStatus::CannotRelocate => {
-                    unreachable!("Cannot relocate compressed page");
-                }
+                return true;
             }
         }
 

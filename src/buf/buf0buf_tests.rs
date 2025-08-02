@@ -27,6 +27,7 @@ pub(super) mod tests {
         sync::sync0rw::ReadWriteLatch,
         tests::test0utils,
     };
+    use crate::buf::buf0types::BufIoFix;
 
     pub struct BufPoolFixture {
         buf_pool: Arc<Mutex<BufPool>>,
@@ -517,4 +518,193 @@ pub(super) mod tests {
 
         assert_eq!(buf_pool.get_free_list_size(), 0);
     }
+
+    #[rstest]
+    fn test_try_free_flushed_blocks_no_work(buf_pool_fixture: BufPoolFixture) {
+        let pool = buf_pool_fixture.buf_pool.clone();
+        {
+            // make sure there's no pending flush work
+            let mut p = pool.lock().unwrap();
+            p.inner().lock().unwrap().set_lru_flush_ended(0);
+        }
+
+        // should be a no-op
+        pool.lock().unwrap().try_free_flushed_blocks();
+
+        // still zero
+        let ended = pool.lock().unwrap().inner().lock().unwrap().lru_flush_ended();
+        assert_eq!(ended, 0, "with no work pending, it must leave lru_flush_ended at 0");
+    }
+
+    #[rstest]
+    fn test_try_free_flushed_blocks_clears_pending(buf_pool_fixture: BufPoolFixture) {
+        let pool = buf_pool_fixture.buf_pool.clone();
+        {
+            // seed with some pending work
+            let mut p = pool.lock().unwrap();
+            p.inner().lock().unwrap().set_lru_flush_ended(3);
+        }
+
+        // should loop and clear that counter
+        pool.lock().unwrap().try_free_flushed_blocks();
+
+        let ended = pool.lock().unwrap().inner().lock().unwrap().lru_flush_ended();
+        assert_eq!(
+            ended, 0,
+            "try_free_flushed_blocks must consume all pending work (set it to 0)"
+        );
+    }
+
+    #[rstest]
+    fn test_search_and_free_block_empty(buf_pool_fixture: BufPoolFixture) {
+        let pool = buf_pool_fixture.buf_pool.clone();
+        // no pages at all
+        let freed = pool.lock().unwrap().search_and_free_block(0);
+        assert!(!freed, "with empty pool, should not free anything");
+    }
+
+    #[rstest]
+    fn test_search_and_free_block_not_in_lru(buf_pool_fixture: BufPoolFixture) {
+        let pool = buf_pool_fixture.buf_pool.clone();
+        let page_id = PageId { space_id: 0, page_no: 7 };
+        // create a page but do *not* put it in the LRU list:
+        let owning = test0utils::create_raw_page();
+        let block = owning.buf_block.clone();
+        {
+            let mut pool_guard = pool.lock().unwrap();
+            // mark it as a file page
+            {
+                let mut b = block.write().unwrap();
+                b.buf_block_set_state(BufPageState::BufBlockFilePage);
+                let pg = b.buf_block_get_page_mut();
+                pg.set_in_file();
+                pg.buf_page_set_io_fix(BufIoFix::BufIoNone);
+                pg.set_buf_page_io_fix_count(0);
+            }
+            // insert into hash so search sees it
+            pool_guard
+                .inner()
+                .lock()
+                .unwrap()
+                .page_hash_mut()
+                .insert(page_id, block.clone());
+        }
+        // it's not in the LRU list, so should not free
+        let freed = pool.lock().unwrap().search_and_free_block(0);
+        assert!(!freed, "page not in LRU list must not be evicted");
+    }
+
+    #[rstest]
+    fn test_search_and_free_block_dirty_page(buf_pool_fixture: BufPoolFixture) {
+        let pool = buf_pool_fixture.buf_pool.clone();
+        let page_id = PageId { space_id: 0, page_no: 8 };
+        let owning = test0utils::create_raw_page();
+        let block = owning.buf_block.clone();
+        {
+            let mut pool_guard = pool.lock().unwrap();
+            // prep the page as file‐page, inserted into both hash and LRU
+            {
+                let mut b = block.write().unwrap();
+                b.buf_block_set_state(BufPageState::BufBlockFilePage);
+                let pg = b.buf_block_get_page_mut();
+                pg.set_buf_block_ref(Arc::downgrade(&block));
+                pg.set_in_file();
+                pg.buf_page_set_io_fix(BufIoFix::BufIoNone);
+                pg.set_buf_page_io_fix_count(0);
+                pg.set_oldest_modification(1);
+                pg.set_is_in_flush_list(true)
+            }
+            pool_guard
+                .inner()
+                .lock()
+                .unwrap()
+                .page_hash_mut()
+                .insert(page_id, block.clone());
+            // push into LRU
+            pool_guard.add_block(&mut block.write().unwrap().buf_block_get_page_mut(), false);
+        }
+        let freed = pool.lock().unwrap().search_and_free_block(0);
+        assert!(!freed, "dirty page must not be evicted");
+    }
+
+    #[rstest]
+    fn test_search_and_free_block_clean_page_eviction(buf_pool_fixture: BufPoolFixture) {
+        let pool = buf_pool_fixture.buf_pool.clone();
+        let stats = &pool.lock().unwrap().stat();
+        let page_id = PageId { space_id: 0, page_no: 9 };
+        let owning = test0utils::create_raw_page();
+        let block = owning.buf_block.clone();
+
+        // snapshot clocks
+        let (before_pool_clk, before_block_clk) = {
+            let mut p = pool.lock().unwrap();
+            let mut inner = p.inner().lock().unwrap();
+            let free_clk = inner.freed_page_clock();
+            let block_clk = block.read().unwrap().buf_block_get_clock();
+            (free_clk, block_clk)
+        };
+
+        {
+            let mut p = pool.lock().unwrap();
+            // prep the page as file‐page, inserted into both hash and LRU
+            {
+                let mut b = block.write().unwrap();
+                b.buf_block_set_state(BufPageState::BufBlockFilePage);
+                let pg = b.buf_block_get_page_mut();
+                pg.set_page_no(9);
+                pg.set_space_id(0);
+                pg.set_buf_block_ref(Arc::downgrade(&block));
+                pg.set_in_file();
+                pg.buf_page_set_io_fix(BufIoFix::BufIoNone);
+                pg.set_buf_page_io_fix_count(0);
+            }
+            p.inner().lock().unwrap().page_hash_mut().insert(page_id, block.clone());
+            p.add_block(&mut block.write().unwrap().buf_block_get_page_mut(), false);
+        }
+
+        // now call the eviction
+        let freed = pool.lock().unwrap().search_and_free_block(0);
+        assert!(freed, "clean page must be evicted");
+
+        // verify side effects:
+        {
+            let p = pool.lock().unwrap();
+            let mut inner = p.inner().lock().unwrap();
+            assert!(
+                !inner.page_hash_mut().contains_key(&page_id),
+                "evicted page must be removed from hash"
+            );
+        }
+        {
+            let b = block.read().unwrap();
+            let pg = b.buf_block_get_page();
+            assert!(
+                !pg.is_in_lru_list(),
+                "evicted page must no longer be in LRU list"
+            );
+            assert!(
+                pg.is_in_free_list(),
+                "evicted page must have been pushed onto free list"
+            );
+            assert_eq!(
+                b.buf_block_get_state(),
+                BufPageState::BufBlockRemoveHash,
+                "block state must be REMOVE_HASH after eviction"
+            );
+        }
+        // clocks must have ticked by exactly one
+        let (after_pool_clk, after_block_clk) = {
+            let p = pool.lock().unwrap();
+            let inner = p.inner().lock().unwrap();
+            let free_clk = inner.freed_page_clock();
+            let block_clk = block.read().unwrap().buf_block_get_clock();
+            (free_clk, block_clk)
+        };
+        assert_eq!(after_pool_clk, before_pool_clk + 1);
+        assert_eq!(after_block_clk, before_block_clk + 1);
+
+        // and our readahead‐eviction counter (since page was “cold”) must have bumped
+        assert_eq!(stats.n_ra_pages_evicted.load(Relaxed), 1);
+    }
+    
 }
