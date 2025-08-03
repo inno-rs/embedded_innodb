@@ -15,7 +15,7 @@ use crate::{
         FIL_PAGE_PREV, FIL_PAGE_SPACE_ID, FSEG_PAGE_DATA,
     },
     innodb::innodb0types::{
-        PageFrame, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
+        PageFrame, PageId, PageNo, SpaceId, TrxId, UNIV_PAGE_SIZE,
     },
     mach::mach0data::{
         mach_read_from_2, mach_read_from_4, mach_read_from_8, mach_write_to_2,
@@ -32,7 +32,6 @@ use crate::{
         ut0math::ut_align_down,
     },
     ut_panic,
-    utils::TrxId,
 };
 
 pub type SlotId = usize;
@@ -298,7 +297,7 @@ impl Page {
                 let page = self.to_page_frame();
                 mach_write_to_8(
                     &mut page.0[PAGE_HEADER + PAGE_MAX_TRX_ID..],
-                    max_trx_id as u64,
+                    max_trx_id.0,
                 );
             }
             Some(_) => {
@@ -310,10 +309,10 @@ impl Page {
 
     /// Retrieves the maximum transaction ID stored in the page.
     /// # Returns
-    /// The maximum transaction ID (`TxnId`) stored in the page.
+    /// The maximum transaction ID (`TrxId`) stored in the page.
     pub fn page_get_max_trx_id(&self) -> TrxId {
         let page = self.to_page_frame();
-        mach_read_from_8(&page.0[PAGE_HEADER + PAGE_MAX_TRX_ID..])
+        TrxId(mach_read_from_8(&page.0[PAGE_HEADER + PAGE_MAX_TRX_ID..]))
     }
 
     /// Calculates the free space available in an empty page.
@@ -887,7 +886,7 @@ impl Page {
         page.page_header_set_field(PAGE_DIRECTION, PAGE_NO_DIRECTION);
         page.page_header_set_field(PAGE_N_DIRECTION, 0);
         page.page_header_set_field(PAGE_N_RECS, 0);
-        page.page_set_max_trx_id(0, None);
+        page.page_set_max_trx_id(TrxId(0), None);
 
         // // Do I need to perform memset here?
 

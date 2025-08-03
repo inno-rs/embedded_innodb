@@ -1,16 +1,22 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    cmp::Ordering,
+    fmt::Display,
+    hash::{Hash, Hasher},
+    sync::{Arc, Mutex},
+};
 
 use crate::{
     data::data0types::{
         DATA_NOT_NULL, DATA_SYS_CHILD, DFieldBuilder, DTuple, DType,
     },
-    dict::dict0table::Table,
+    dict::dict0table::{Table, TableId},
     innodb::innodb0types::{PageId, PageNo},
     rem::rem0rec::{REC_STATUS_NODE_PTR, Record},
     some_or_panic,
     ut::ut0dbg::ut_ad,
 };
 
+/// Represents a field in an index.
 pub struct Field {
     /// Pointer to the column.
     pub col: Arc<Mutex<Column>>,
@@ -27,16 +33,60 @@ pub struct Field {
 #[derive(Copy, Clone)]
 pub enum IndexType {
     /// Clustered Index.
-    DictClustered,
+    DictClusteredUnique,
     /// Unique Index.
-    DictUnique,
-
-    DictUniversal,
+    DictClusteredNonUnique,
+    /// Universal Index with unique entries.
+    DictUniversalUnique,
+    /// Universal Index with non-unique entries.
+    DictUniversalNonUnique,
 }
 
+#[derive(Clone, Debug)]
+pub struct IndexId(pub u64);
+
+/// Implements the Display trait for IndexId to provide a string representation.
+impl Display for IndexId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "IndexId({})", self.0)
+    }
+}
+
+/// Implements the PartialEq trait for IndexId to allow comparison between two IndexId instances.
+impl PartialEq for IndexId {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+/// Implements the Eq trait for IndexId to indicate that it has an equivalence relation.
+impl Eq for IndexId {}
+
+/// Implements the PartialOrd traits for IndexId to allow ordering of indices by their IDs.
+impl PartialOrd for IndexId {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Implements the Ord trait for IndexId to provide a total ordering of indices.
+impl Ord for IndexId {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+/// Implements the Hash trait for IndexId to allow it to be used in hash-based collections.
+impl Hash for IndexId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+/// Represents an index in the database.
 pub struct Index {
     /// Index id.
-    id: usize,
+    id: IndexId,
     /// The page ID of the root page of this index in the B-tree structure.
     page_id: PageId,
     /// Reference to the table object.
@@ -68,11 +118,11 @@ pub struct IndexInner {
 impl Index {
     pub fn new(page_id: PageId) -> Self {
         Self {
-            id: 0,
+            id: IndexId(0),
             page_id,
             table: None, /* Move this to argument */
             inner: Arc::new(Mutex::new(IndexInner {
-                index_type: IndexType::DictClustered,
+                index_type: IndexType::DictClusteredUnique,
                 n_user_defined_cols: 0,
                 n_uniq: 0,
                 n_defined: 0,
@@ -80,6 +130,10 @@ impl Index {
                 fields: vec![],
             })),
         }
+    }
+
+    pub fn get_id(&self) -> IndexId {
+        self.id.clone()
     }
 
     /// Gets the nth column of a table.
@@ -104,9 +158,10 @@ impl Index {
     /// Returns the unique identifier of this index.
     ///
     /// # Returns
-    /// The index ID as a usize
-    pub fn get_index_id(&self) -> usize {
-        self.id
+    ///
+    /// The index ID
+    pub fn get_index_id(&self) -> IndexId {
+        self.id.clone()
     }
 
     /// Retrieves the page number of the root page of this index.
@@ -232,8 +287,21 @@ impl Index {
     /// `true` if this is a clustered index, `false` otherwise
     pub fn is_clustered(&self) -> bool {
         match self.inner.lock().unwrap().index_type {
-            IndexType::DictClustered => true,
-            IndexType::DictUnique | IndexType::DictUniversal => false,
+            IndexType::DictClusteredUnique
+            | IndexType::DictClusteredNonUnique => true,
+            _ => false,
+        }
+    }
+
+    /// Determines if this index is a unique index.
+    ///
+    /// # Returns
+    /// `true` if this is a clustered index, `false` otherwise
+    pub fn is_unique(&self) -> bool {
+        match self.inner.lock().unwrap().index_type {
+            IndexType::DictClusteredNonUnique
+            | IndexType::DictUniversalUnique => true,
+            _ => false,
         }
     }
 
@@ -416,4 +484,30 @@ pub struct Column {
     pub ord_part: usize,
     /// Type of the column.
     pub dtype: DType,
+}
+
+impl Column {
+    pub fn new(
+        name: String,
+        index: usize,
+        ord_part: usize,
+        dtype: DType,
+    ) -> Self {
+        Self { name, index, ord_part, dtype }
+    }
+
+    /// Returns the name of the column.
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the index of the column in the table.
+    pub fn get_index(&self) -> usize {
+        self.index
+    }
+
+    /// Returns the maximum size of the column in bytes.
+    pub fn get_max_size(&self) -> usize {
+        self.dtype.len as usize
+    }
 }

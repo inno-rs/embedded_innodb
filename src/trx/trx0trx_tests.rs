@@ -6,21 +6,22 @@ mod tests {
     use rstest::{fixture, rstest};
 
     use crate::{
+        innodb::innodb0types::TrxId,
         lock::lock0types::LockId,
         trx::{trx0trx::Trx, trx0types::TrxQueState},
     };
 
     #[fixture]
     fn trx() -> Arc<Trx> {
-        Arc::new(Trx::new(1))
+        Arc::new(Trx::new(TrxId(1)))
     }
 
     #[rstest]
     fn test_trx_new() {
-        let trx = Trx::new(42);
+        let trx = Trx::new(TrxId(42));
 
         // Verify the transaction has the expected ID
-        assert_eq!(trx.trx_get_id(), 42);
+        assert_eq!(trx.trx_get_id(), TrxId(42));
 
         // Verify the transaction is in the running state
         assert_eq!(trx.trx_get_que_state(), TrxQueState::TrxQueRunning);
@@ -35,7 +36,7 @@ mod tests {
     #[rstest]
     fn test_trx_get_id(trx: Arc<Trx>) {
         // Verify the transaction ID is as expected
-        assert_eq!(trx.trx_get_id(), 1);
+        assert_eq!(trx.trx_get_id(), TrxId(1));
     }
 
     #[rstest]

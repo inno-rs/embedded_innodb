@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use std::{mem::swap, sync::Arc};
 
-use crate::trx::trx0trx::Trx;
+use crate::{some_or_panic, trx::trx0trx::Trx, ut::ut0dbg::ut_ad};
 
 /// Query Fork Types
 const QUE_FORK_SELECT_NON_SCROLL: usize = 1;
@@ -97,6 +97,7 @@ pub enum QueryForkType {
 }
 
 #[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryThreadState {
     /// The query thread is running and processing commands.
     Running = QUE_THR_RUNNING as u8,
@@ -204,19 +205,24 @@ pub enum QueryGraphNodeType {
     Exit = QUE_NODE_EXIT as u16,
 }
 
-struct QueThr {
+pub struct QueThr {
     query_thread_state: QueryThreadState,
+    /// Reference to the fork node of the query thread.
+    graph: Arc<QueFork>,
     /// If the query thread is active.
     is_active: bool,
-    /// List of threqd nodes of the fork node.
+    /// List of thread nodes of the fork node.
     thr_nodes: Vec<Arc<QueThr>>,
     /// List of threads in the wait list of the trx.
     wait_list: Vec<Arc<QueThr>>,
     /// list of runnable thread nodes
     thr_runnable: Vec<Arc<QueThr>>,
+    /// Resource usage of the query thread.
+    resource: usize,
+    run_node: Option<Arc<QueFork>>,
 }
 
-struct QueFork {
+pub struct QueFork {
     gra_node_type: QueryGraphNodeType,
     /// The type of the query fork.
     que_type: QueryForkType,
@@ -224,4 +230,66 @@ struct QueFork {
     n_active_threads: usize,
     /// Reference to the transaction object.
     trx: Arc<Trx>,
+}
+
+impl QueThr {
+    pub fn new(graph: Arc<QueFork>) -> Self {
+        Self {
+            query_thread_state: QueryThreadState::Running,
+            graph,
+            is_active: true,
+            thr_nodes: Vec::new(),
+            wait_list: Vec::new(),
+            thr_runnable: Vec::new(),
+            resource: 0,
+            run_node: None,
+        }
+    }
+
+    pub fn thr_get_trx(&self) -> Arc<Trx> {
+        self.graph.trx.clone()
+    }
+
+    pub fn que_thr_step(&mut self) -> Result<(), String> {
+        let trx = self.thr_get_trx();
+
+        ut_ad!(self.query_thread_state == QueryThreadState::Running);
+        self.resource += 1;
+
+        match some_or_panic!(&self.run_node).gra_node_type {
+            QueryGraphNodeType::Lock => {}
+            QueryGraphNodeType::Insert => {}
+            QueryGraphNodeType::Update => {}
+            QueryGraphNodeType::Cursor => {}
+            QueryGraphNodeType::Select => {}
+            QueryGraphNodeType::Aggregate => {}
+            QueryGraphNodeType::Fork => {}
+            QueryGraphNodeType::Thread => {}
+            QueryGraphNodeType::Undo => {}
+            QueryGraphNodeType::Commit => {}
+            QueryGraphNodeType::Rollback => {}
+            QueryGraphNodeType::Purge => {}
+            QueryGraphNodeType::CreateTable => {}
+            QueryGraphNodeType::CreateIndex => {}
+            QueryGraphNodeType::Symbol => {}
+            QueryGraphNodeType::ResWord => {}
+            QueryGraphNodeType::Func => {}
+            QueryGraphNodeType::Order => {}
+            QueryGraphNodeType::Procedure => {}
+            QueryGraphNodeType::If => {}
+            QueryGraphNodeType::While => {}
+            QueryGraphNodeType::Assignment => {}
+            QueryGraphNodeType::Fetch => {}
+            QueryGraphNodeType::Open => {}
+            QueryGraphNodeType::ColAssignment => {}
+            QueryGraphNodeType::For => {}
+            QueryGraphNodeType::Return => {}
+            QueryGraphNodeType::RowPrintf => {}
+            QueryGraphNodeType::ElseIf => {}
+            QueryGraphNodeType::Call => {}
+            QueryGraphNodeType::Exit => {}
+        }
+
+        Ok(())
+    }
 }

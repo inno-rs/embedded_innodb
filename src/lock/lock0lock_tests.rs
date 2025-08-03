@@ -7,7 +7,9 @@ mod tests {
 
     use crate::{
         dict::{dict0table::Table, dict0types::Index},
-        innodb::innodb0types::{DbErr::DbLockWait, PageId, UNIV_PAGE_SIZE},
+        innodb::innodb0types::{
+            DbErr::DbLockWait, PageId, TrxId, UNIV_PAGE_SIZE,
+        },
         lock::{
             lock0lock::{
                 DeadlockSearchResult::{LockVictimIsStart, NoDeadlock},
@@ -35,7 +37,7 @@ mod tests {
 
     #[fixture]
     fn trx() -> Arc<Trx> {
-        Arc::new(Trx::new(1))
+        Arc::new(Trx::new(TrxId(1)))
     }
 
     #[fixture]
@@ -190,7 +192,7 @@ mod tests {
         // Create a RecLock with a specific page_id
         let lock = Lock::new(
             LockId(0),
-            Arc::new(Trx::new(1)),
+            Arc::new(Trx::new(TrxId(1))),
             60,
             TxnLock::RecLock(rec_lock.clone()),
             LockMode::LockNone,
@@ -203,7 +205,7 @@ mod tests {
         // Create a lock that is not a gap lock
         let non_gap_lock = Lock::new(
             LockId(0),
-            Arc::new(Trx::new(2)),
+            Arc::new(Trx::new(TrxId(2))),
             70,
             TxnLock::RecLock(rec_lock),
             LockMode::LockNone,
@@ -218,7 +220,7 @@ mod tests {
         // Create a RecLock with a specific page_id
         let lock = Lock::new(
             LockId(0),
-            Arc::new(Trx::new(1)),
+            Arc::new(Trx::new(TrxId(1))),
             80,
             TxnLock::RecLock(rec_lock.clone()),
             LockMode::LockNone,
@@ -231,7 +233,7 @@ mod tests {
         // Create a lock that is not an insert intention lock
         let non_insert_intention_lock = Lock::new(
             LockId(0),
-            Arc::new(Trx::new(2)),
+            Arc::new(Trx::new(TrxId(2))),
             90,
             TxnLock::RecLock(rec_lock),
             LockMode::LockNone,
@@ -247,7 +249,7 @@ mod tests {
         // Create a RecLock with a specific page_id
         let lock = Lock::new(
             LockId(0),
-            Arc::new(Trx::new(1)),
+            Arc::new(Trx::new(TrxId(1))),
             80,
             TxnLock::RecLock(rec_lock.clone()),
             LockMode::LockNone,
@@ -260,7 +262,7 @@ mod tests {
         // Create a lock that is not an insert intention lock
         let non_insert_intention_lock = Lock::new(
             LockId(0),
-            Arc::new(Trx::new(2)),
+            Arc::new(Trx::new(TrxId(2))),
             90,
             TxnLock::RecLock(rec_lock),
             LockMode::LockNone,
@@ -277,7 +279,7 @@ mod tests {
         // Create a RecLock with a specific page_id
         let mut lock = Lock::new(
             LockId(0),
-            Arc::new(Trx::new(1)),
+            Arc::new(Trx::new(TrxId(1))),
             total_bits,
             TxnLock::RecLock(rec_lock),
             LockMode::LockNone,
@@ -311,7 +313,7 @@ mod tests {
         // Create a RecLock with a specific page_id
         let lock = Lock::new(
             LockId(0),
-            Arc::new(Trx::new(1)),
+            Arc::new(Trx::new(TrxId(1))),
             total_bits,
             TxnLock::RecLock(rec_lock),
             LockMode::LockNone,
@@ -329,7 +331,7 @@ mod tests {
         // Create a RecLock with a specific page_id
         let mut lock = Lock::new(
             LockId(0),
-            Arc::new(Trx::new(1)),
+            Arc::new(Trx::new(TrxId(1))),
             total_bits,
             TxnLock::RecLock(rec_lock),
             LockMode::LockNone,
@@ -356,7 +358,7 @@ mod tests {
         // Create a RecLock with a specific page_id
         let mut lock = Lock::new(
             LockId(0),
-            Arc::new(Trx::new(1)),
+            Arc::new(Trx::new(TrxId(1))),
             total_bits,
             TxnLock::RecLock(rec_lock),
             LockMode::LockNone,
@@ -388,7 +390,7 @@ mod tests {
         // Create a RecLock with a specific page_id
         let mut lock = Lock::new(
             LockId(0),
-            Arc::new(Trx::new(1)),
+            Arc::new(Trx::new(TrxId(1))),
             total_bits,
             TxnLock::RecLock(rec_lock),
             LockMode::LockNone,
@@ -413,7 +415,7 @@ mod tests {
         // Create a RecLock with a specific page_id
         let mut lock = Lock::new(
             LockId(0),
-            Arc::new(Trx::new(1)),
+            Arc::new(Trx::new(TrxId(1))),
             total_bits,
             TxnLock::RecLock(rec_lock),
             LockMode::LockNone,
@@ -438,7 +440,7 @@ mod tests {
         // Create a RecLock with a specific page_id
         let lock = Lock::new(
             LockId(0),
-            Arc::new(Trx::new(1)),
+            Arc::new(Trx::new(TrxId(1))),
             50,
             TxnLock::RecLock(rec_lock),
             LockMode::LockNone,
@@ -503,7 +505,7 @@ mod tests {
     #[rstest]
     fn test_rec_blocks_same_transaction(rec_lock: RecLock) {
         // Create a transaction
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Create a lock with the same transaction ID
         let lock = Lock::new(
@@ -528,8 +530,8 @@ mod tests {
     #[rstest]
     fn test_rec_blocks_compatible_modes(rec_lock: RecLock) {
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Create a lock with IS mode
         let lock = Lock::new(
@@ -557,8 +559,8 @@ mod tests {
     #[rstest]
     fn test_rec_blocks_incompatible_gap_lock(rec_lock: RecLock) {
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Create a lock with X mode and GAP type
         let lock = Lock::new(
@@ -586,8 +588,8 @@ mod tests {
     #[rstest]
     fn test_rec_blocks_gap_lock_on_gap_lock(rec_lock: RecLock) {
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Create a lock with X mode and GAP type
         let lock = Lock::new(
@@ -615,8 +617,8 @@ mod tests {
     #[rstest]
     fn test_rec_blocks_insert_intention_on_gap_lock(rec_lock: RecLock) {
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Create a lock with X mode and GAP type
         let lock = Lock::new(
@@ -641,8 +643,8 @@ mod tests {
     #[rstest]
     fn test_rec_blocks_on_supremum(rec_lock: RecLock) {
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Create a lock with X mode
         let lock = Lock::new(
@@ -667,8 +669,8 @@ mod tests {
     #[rstest]
     fn test_rec_blocks_incompatible_modes_should_block(rec_lock: RecLock) {
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Create a lock with X mode and LOCK_REC_NOT_GAP type
         let lock = Lock::new(
@@ -693,8 +695,8 @@ mod tests {
     #[rstest]
     fn test_rec_blocks_non_insert_intention_on_gap_lock(rec_lock: RecLock) {
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Create a lock with X mode and GAP type
         let lock = Lock::new(
@@ -722,8 +724,8 @@ mod tests {
     #[rstest]
     fn test_rec_blocks_insert_intention_lock_blocks(rec_lock: RecLock) {
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Create a lock with X mode and INSERT_INTENTION type
         let lock = Lock::new(
@@ -751,8 +753,8 @@ mod tests {
     #[rstest]
     fn test_has_to_wait_for_compatible_modes(rec_lock: RecLock) {
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Create a lock with S mode
         let mut lock1 = Lock::new(
@@ -786,8 +788,8 @@ mod tests {
     #[rstest]
     fn test_has_to_wait_for_incompatible_table_locks() {
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Create table locks
         let table = table();
@@ -820,8 +822,8 @@ mod tests {
     #[rstest]
     fn test_has_to_wait_for_incompatible_rec_locks(rec_lock: RecLock) {
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Create a lock with S mode
         let mut lock1 = Lock::new(
@@ -855,7 +857,7 @@ mod tests {
     #[rstest]
     fn test_has_to_wait_for_same_transaction(rec_lock: RecLock) {
         // Create a transaction
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Create a lock with S mode
         let mut lock1 = Lock::new(
@@ -889,8 +891,8 @@ mod tests {
     #[rstest]
     fn test_has_to_wait_for_gap_locks(rec_lock: RecLock) {
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Create a lock with S mode and GAP type
         let mut lock1 = Lock::new(
@@ -930,7 +932,7 @@ mod tests {
         let n_bits = 100;
 
         {
-            let trx = Arc::new(Trx::new(1));
+            let trx = Arc::new(Trx::new(TrxId(1)));
             // Not waiting for lock.
             let lock = lock_sys.rec_create_low(
                 page_id.clone(),
@@ -952,7 +954,7 @@ mod tests {
         }
 
         {
-            let trx = Arc::new(Trx::new(1));
+            let trx = Arc::new(Trx::new(TrxId(1)));
             // Waiting lock.
             let lock = lock_sys.rec_create_low(
                 page_id.clone(),
@@ -986,8 +988,8 @@ mod tests {
         let n_bits = 100;
 
         // Create trxA, trxB
-        let trx_a = Arc::new(Trx::new(1));
-        let trx_b = Arc::new(Trx::new(2));
+        let trx_a = Arc::new(Trx::new(TrxId(1)));
+        let trx_b = Arc::new(Trx::new(TrxId(2)));
 
         // trx_a has lock for rec_x, but waiting for rec_y
         lock_sys.rec_create_low(
@@ -1051,8 +1053,8 @@ mod tests {
         let n_bits = 100;
 
         // Create trxA, trxB
-        let trx_a = Arc::new(Trx::new(1));
-        let trx_b = Arc::new(Trx::new(2));
+        let trx_a = Arc::new(Trx::new(TrxId(1)));
+        let trx_b = Arc::new(Trx::new(TrxId(2)));
 
         // trx_a has lock for rec_x, but waiting for rec_y
         lock_sys.rec_create_low(
@@ -1111,7 +1113,7 @@ mod tests {
         let page_id = PageId { space_id: 45, page_no: 54 };
         let rec_heap_no = 10;
         let n_bits = 100;
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
         let limit = 100;
 
         // Add 100 rec_locks
@@ -1149,7 +1151,7 @@ mod tests {
         let page_id = PageId { space_id: 45, page_no: 54 };
         let rec_heap_no = 10;
         let n_bits = 100;
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
         let limit = 100;
 
         // Add 100 rec_locks
@@ -1187,7 +1189,7 @@ mod tests {
         let page_id = PageId { space_id: 45, page_no: 54 };
         let rec_heap_no = 10;
         let n_bits = 100;
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
         let limit = 100;
 
         // Add 100 rec_locks
@@ -1225,7 +1227,7 @@ mod tests {
         let page_id = PageId { space_id: 45, page_no: 54 };
         let rec_heap_no = 10;
         let n_bits = 100;
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
         let limit = 100;
 
         // Add 50 rec_locks
@@ -1279,7 +1281,7 @@ mod tests {
         let page_id = PageId { space_id: 45, page_no: 54 };
         let rec_heap_no = 10;
         let n_bits = 100;
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Create a waiting lock
         let waiting_lock = Rc::new(RefCell::new(Lock::new(
@@ -1311,8 +1313,8 @@ mod tests {
         let n_bits = 100;
 
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Add an S lock from trx1
         lock_sys.rec_create_low(
@@ -1355,8 +1357,8 @@ mod tests {
         let n_bits = 100;
 
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Add an X lock from trx1
         lock_sys.rec_create_low(
@@ -1399,7 +1401,7 @@ mod tests {
         let n_bits = 100;
 
         // Create a transaction
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Add an X lock from trx
         lock_sys.rec_create_low(
@@ -1443,8 +1445,8 @@ mod tests {
         let n_bits = 100;
 
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Add an X lock from trx1 on a different heap number
         lock_sys.rec_create_low(
@@ -1483,7 +1485,7 @@ mod tests {
         let lock_sys = LockSys::new();
         let page_id = PageId { space_id: 45, page_no: 54 };
         let rec_heap_no = 10;
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Check if there are any conflicting locks
         let result = lock_sys.rec_other_has_conflicting(
@@ -1508,8 +1510,8 @@ mod tests {
         let n_bits = 100;
 
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Add an S lock from trx1 on a different heap number
         lock_sys.rec_create_low(
@@ -1544,8 +1546,8 @@ mod tests {
         let n_bits = 100;
 
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Add an X lock from trx1
         let lock = lock_sys.rec_create_low(
@@ -1580,7 +1582,7 @@ mod tests {
         let n_bits = 100;
 
         // Create a transaction
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Add an X lock from trx
         lock_sys.rec_create_low(
@@ -1628,7 +1630,7 @@ mod tests {
         let index = Arc::new(Index::new(page_id));
 
         // Create a transaction
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Add locks to the source block for different heap numbers
         let n_bits = 100;
@@ -1682,7 +1684,7 @@ mod tests {
             waiting_heap_no,
             n_bits,
             index.clone(),
-            Arc::new(Trx::new(2)), // Different transaction
+            Arc::new(Trx::new(TrxId(2))), // Different transaction
         );
 
         // Call move_rec_list_end to move locks from source to destination
@@ -1765,7 +1767,7 @@ mod tests {
         let index = Arc::new(Index::new(page_id));
 
         // Create a transaction
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Add a lock to the source block for a different heap number than any of the records
         let n_bits = 100;
@@ -1838,7 +1840,7 @@ mod tests {
         let index = Arc::new(Index::new(page_id));
 
         // Create a transaction
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Add locks to the source block for different heap numbers
         let n_bits = 100;
@@ -1882,7 +1884,7 @@ mod tests {
             waiting_heap_no,
             n_bits,
             index.clone(),
-            Arc::new(Trx::new(2)), // Different transaction
+            Arc::new(Trx::new(TrxId(2))), // Different transaction
         );
 
         // Call move_rec_list_start to move locks from source to destination
@@ -1965,7 +1967,7 @@ mod tests {
         let index = Arc::new(Index::new(page_id));
 
         // Create a transaction
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Add a lock to the source block for a different heap number than any of the records
         let n_bits = 100;
@@ -2028,7 +2030,7 @@ mod tests {
         let index = Arc::new(Index::new(donor_page_id));
 
         // Create a transaction
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Get a specific record from the source block to move locks from
         let donor_page = donor_block.read().unwrap().get_page();
@@ -2157,7 +2159,7 @@ mod tests {
         let page_id = PageId { space_id: 45, page_no: 54 };
         let rec_heap_no = 10;
         let n_bits = 100;
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Create a waiting lock
         let lock = lock_sys.rec_create_low(
@@ -2202,7 +2204,7 @@ mod tests {
         let page_id = PageId { space_id: 45, page_no: 54 };
         let rec_heap_no = 10;
         let n_bits = 100;
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Create a waiting record lock
         let lock = lock_sys.rec_create_low(
@@ -2248,7 +2250,7 @@ mod tests {
         // Test case where there are no locks on the table
         let lock_sys = LockSys::new();
         let table = Arc::new(Table::new(100, "test_table".to_string()));
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Check if there are any incompatible locks
         let result = lock_sys.table_other_has_incompatible(
@@ -2268,8 +2270,8 @@ mod tests {
         let table = Arc::new(Table::new(100, "test_table".to_string()));
 
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Add an S lock from trx1
         lock_sys.table_create(
@@ -2296,8 +2298,8 @@ mod tests {
         let table = Arc::new(Table::new(100, "test_table".to_string()));
 
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Add an X lock from trx1
         lock_sys.table_create(
@@ -2324,7 +2326,7 @@ mod tests {
         let table = Arc::new(Table::new(100, "test_table".to_string()));
 
         // Create a transaction
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Add an X lock from trx
         lock_sys.table_create(
@@ -2350,7 +2352,7 @@ mod tests {
         // Test case where there are no other locks on the table
         let mut lock_sys = LockSys::new();
         let table = Arc::new(Table::new(100, "test_table".to_string()));
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Create a waiting lock
         let waiting_lock = Lock::new(
@@ -2373,8 +2375,8 @@ mod tests {
         let table = Arc::new(Table::new(100, "test_table".to_string()));
 
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Add an S lock from trx1
         lock_sys.table_create(
@@ -2405,8 +2407,8 @@ mod tests {
         let table = Arc::new(Table::new(100, "test_table".to_string()));
 
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Add an X lock from trx1
         lock_sys.table_create(
@@ -2435,7 +2437,7 @@ mod tests {
         // Test case where there are no locks on the table
         let lock_sys = LockSys::new();
         let table = Arc::new(Table::new(100, "test_table".to_string()));
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Check if the transaction has an S lock on the table
         let result = lock_sys.table_has(
@@ -2453,7 +2455,7 @@ mod tests {
         // Test case where the transaction has a lock with the exact same mode
         let mut lock_sys = LockSys::new();
         let table = Arc::new(Table::new(100, "test_table".to_string()));
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Add an S lock from the transaction
         lock_sys.table_create(
@@ -2478,7 +2480,7 @@ mod tests {
         // Test case where the transaction has a lock with a stronger mode
         let mut lock_sys = LockSys::new();
         let table = Arc::new(Table::new(100, "test_table".to_string()));
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Add an X lock from the transaction (stronger than S)
         lock_sys.table_create(
@@ -2503,7 +2505,7 @@ mod tests {
         // Test case where the transaction has a lock with a weaker mode
         let mut lock_sys = LockSys::new();
         let table = Arc::new(Table::new(100, "test_table".to_string()));
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         // Add an S lock from the transaction (weaker than X)
         lock_sys.table_create(
@@ -2530,8 +2532,8 @@ mod tests {
         let table = Arc::new(Table::new(100, "test_table".to_string()));
 
         // Create two different transactions
-        let trx1 = Arc::new(Trx::new(1));
-        let trx2 = Arc::new(Trx::new(2));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
 
         // Add an X lock from trx1
         lock_sys.table_create(
@@ -2581,7 +2583,7 @@ mod tests {
             buf_block.clone(),
         );
 
-        let trx = Arc::new(Trx::new(1));
+        let trx = Arc::new(Trx::new(TrxId(1)));
 
         let user_records = page.page_get_user_records();
 
@@ -2641,7 +2643,7 @@ mod tests {
             buf_block.clone(),
         );
 
-        let trx1 = Arc::new(Trx::new(1));
+        let trx1 = Arc::new(Trx::new(TrxId(1)));
 
         let user_records = page.page_get_user_records();
 
@@ -2670,7 +2672,7 @@ mod tests {
             assert!(ret.is_ok());
         }
 
-        let trx2 = Arc::new(Trx::new(2));
+        let trx2 = Arc::new(Trx::new(TrxId(2)));
         // get IX lock on table.
         lock_sys.table_create(
             table.clone(),

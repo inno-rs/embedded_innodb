@@ -1,17 +1,22 @@
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        ops::Deref,
+        sync::{Arc, Mutex},
+    };
 
     use rstest::*;
 
     use crate::{
         data::data0types::{DATA_INT, DTYPE_INT, DTuple, DType},
         dict::{
+            dict0dict::Dict,
             dict0table::Table,
-            dict0types::{Column, Field, Index, IndexType},
+            dict0types::{Column, Field, Index, IndexId, IndexType},
         },
         innodb::innodb0types::PageId,
         rem::rem0rec::OrphanRecord,
+        tests::test0fixture::CommonFixture,
     };
 
     #[fixture]
@@ -56,12 +61,17 @@ mod tests {
         OrphanRecord::new(vec![0; 20], 1)
     }
 
+    #[fixture]
+    fn common_fixture() -> CommonFixture {
+        CommonFixture::new()
+    }
+
     #[rstest]
     fn test_index_new(page_id: PageId) {
         let index = Index::new(page_id);
 
         // Verify the index has the expected properties
-        assert_eq!(index.get_index_id(), 0);
+        assert_eq!(index.get_index_id(), IndexId(0));
         assert_eq!(index.get_page_id(), page_id);
 
         // Check default values
@@ -72,7 +82,7 @@ mod tests {
 
         // Check the index type
         match index.index_type() {
-            IndexType::DictClustered => {} // This is what we expect
+            IndexType::DictClusteredUnique => {} // This is what we expect
             _ => panic!("Expected DictClustered, got a different index type"),
         }
     }
@@ -95,7 +105,7 @@ mod tests {
 
     #[rstest]
     fn test_get_index_id(index: Arc<Index>) {
-        assert_eq!(index.get_index_id(), 0);
+        assert_eq!(index.get_index_id(), IndexId(0));
     }
 
     #[rstest]
@@ -111,7 +121,7 @@ mod tests {
     #[rstest]
     fn test_index_type(index: Arc<Index>) {
         match index.index_type() {
-            IndexType::DictClustered => {} // This is what we expect
+            IndexType::DictClusteredUnique => {} // This is what we expect
             _ => panic!("Expected DictClustered, got a different index type"),
         }
     }
@@ -278,5 +288,71 @@ mod tests {
 
         // Check the search tuple
         assert!(index.check_search_tuple(&dtuple));
+    }
+
+    #[test]
+    fn test_col_name_is_reserved() {
+        assert!(Dict::col_name_is_reserved("DB_ROW_ID"));
+        assert!(Dict::col_name_is_reserved("DB_TRX_ID"));
+        assert!(Dict::col_name_is_reserved("DB_ROLL_PTR"));
+        assert!(!Dict::col_name_is_reserved("test_column_2"));
+    }
+
+    #[rstest]
+    fn test_table_add_to_cache(
+        common_fixture: CommonFixture,
+        table: Arc<Table>,
+    ) {
+        let dict = common_fixture.dict.clone();
+        let table_ref = table.deref();
+        // Add the table to the cache
+        dict.table_add_to_cache(table.clone());
+
+        // Verify the table is in the cache
+        let resp = dict.table_find_by_id(table.get_id());
+        assert!(resp.is_some());
+        assert_eq!(resp.unwrap().get_id(), table.get_id());
+
+        // Verify the table name is in the cache
+        let resp = dict.table_find_by_name(&table.get_name());
+        assert!(resp.is_some());
+        assert_eq!(resp.unwrap().get_name(), table.get_name());
+
+        // Check if the table is cached
+        assert!(table_ref.is_cached());
+    }
+
+    #[rstest]
+    fn test_index_find_by_id(
+        common_fixture: CommonFixture,
+        table: Arc<Table>,
+    ) {
+        let dict = common_fixture.dict.clone();
+        let mut index = Index::new(PageId { space_id: 0, page_no: 0 });
+        index.set_table(table.clone());
+        index.set_n_uniq(1);
+        index.add_field(Field {
+            col: Arc::new(Mutex::new(Column {
+                name: "test_column".to_string(),
+                index: 0,
+                ord_part: 0,
+                dtype: DTYPE_INT,
+            })),
+            name: "test_field".to_string(),
+            prefix_length: 0,
+            fixed_length: 0,
+        });
+
+        let index = Arc::new(index);
+        // Add the index to the table
+        table.add_index(index.clone());
+
+        // Add the table to the cache
+        dict.table_add_to_cache(table.clone());
+
+        // Find the index by ID
+        let found_index = dict.index_find_by_id(index.get_index_id());
+        assert!(found_index.is_some());
+        assert_eq!(found_index.unwrap().get_id(), index.get_id());
     }
 }
