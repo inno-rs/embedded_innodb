@@ -16,7 +16,7 @@ use crate::{
         dict0table::{Table, TableId},
         dict0types::Index,
     },
-    innodb::innodb0types::{DbErr, PageId, TxnId},
+    innodb::innodb0types::{DbErr, PageId, TrxId},
     lock::{
         lock0lock::DeadlockSearchResult::{
             LockExceedMaxDepth, LockVictimIsStart, NoDeadlock,
@@ -186,7 +186,7 @@ impl Lock {
     ///
     /// The transaction id of the lock.
     ///
-    pub fn trx_id(&self) -> crate::utils::TrxId {
+    pub fn trx_id(&self) -> TrxId {
         self.trx.trx_get_id()
     }
 
@@ -554,7 +554,7 @@ impl Display for Lock {
             f,
             "Lock {{ id: {}, trx_id: {} }}",
             self.id,
-            self.trx.trx_get_id()
+            self.trx.trx_get_id().0
         )
     }
 }
@@ -585,7 +585,7 @@ pub struct LockSys {
     /// Map of transaction wait for locks.
     /// This mapping is exactly the same as the one present in wait_lock in Txn.
     /// All txns with que_state == TrxQueLockWait are present here.
-    txn_locks: HashMap<TxnId, Rc<RefCell<Lock>>>,
+    txn_locks: HashMap<TrxId, Rc<RefCell<Lock>>>,
     /// Generate new lock ids by incrementing this counter.
     lock_id_gen: u64,
 }

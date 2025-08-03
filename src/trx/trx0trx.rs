@@ -1,7 +1,7 @@
 use std::{collections::HashSet, sync::Mutex};
 
 use crate::{
-    innodb::innodb0types::TxnId,
+    innodb::innodb0types::TrxId,
     lock::lock0types::LockId,
     trx::trx0types::{TrxQueState, UndoNo},
     ut::ut0dbg::ut_a,
@@ -9,7 +9,7 @@ use crate::{
 
 pub struct Trx {
     /// Id of the transaction.
-    id: TxnId,
+    id: TrxId,
     /// Inner mutable fields of the transaction.
     inner: Mutex<TrxInner>,
 }
@@ -30,7 +30,7 @@ pub struct TrxInner {
 }
 
 impl Trx {
-    pub fn new(id: TxnId) -> Self {
+    pub fn new(id: TrxId) -> Self {
         Trx {
             id,
             inner: Mutex::new(TrxInner {
@@ -48,7 +48,7 @@ impl Trx {
     /// # Returns
     ///
     /// `TnxId` of the transaction.
-    pub fn trx_get_id(&self) -> TxnId {
+    pub fn trx_get_id(&self) -> TrxId {
         self.id
     }
 

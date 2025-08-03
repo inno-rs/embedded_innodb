@@ -25,7 +25,9 @@ use crate::{
     data::data0types::DTuple,
     dict::dict0types::Index,
     fsp::fsp0fsp::FLST_NODE_SIZE,
-    innodb::innodb0types::{PageFrame, PageNo, SpaceId, UNIV_PAGE_SIZE},
+    innodb::innodb0types::{
+        PageFrame, PageNo, SpaceId, TrxId, UNIV_PAGE_SIZE,
+    },
     mach::mach0data::{
         mach_read_from_2, mach_uint64_write_compressed, mach_write_compressed,
         mach_write_to_1, mach_write_to_2,
@@ -40,7 +42,6 @@ use crate::{
     page::page0page::Page,
     trx::{trx0rec::TRX_UNDO_INSERT_REC, trx0trx::Trx, trx0types::UndoRecord},
     ut::ut0dbg::ut_ad,
-    utils::TrxId,
 };
 
 /// Type of undo log segment
@@ -478,7 +479,7 @@ impl TrxUndo {
             undo_type: TrxUndoType::UndoInsert,
             undo_state: TrxUndoState::UndoActive,
             del_marks: false,
-            trx_id: 0,
+            trx_id: TrxId(0),
             space_id: 0,
             hdr_page_no: 0,
         }

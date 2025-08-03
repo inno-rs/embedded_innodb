@@ -9,7 +9,7 @@ pub(super) mod tests {
             buf0buf::BufPool,
             buf0lru::BufLRU,
             buf0rea::BufRea,
-            buf0types::{BUF_GET_IF_IN_POOL, BufPageState, Request},
+            buf0types::{BUF_GET_IF_IN_POOL, BufIoFix, BufPageState, Request},
         },
         fil::{
             fil0fil::Fil,
@@ -27,7 +27,6 @@ pub(super) mod tests {
         sync::sync0rw::ReadWriteLatch,
         tests::test0utils,
     };
-    use crate::buf::buf0types::BufIoFix;
 
     pub struct BufPoolFixture {
         buf_pool: Arc<Mutex<BufPool>>,
@@ -620,12 +619,18 @@ pub(super) mod tests {
         pool.lock().unwrap().try_free_flushed_blocks();
 
         // still zero
-        let ended = pool.lock().unwrap().inner().lock().unwrap().lru_flush_ended();
-        assert_eq!(ended, 0, "with no work pending, it must leave lru_flush_ended at 0");
+        let ended =
+            pool.lock().unwrap().inner().lock().unwrap().lru_flush_ended();
+        assert_eq!(
+            ended, 0,
+            "with no work pending, it must leave lru_flush_ended at 0"
+        );
     }
 
     #[rstest]
-    fn test_try_free_flushed_blocks_clears_pending(buf_pool_fixture: BufPoolFixture) {
+    fn test_try_free_flushed_blocks_clears_pending(
+        buf_pool_fixture: BufPoolFixture,
+    ) {
         let pool = buf_pool_fixture.buf_pool.clone();
         {
             // seed with some pending work
@@ -636,7 +641,8 @@ pub(super) mod tests {
         // should loop and clear that counter
         pool.lock().unwrap().try_free_flushed_blocks();
 
-        let ended = pool.lock().unwrap().inner().lock().unwrap().lru_flush_ended();
+        let ended =
+            pool.lock().unwrap().inner().lock().unwrap().lru_flush_ended();
         assert_eq!(
             ended, 0,
             "try_free_flushed_blocks must consume all pending work (set it to 0)"
@@ -652,7 +658,9 @@ pub(super) mod tests {
     }
 
     #[rstest]
-    fn test_search_and_free_block_not_in_lru(buf_pool_fixture: BufPoolFixture) {
+    fn test_search_and_free_block_not_in_lru(
+        buf_pool_fixture: BufPoolFixture,
+    ) {
         let pool = buf_pool_fixture.buf_pool.clone();
         let page_id = PageId { space_id: 0, page_no: 7 };
         // create a page but do *not* put it in the LRU list:
@@ -683,7 +691,9 @@ pub(super) mod tests {
     }
 
     #[rstest]
-    fn test_search_and_free_block_dirty_page(buf_pool_fixture: BufPoolFixture) {
+    fn test_search_and_free_block_dirty_page(
+        buf_pool_fixture: BufPoolFixture,
+    ) {
         let pool = buf_pool_fixture.buf_pool.clone();
         let page_id = PageId { space_id: 0, page_no: 8 };
         let owning = test0utils::create_raw_page();
@@ -709,14 +719,19 @@ pub(super) mod tests {
                 .page_hash_mut()
                 .insert(page_id, block.clone());
             // push into LRU
-            pool_guard.add_block(&mut block.write().unwrap().buf_block_get_page_mut(), false);
+            pool_guard.add_block(
+                &mut block.write().unwrap().buf_block_get_page_mut(),
+                false,
+            );
         }
         let freed = pool.lock().unwrap().search_and_free_block(0);
         assert!(!freed, "dirty page must not be evicted");
     }
 
     #[rstest]
-    fn test_search_and_free_block_clean_page_eviction(buf_pool_fixture: BufPoolFixture) {
+    fn test_search_and_free_block_clean_page_eviction(
+        buf_pool_fixture: BufPoolFixture,
+    ) {
         let pool = buf_pool_fixture.buf_pool.clone();
         let stats = &pool.lock().unwrap().stat();
         let page_id = PageId { space_id: 0, page_no: 9 };
@@ -746,8 +761,15 @@ pub(super) mod tests {
                 pg.buf_page_set_io_fix(BufIoFix::BufIoNone);
                 pg.set_buf_page_io_fix_count(0);
             }
-            p.inner().lock().unwrap().page_hash_mut().insert(page_id, block.clone());
-            p.add_block(&mut block.write().unwrap().buf_block_get_page_mut(), false);
+            p.inner()
+                .lock()
+                .unwrap()
+                .page_hash_mut()
+                .insert(page_id, block.clone());
+            p.add_block(
+                &mut block.write().unwrap().buf_block_get_page_mut(),
+                false,
+            );
         }
 
         // now call the eviction
@@ -794,5 +816,4 @@ pub(super) mod tests {
         // and our readahead‐eviction counter (since page was “cold”) must have bumped
         assert_eq!(stats.n_ra_pages_evicted.load(Relaxed), 1);
     }
-    
 }

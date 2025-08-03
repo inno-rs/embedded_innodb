@@ -19,7 +19,7 @@ mod tests {
         buf::buf0types::{BufBlock, BufPage, Frame},
         dict::dict0types::Index,
         fil::fil0types::{FIL_PAGE_NEXT, FIL_PAGE_PREV, FIL_PAGE_SPACE_ID},
-        innodb::innodb0types::{PageFrame, PageId, UNIV_PAGE_SIZE},
+        innodb::innodb0types::{PageFrame, PageId, TrxId, UNIV_PAGE_SIZE},
         mach::mach0data::{mach_read_from_4, mach_write_to_4},
         mtr::mtr0mtr::Mtr,
         page::page0page::*,
@@ -109,7 +109,7 @@ mod tests {
         );
         assert_eq!(page.page_header_get_field(PAGE_N_DIRECTION), 0);
         assert_eq!(page.page_header_get_field(PAGE_N_RECS), 0);
-        assert_eq!(page.page_get_max_trx_id(), 0);
+        assert_eq!(page.page_get_max_trx_id(), TrxId(0));
 
         // Check the slots in the page header
         assert_eq!(
@@ -179,7 +179,7 @@ mod tests {
     #[rstest]
     fn test_page_set_max_trx_id(page_fixture: PageFixture) {
         let page = &page_fixture.page;
-        let max_trx_id: crate::utils::TrxId = 2352325;
+        let max_trx_id: TrxId = TrxId(2352325);
 
         page.page_set_max_trx_id(max_trx_id, None);
 

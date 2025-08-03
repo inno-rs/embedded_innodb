@@ -1,6 +1,8 @@
 use std::{
     alloc::{Layout, alloc, dealloc},
+    cmp::Ordering,
     fmt::Display,
+    hash::{Hash, Hasher},
 };
 
 use strum_macros::Display;
@@ -32,7 +34,46 @@ pub type PageNo = u32;
 
 /// Transaction identifier type.
 /// Each transaction in InnoDB has a unique ID that identifies it in the system.
-pub type TxnId = u64;
+#[derive(Clone, Copy, Debug)]
+pub struct TrxId(pub u64);
+
+/// Implements the Display trait for TrxId to provide a string representation.
+impl Display for TrxId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TrxId({})", self.0)
+    }
+}
+
+/// Implements the PartialEq trait for TrxId to allow comparison between two TrxId instances.
+impl PartialEq for TrxId {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+/// Implements the Eq trait for TrxId to indicate that it has an equivalence relation.
+impl Eq for TrxId {}
+
+/// Implements the PartialOrd traits for TrxId to allow ordering of transactions by their IDs.
+impl PartialOrd for TrxId {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Implements the Ord trait for TrxId to provide a total ordering of transactions.
+impl Ord for TrxId {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+/// Implements the Hash trait for TrxId to allow it to be used in hash-based collections.
+impl Hash for TrxId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
 
 /// A wrapper around a mutable byte array representing a database page in memory.
 ///

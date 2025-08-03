@@ -13,7 +13,7 @@ use crate::{
         buf0buf::BufPool,
         buf0types::{BUF_GET_ALWAYS, BufBlock, Request},
     },
-    dict::dict0types::Index,
+    dict::dict0types::{Index, IndexId},
     fil::fil0types::{FIL_PAGE_DATA, FIL_PAGE_NEXT, FIL_PAGE_PREV, FILL_NULL},
     fsp::{fsp0fsp::Fsp, fsp0types::Direction},
     innodb::innodb0types::{PageId, PageNo, SpaceId},
@@ -232,12 +232,21 @@ impl BTree {
     }
 
     /// Get the index id from the page.
-    pub fn page_get_index_id(page: &Page) -> usize {
+    ///
+    /// # Arguments
+    ///
+    /// * `page` - The page from which to retrieve the index ID
+    ///
+    /// # Returns
+    ///
+    /// The index ID as an `IndexId` struct, which is a wrapper around a u64 value.
+    ///
+    pub fn page_get_index_id(page: &Page) -> IndexId {
         let page_frame = page.to_page_frame();
         let offset = PAGE_HEADER + PAGE_INDEX_ID;
         let bytes = &page_frame.0[offset..offset + 8];
 
-        mach_read_from_8(bytes) as usize
+        IndexId(mach_read_from_8(bytes))
     }
 
     /// Sets the index ID for a page.
@@ -255,8 +264,12 @@ impl BTree {
     /// # Note
     ///
     /// This method is currently not implemented (marked as todo).
-    pub fn page_set_index_id(page: &mut Page, index_id: usize, mtr: &mut Mtr) {
-        mtr.write_uint64(page, PAGE_HEADER + PAGE_INDEX_ID, index_id as u64);
+    pub fn page_set_index_id(
+        page: &mut Page,
+        index_id: IndexId,
+        mtr: &mut Mtr,
+    ) {
+        mtr.write_uint64(page, PAGE_HEADER + PAGE_INDEX_ID, index_id.0);
     }
 
     /// Get the node level field in an index page.

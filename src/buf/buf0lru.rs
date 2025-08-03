@@ -6,13 +6,14 @@ use std::{
 
 use intrusive_collections::{LinkedList, UnsafeRef};
 
-use crate::buf::buf0types::BufPageState::BufBlockRemoveHash;
 use crate::{
     buf::{
         buf0buf::BufPoolInner,
         buf0types::{
             BufBlock, BufIoFix, BufPage, BufPageState,
-            BufPageState::{BufBlockNotUsed, BufBlockReadyForUse},
+            BufPageState::{
+                BufBlockNotUsed, BufBlockReadyForUse, BufBlockRemoveHash,
+            },
             BufPoolStats, FreeListAdapter, LruAdapter,
         },
     },
@@ -453,7 +454,7 @@ impl BufLRU {
             cursor.remove();
             buf_page.set_is_in_lru_list(false);
         }
-        
+
         // 2) bump global freed‐page clock
         pool_inner.set_freed_page_clock(
             pool_inner.freed_page_clock().wrapping_add(1),
@@ -481,7 +482,6 @@ impl BufLRU {
 
             // 6) push to free list
             self.add_to_free_list_front(buf_page);
-            
         }
         true
     }

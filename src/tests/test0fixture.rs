@@ -4,7 +4,9 @@ use tokio::runtime::Runtime;
 
 use crate::{
     buf::{buf0buf::BufPool, buf0lru::BufLRU, buf0rea::BufRea},
+    dict::dict0dict::Dict,
     fil::fil0fil::Fil,
+    fsp::fsp0fsp::Fsp,
     os::{os0io::OsIo, os0runtime::create_runtime},
 };
 
@@ -16,6 +18,7 @@ pub struct CommonFixture {
     pub buf_rea: Arc<Mutex<BufRea>>,
     pub buf_lru: Arc<Mutex<BufLRU>>,
     pub buf_pool: Arc<Mutex<BufPool>>,
+    pub dict: Arc<Dict>,
 }
 
 impl CommonFixture {
@@ -37,7 +40,12 @@ impl CommonFixture {
             buf_rea.clone(),
         )));
 
-        Self { runtime, os_io, fil, buf_rea, buf_lru, buf_pool }
+        let fsp =
+            Arc::new(Mutex::new(Fsp::new(buf_pool.clone(), fil.clone())));
+
+        let dict = Arc::new(Dict::new(fsp.clone()));
+
+        Self { runtime, os_io, fil, buf_rea, buf_lru, buf_pool, dict }
     }
 }
 

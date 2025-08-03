@@ -1,5 +1,7 @@
 use std::{
+    cmp::Ordering,
     fmt::Display,
+    hash::{Hash, Hasher},
     sync::{Arc, Mutex},
 };
 
@@ -10,15 +12,54 @@ use crate::{
         DATA_ROW_ID, DATA_ROW_ID_LEN, DATA_SYS, DATA_TRX_ID, DATA_TRX_ID_LEN,
         DType,
     },
-    dict::dict0types::Column,
+    dict::dict0types::{Column, Index},
+    innodb::innodb0types::TrxId,
     ut::ut0dbg::ut_ad,
 };
 
 /// A unique identifier for a table.
 ///
-/// This is a wrapper around a u64 value that provides type safety.
-#[derive(Hash, Clone, Copy, Eq, PartialEq)]
+/// This is a wrapper around an u64 value that provides type safety.
+#[derive(Clone, Copy, Debug)]
 pub struct TableId(pub u64);
+
+/// Implements the Display trait for TableId to provide a string representation.
+impl Display for TableId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TableId({})", self.0)
+    }
+}
+
+/// Implements the traits for TableId to allow comparison.
+impl PartialEq for TableId {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+/// Implements the Eq trait for TableId to allow equality checks.
+impl Eq for TableId {}
+
+/// Implements the PartialOrd traits for TableId to allow ordering.
+impl PartialOrd for TableId {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Implements the Ord trait for TableId to allow total ordering.
+impl Ord for TableId {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+/// Implements the Hash trait for TableId to allow hashing.
+impl Hash for TableId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
 
 /// Statistics for table.
 pub struct TableStats {
@@ -52,12 +93,18 @@ struct TableInner {
     name: String,
     /// Table statistics.
     stats: TableStats,
+    /// Table is cached in the dict store.
+    cached: bool,
+    /// True if the maximum length of a single row exceeds BIG_ROW_SIZE.
+    big_rows: bool,
     /// Number of fields in the table.
     n_fields: usize,
     /// Number of columns.
     n_cols: usize,
     /// Columns of the table.
     cols: Vec<Arc<Column>>,
+    /// List of indexes.
+    indexes: Vec<Arc<Index>>,
 }
 
 impl Table {
@@ -84,9 +131,12 @@ impl Table {
                     modified_counter: 0,
                     initialized: false,
                 },
+                cached: false,
+                big_rows: false,
                 n_fields: 0,
                 n_cols: 0,
                 cols: vec![],
+                indexes: vec![],
             })),
         };
         table.add_system_columns();
@@ -234,7 +284,7 @@ impl Table {
     /// - DB_ROLL_LTR: Rollback pointer
     ///
     /// These columns are required for InnoDB's MVCC (Multi-Version Concurrency Control).
-    fn add_system_columns(&mut self) {
+    pub fn add_system_columns(&mut self) {
         const_assert!(DATA_ROW_ID == 0, "error DATA_ROW_ID != 0");
         const_assert!(DATA_TRX_ID == 1, "error DATA_TRX_ID != 0");
         const_assert!(DATA_ROLL_PTR == 2, "error DATA_ROLL_PTR != 0");
@@ -260,6 +310,70 @@ impl Table {
             DATA_ROLL_PTR | DATA_NOT_NULL,
             DATA_ROLL_PTR_LEN,
         );
+    }
+
+    /// Check if the table is cached in the dictionary store.
+    ///
+    /// # Returns
+    ///
+    /// True if the table is cached, false otherwise.
+    ///
+    pub fn is_cached(&self) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner.cached
+    }
+
+    /// Sets the table as cached in the dictionary store.
+    ///
+    /// This method marks the table as cached, allowing it to be quickly accessed
+    /// without needing to be loaded from the disk.
+    ///
+    pub fn set_cached(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.cached = true;
+    }
+
+    /// Returns the columns in the table.
+    ///
+    /// # Returns
+    ///
+    /// A vector of reference-counted pointers to the columns in the table.
+    ///
+    pub fn get_cols(&self) -> Vec<Arc<Column>> {
+        let inner = self.inner.lock().unwrap();
+        inner.cols.clone()
+    }
+
+    /// Set the table as having big rows.
+    ///
+    /// This method marks the table as having rows that exceed the maximum size defined by `BIG_ROW_SIZE`.
+    /// This is used to optimize storage and retrieval of large rows.
+    ///
+    pub fn set_big_rows(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.big_rows = true;
+    }
+
+    /// Get all the indexes of the table.
+    ///
+    /// # Returns
+    ///
+    /// A vector of reference-counted pointers to the indexes in the table.
+    ///
+    pub fn get_indexes(&self) -> Vec<Arc<Index>> {
+        let inner = self.inner.lock().unwrap();
+        inner.indexes.clone()
+    }
+
+    /// Adds an index to the table.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - An Arc reference to the Index to be added.
+    ///
+    pub fn add_index(&self, index: Arc<Index>) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.indexes.push(index);
     }
 }
 

@@ -19,7 +19,7 @@ mod tests {
             buf0types::{BUF_GET_ALWAYS, Request},
         },
         data::data0types::{DTYPE_INT, DTuple},
-        dict::dict0types::{Column, Field, Index},
+        dict::dict0types::{Column, Field, Index, IndexId},
         fil::{fil0fil::Fil, fil0types::FILL_NULL},
         fsp::{fsp0fsp::Fsp, fsp0types::Direction},
         innodb::innodb0types::PageId,
@@ -318,13 +318,13 @@ mod tests {
         let seed = 42;
         let mut rng = StdRng::seed_from_u64(seed);
 
-        let values: Vec<usize> =
-            (0..10).map(|_| rng.random::<u64>() as usize).collect();
+        let values: Vec<IndexId> =
+            (0..10).map(|_| rng.random::<u64>()).map(|v| IndexId(v)).collect();
         let mut mtr = Mtr::new();
         mtr.start();
 
         for index_id in values {
-            BTree::page_set_index_id(&mut page, index_id, &mut mtr);
+            BTree::page_set_index_id(&mut page, index_id.clone(), &mut mtr);
             let found = BTree::page_get_index_id(&page);
             assert_eq!(index_id, found);
         }
