@@ -155,3 +155,39 @@ pub fn ut_align_down<T: UInt>(n: T, align_no: T) -> T {
 
     n & !(align_no - T::from(1))
 }
+
+/// Rounds a number down to the nearest power of 2.
+///
+/// This function aligns the number down to the nearest power of 2 that is less than or equal to the number.
+///
+/// # Arguments
+/// * `n` - The number to round down
+/// * `m` - The alignment value (must be a power of 2)
+///
+/// # Returns
+///
+/// * The largest power of 2 that is less than or equal to `n`
+
+pub fn ut_2pow_round<T: UInt>(n: T, m: T) -> T {
+    ut_align_down(n, m)
+}
+
+/// Computes the remainder of `n` divided by `m`, where `m` is a power of 2.
+///
+/// This function uses bitwise operations to efficiently compute the remainder.
+///
+/// # Arguments
+///
+/// * `n` - The number to compute the remainder for
+/// * `m` - The divisor, which must be a power of 2
+///
+/// # Returns
+///
+/// * The remainder of `n` divided by `m`
+///
+pub fn ut_2pow_remainder<T: UInt>(n: T, m: T) -> T {
+    ut_ad!(m > T::from(0));
+    ut_ad!(ut_is_2pow(m));
+
+    n & (m - T::from(1))
+}

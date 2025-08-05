@@ -253,6 +253,13 @@ impl Fil {
         true
     }
 
+    pub fn extend_space_to_desired_size(
+        &self,
+        desired_size: usize,
+    ) -> Result<usize, String> {
+        Ok(desired_size)
+    }
+
     /// Retrieves a space by its ID.
     ///
     /// # Arguments

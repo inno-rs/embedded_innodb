@@ -241,7 +241,12 @@ impl Page {
         mach_read_from_4(&page.0[FIL_PAGE_OFFSET..]) as PageNo
     }
 
-    /// Write a new 4-byte page-offset field (little-endian).
+    /// Write a new 4-byte page-offset field.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_offset`: The new file page offset to set as a `usize`.
+    ///
     pub fn page_set_fil_offset(&mut self, new_offset: usize) {
         let page = self.to_page_frame();
         mach_write_to_4(&mut page.0[FIL_PAGE_OFFSET..], new_offset as u32);

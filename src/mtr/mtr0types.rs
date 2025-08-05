@@ -94,16 +94,33 @@ pub enum MlogType {
     MLOG_UNDO_INIT = 22,
     /// Discard an undo-log header.
     MLOG_UNDO_HDR_DISCARD = 23,
+    /// Reuse an undo-log header.
+    MLOG_UNDO_HDR_REUSE = 24,
+    /// Create an undo-log header.
+    MLOG_UNDO_HDR_CREATE = 25,
+    /// Mark an index record as “minimum”.
+    MLOG_REC_MIN_MARK = 26,
+    /// Write the full contents of a page.
+    MLOG_FULL_PAGE = 28,
+    /// Initialize a file page (ignore prior data). During recovery, do not trust the lsn value stored in the page.
+    MLOG_INIT_FILE_PAGE = 29,
+    /// Write an arbitrary byte-string to a page.
+    MLOG_WRITE_STRING = 30,
     ///If a single mtr writes several log records, this
     ///log record ends the sequence of these records
-    MLOG_MULTI_REC_END = 24,
-
-    MLOG_WRITE_STRING = 25,
-
-    MLOG_FULL_PAGE = 26,
-
+    MLOG_MULTI_REC_END = 31,
+    /// Dummy record, used to pad out a log block (no-op).
+    MLOG_DUMMY_RECORD = 32,
+    /// Log the creation of a .ibd file.
+    MLOG_FILE_CREATE = 33,
+    /// Log the renaming of a .ibd file.
+    MLOG_FILE_RENAME = 34,
+    /// Log the deletion of a .ibd file.
+    MLOG_FILE_DELETE = 35,
     /** Biggest value (used in assertions) */
     MLOG_BIGGEST_TYPE = 47,
+    /// If the mtr contains only a single log record, this flag is or-ed into the log record type.
+    MLOG_SINGLE_REC_FLAG = 128,
 }
 
 #[derive(Display, Clone, Eq, PartialEq, Debug)]

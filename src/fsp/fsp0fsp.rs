@@ -40,7 +40,7 @@
 //!
 
 use std::{
-    ops::Range,
+    ops::{Deref, Range},
     sync::{Arc, Mutex, RwLock, atomic::AtomicU32},
 };
 
@@ -56,17 +56,25 @@ use crate::{
             FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
         },
     },
-    fsp::fsp0types::Direction,
+    fsp::fsp0types::{Direction, SYS_TABLESPACE},
     fut::fut0lst::{FilAddr, flst_init},
     innodb::innodb0types::{
         PageFrame as InnoPageFrame, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
     },
+    mach::mach0data::{mach_read_from_4, mach_write_to_4},
     mach_read_from_4,
-    mtr::mtr0mtr::Mtr,
+    mtr::{
+        mtr0mtr::Mtr,
+        mtr0types::{FixMode, LogMode, MemoSlot, MlogType, MtrLogMode},
+    },
     page::page0page::Page,
     some_or_panic,
     sync::sync0rw::ReadWriteLatch,
-    ut::ut0dbg::ut_ad,
+    ut::{
+        ut0dbg::{ut_a, ut_ad},
+        ut0math::{ut_2pow_remainder, ut_2pow_round},
+    },
+    ut_2_power_up, ut_panic,
 };
 
 /// Offset of the segment-inode page data inside a raw page
@@ -165,6 +173,7 @@ pub struct Fsp {
     buf_pool: Arc<Mutex<BufPool>>,
     /// Reference to fil.
     fil: Arc<Mutex<Fil>>,
+
     page_no: AtomicU32,
 }
 
@@ -307,6 +316,266 @@ impl Fsp {
 
         page_no
     }
+
+    pub fn alloc_free_page(
+        &self,
+        space_id: SpaceId,
+        hint: PageNo,
+        mtr: &mut Mtr,
+    ) -> PageNo {
+        let page = self.get_header_page(space_id, mtr);
+        let mut fsp_header_page = FspHeaderPage::new(page.to_page_frame().0);
+
+        5
+    }
+
+    pub fn reserve_free_space(
+        &self,
+        space_id: SpaceId,
+        fsp_header: &mut FspHeaderPage,
+        size: usize,
+        mtr: &mut Mtr,
+    ) {
+        ut_ad!(size < FSP_EXTENT_SIZE / 2);
+    }
+
+    /// Puts new extents to the free list if there are free extents above the free limit.
+    /// If an extent happens to contain an extent descriptor page, the extent is put to FSP_FREE_FRAG list with the page marked as used.
+    ///
+    /// # Arguments
+    ///
+    /// * `space_id` - The ID of the tablespace to fill the free list for
+    /// * `fsp_header` - A mutable reference to the file space header page
+    /// * `mtr` - A mutable reference to the multi-versioning transaction record
+    ///
+    pub fn fill_free_list(
+        &self,
+        space_id: SpaceId,
+        fsp_header: &mut FspHeaderPage,
+        mtr: &mut Mtr,
+    ) {
+        let mut size = fsp_header.fsp_header_get_fsp_size();
+        let limit = fsp_header.fsp_header_get_fsp_free_limit();
+
+        let extend_file = size < limit + FSP_EXTENT_SIZE * FSP_FREE_ADD;
+        if extend_file {
+            let extended_size =
+                self.try_extend_data_file(space_id, fsp_header, mtr);
+
+            size = extended_size
+        }
+
+        let mut i = size;
+        let mut count = 0;
+        while i + FSP_EXTENT_SIZE < size && count < FSP_FREE_ADD {
+            let init_xdes = ut_2pow_remainder(i, UNIV_PAGE_SIZE) == 0;
+            fsp_header.fsp_header_set_fsp_free_limit(i + FSP_EXTENT_SIZE);
+
+            if space_id == SYS_TABLESPACE as u32 {
+                // Update the free limit in the log system and make a checkpoint.
+            }
+
+            if init_xdes {
+                let block = self.buf_pool.lock().unwrap().create(
+                    space_id,
+                    i as PageNo,
+                    mtr,
+                );
+
+                let buf_block = some_or_panic!(block);
+                let buf_block = buf_block.write().unwrap();
+                self.fsp_init_file_page(buf_block.deref(), mtr);
+            }
+
+            let xdes_descriptor = self.xdes_get_descriptor_with_space_hdr(
+                fsp_header, space_id, i, mtr,
+            );
+        }
+    }
+
+    /// Initializes a file page with basic metadata and logs the initialization.
+    ///
+    /// # Arguments
+    ///
+    /// * `buf_block` - A reference to the buffer block containing the page to initialize.
+    /// * `mtr` - A mutable reference to the multi-versioning transaction record.
+    ///
+    pub fn fsp_init_file_page(&self, buf_block: &BufBlock, mtr: &mut Mtr) {
+        Self::fsp_init_file_page_low(buf_block);
+        let page = buf_block.get_page();
+        mtr.write_initial_log_record(
+            &page,
+            MlogType::MLOG_INIT_FILE_PAGE,
+            MtrLogMode::MTR_LOG_MODE_ALL,
+        );
+    }
+
+    /// Initializes a file page with basic metadata.
+    /// This function sets the page to zero and initializes the page ID and space ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `buf_block` - A reference to the buffer block containing the page to initialize.
+    ///
+    fn fsp_init_file_page_low(buf_block: &BufBlock) {
+        let mut page = buf_block.get_page();
+
+        let page_id = page.page_get_page_id();
+        let page_frame = page.to_page_frame();
+        page_frame.0.fill(0);
+
+        page.page_set_fil_offset(page_id.page_no as usize);
+        page.page_set_space_id(page_id.space_id);
+    }
+
+    pub fn xdes_get_descriptor_with_space_hdr(
+        &self,
+        fsp_header_page: &mut FspHeaderPage,
+        space_id: SpaceId,
+        offset: usize,
+        mtr: &mut Mtr,
+    ) {
+        let size = fsp_header_page.fsp_header_get_fsp_size();
+        let limit = fsp_header_page.fsp_header_get_fsp_free_limit();
+
+        if offset >= size || offset > limit {
+            return;
+        }
+
+        if offset == limit {
+            self.fill_free_list(space_id, fsp_header_page, mtr);
+        }
+
+        let descr_page_no =
+            ExtentDescriptor::xdes_calc_descriptor_page(offset as PageNo);
+
+        let descr_page = if descr_page_no == 0 {
+            // We are on the first page, which is the space header page.
+        } else {
+            let block = self.buf_pool.lock().unwrap().get(Request {
+                rw_latch: ReadWriteLatch::XLatch,
+                page_id: PageId { space_id, page_no: descr_page_no },
+                mode: BUF_GET_ALWAYS,
+                mtr,
+            });
+
+            let buf_block = some_or_panic!(block);
+        };
+    }
+
+    /// Attempts to extend the data file of a tablespace by one extent.
+    ///
+    /// This method will:
+    /// - Extend the file to the extent size if it is smaller than that
+    /// - Increase the file size by a certain amount based on the current size
+    ///
+    ///  # Arguments
+    /// * `space_id` - The ID of the tablespace to extend
+    /// * `fsp_header` - A mutable reference to the file space header page
+    /// * `mtr` - A mutable reference to the multi-versioning transaction record
+    ///
+    /// # Returns
+    ///
+    /// The number of bytes by which the data file was extended.
+    ///
+    pub fn try_extend_data_file(
+        &self,
+        space_id: SpaceId,
+        fsp_header: &mut FspHeaderPage,
+        mtr: &mut Mtr,
+    ) -> usize {
+        let extent_size = FSP_EXTENT_SIZE;
+        let mut fsp_size = fsp_header.fsp_header_get_fsp_size();
+        let old_size = fsp_size;
+
+        // 1. Extend a single tablespace by one extent at a time.
+        if fsp_size < extent_size {
+            // First, extend the file to the extent size.
+            let success = self.try_extend_data_file_with_pages(
+                space_id,
+                (extent_size - 1) as u32,
+                fsp_header,
+                mtr,
+            );
+
+            if success == false {
+                let new_size = fsp_header.fsp_header_get_fsp_size();
+
+                return new_size - old_size;
+            }
+
+            fsp_size = extent_size;
+        }
+
+        let size_increase = if fsp_size < 32 * extent_size {
+            extent_size
+        } else {
+            FSP_FREE_ADD * extent_size
+        };
+
+        if size_increase == 0 {
+            return 0;
+        }
+
+        let ret = self
+            .fil
+            .lock()
+            .unwrap()
+            .extend_space_to_desired_size(fsp_size + size_increase);
+
+        match ret {
+            Ok(_) => {
+                // Update the file space header with the new size
+                fsp_header.fsp_header_set_fsp_size(fsp_size + size_increase);
+                fsp_size + size_increase - old_size
+            }
+            Err(_) => {
+                ut_panic!("extend_space_to_desired_size failed");
+            }
+        }
+    }
+
+    /// Extend a single table space by one page.
+    ///
+    /// This method attempts to extend the data file of a tablespace by adding
+    /// a new page at the specified page number.
+    /// It updates the file space header to reflect the new size of the tablespace.
+    ///
+    /// # Arguments
+    ///
+    /// * `space_id` - The ID of the tablespace to extend
+    /// * `page_no` - The page number at which to extend the tablespace
+    /// * `fsp_header` - A mutable reference to the file space header page
+    ///
+    /// # Returns
+    ///
+    /// A boolean indicating whether the extension was successful.
+    ///
+    pub fn try_extend_data_file_with_pages(
+        &self,
+        space_id: SpaceId,
+        page_no: u32,
+        fsp_header: &mut FspHeaderPage,
+        mtr: &mut Mtr,
+    ) -> bool {
+        ut_a!(space_id != SYS_TABLESPACE as u32);
+
+        let size = fsp_header.fsp_header_get_fsp_size();
+        ut_a!(page_no >= size as u32);
+
+        let ret = self
+            .fil
+            .lock()
+            .unwrap()
+            .extend_space_to_desired_size((page_no + 1) as usize);
+
+        fsp_header.fsp_header_set_fsp_size(size);
+
+        match ret {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
 }
 
 /// Represents a full 16 KiB InnoDB page buffer in memory.
@@ -349,6 +618,54 @@ impl<'a> FspHeaderPage<'a> {
             "PageFrame needs a full UNIV_PAGE_SIZE buffer"
         );
         FspHeaderPage { buf }
+    }
+
+    /// Get the FSP_SIZE from the FSP header.
+    ///
+    /// # Returns
+    ///
+    /// The size of the file space in bytes.
+    ///
+    pub fn fsp_header_get_fsp_size(&self) -> usize {
+        let start = FSP_HEADER_OFFSET + FSP_SIZE;
+        let end = start + 4;
+        mach_read_from_4(&self.buf[start..end]) as usize
+    }
+
+    /// Set the FSP_SIZE in the FSP header.
+    ///
+    /// # Arguments
+    ///
+    /// * `size` - The new size of the file space in bytes.
+    ///
+    pub fn fsp_header_set_fsp_size(&mut self, size: usize) {
+        let start = FSP_HEADER_OFFSET + FSP_SIZE;
+        let end = start + 4;
+        mach_write_to_4(&mut self.buf[start..end], size as u32);
+    }
+
+    /// Get the FSP_SPACE_ID from the FSP header.
+    ///
+    /// # Returns
+    ///
+    /// FSP_FREE_LIMIT
+    ///
+    pub fn fsp_header_get_fsp_free_limit(&self) -> usize {
+        let start = FSP_HEADER_OFFSET + FSP_FREE_LIMIT;
+        let end = start + 4;
+        mach_read_from_4(&self.buf[start..end]) as usize
+    }
+
+    /// Set the FSP_FREE_LIMIT in the FSP header.
+    ///
+    /// # Arguments
+    ///
+    /// * `limit` - The new free limit for the file space in bytes.
+    ///
+    pub fn fsp_header_set_fsp_free_limit(&mut self, limit: usize) {
+        let start = FSP_HEADER_OFFSET + FSP_FREE_LIMIT;
+        let end = start + 4;
+        mach_write_to_4(&mut self.buf[start..end], limit as u32);
     }
 
     /// Initializes the FSP (File Space) header in this page.
@@ -774,7 +1091,7 @@ impl<'a> ExtentDescriptor<'a> {
     ///
     /// * `page_no` - The page number to assign to this page
     /// * `space_id` - The space ID to assign to this page
-    /// /* `mtr` - The mini-transaction context (commented out in current implementation) */
+    /// * `mtr` - The mini-transaction context (commented out in the current implementation).
     ///
     pub fn init_file_page(
         &mut self,
@@ -959,5 +1276,19 @@ impl<'a> ExtentDescriptor<'a> {
         self.set_state(new_state);
         // 4) Compute and return the global page number
         Some(extent_no * (FSP_EXTENT_SIZE as u32) + page_idx as u32)
+    }
+
+    /// Calculates the descriptor page number for a given page number.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_no` - The page number for which to calculate the descriptor page
+    ///
+    /// # Returns
+    ///
+    /// The calculated descriptor page number, which is a multiple of the extent size.
+    ///
+    pub fn xdes_calc_descriptor_page(page_no: PageNo) -> PageNo {
+        ut_2pow_round(page_no, UNIV_PAGE_SIZE as PageNo) as PageNo
     }
 }
