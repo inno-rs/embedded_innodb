@@ -6,7 +6,7 @@ use crate::{
     innodb::innodb0types::{DbErr, TrxId},
     lock::lock0lock::LockSys,
     que::que0types::QueThr,
-    ut::ut0dbg::{ut_a, ut_ad},
+    ut::ut0dbg::ut_ad,
 };
 
 pub enum IbInsertMode {

@@ -157,26 +157,6 @@ pub fn mach_uint64_write_compressed(buf: &mut [u8], v: u64) -> usize {
     n_high + 4
 }
 
-/// Read 4 bytes from the buffer.
-///
-/// # Arguments
-///
-/// * `slice` - The slice to read from.
-/// * `range` - The range of bytes to read (should be 4 bytes).
-///
-/// # Returns
-///
-/// * The value read as a `u32`.
-#[macro_export]
-macro_rules! mach_read_from_4 {
-    ($slice:expr, $range:expr) => {{
-        ut_ad!($range.end - $range.start == 4, "Expected range of 4 bytes");
-        let bytes = &$slice[$range];
-        ut_ad!(bytes.len() == 4, "Expected 4 bytes in the range");
-        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-    }};
-}
-
 /// Parse a compressed ULINT (32-bit) from the start of the buffer, advancing the pointer.
 /// Mirrors C++ `mach_parse_compressed(byte*& ptr, const byte* end_ptr)`.
 /// Returns `Some((value, new_ptr_index))` on success, or `None` if incomplete.

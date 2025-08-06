@@ -81,6 +81,8 @@ impl Hash for TrxId {
 /// The page size is fixed at UNIV_PAGE_SIZE bytes.
 pub struct PageFrame<'a>(pub &'a mut [u8; UNIV_PAGE_SIZE]);
 
+pub struct Frame<'a, const N: usize>(pub &'a mut [u8; N]);
+
 /// A raw page buffer that owns its memory allocation.
 ///
 /// This struct represents a database page that allocates and manages its own memory.

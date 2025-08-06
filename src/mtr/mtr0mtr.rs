@@ -72,7 +72,7 @@ impl Mtr {
     /// Starts a new mini-transaction by setting its state to ACTIVE
     /// and resetting the log record count.
     /// Start (or restart) this mini‐transaction.
-    pub fn start(&mut self) -> &mut Self {
+    pub fn start(&mut self) {
         // logging mode → ALL
         self.log_mode = MtrLogMode::MTR_LOG_MODE_ALL;
         // no buffer‐page modifications yet
@@ -90,8 +90,6 @@ impl Mtr {
         // debug-only magic number check
 
         ut_ad!(self.magic_n == MTR_MAGIC_N);
-
-        self
     }
 
     /// Records a resource in the mini-transaction's memo list so it can be tracked and released later.

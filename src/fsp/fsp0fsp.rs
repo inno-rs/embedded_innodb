@@ -41,7 +41,10 @@
 
 use std::{
     ops::Range,
-    sync::{Arc, Mutex, RwLock, atomic::AtomicU32},
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicU32, Ordering},
+    },
 };
 
 use crate::{
@@ -56,13 +59,17 @@ use crate::{
             FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
         },
     },
-    fsp::fsp0types::Direction,
+    fsp::fsp0types::{Direction, FSegId},
     fut::fut0lst::{FilAddr, flst_init},
     innodb::innodb0types::{
-        PageFrame as InnoPageFrame, PageId, PageNo, SpaceId, UNIV_PAGE_SIZE,
+        Frame, PageFrame as InnoPageFrame, PageId, PageNo, SpaceId,
+        UNIV_PAGE_SIZE,
     },
-    mach_read_from_4,
-    mtr::mtr0mtr::Mtr,
+    mach::mach0data::{mach_read_from_4, mach_read_from_8, mach_write_to_8},
+    mtr::{
+        mtr0mtr::Mtr,
+        mtr0types::{FixMode, MemoSlot},
+    },
     page::page0page::Page,
     some_or_panic,
     sync::sync0rw::ReadWriteLatch,
@@ -243,7 +250,7 @@ impl Fsp {
     pub fn get_space_header_from_page(
         page_frame: InnoPageFrame,
     ) -> Option<SpaceId> {
-        Some(mach_read_from_4!(page_frame.0, FSP_SPACE_ID_RANGE))
+        Some(mach_read_from_4(&page_frame.0[FSP_SPACE_ID_RANGE]))
     }
 
     /// Retrieves the header page for a given tablespace.
@@ -307,6 +314,39 @@ impl Fsp {
 
         page_no
     }
+
+    pub fn alloc_seg_inode_page(
+        &self,
+        fsp_header_page: &mut FspHeaderPage,
+        mtr: &mut Mtr,
+    ) -> bool {
+        let space_id = fsp_header_page.get_space_id();
+        let page_no = self.alloc_free_page();
+
+        if page_no.is_none() {
+            return false;
+        }
+
+        let page_no = some_or_panic!(page_no);
+
+        let block = self.buf_pool.lock().unwrap().get(Request {
+            rw_latch: ReadWriteLatch::XLatch,
+            page_id: PageId { space_id, page_no },
+            mode: BUF_GET_ALWAYS,
+            mtr,
+        });
+
+        let buf_block = some_or_panic!(block);
+        let page = buf_block.read().unwrap().get_page();
+
+        let page_frame = page.to_page_frame();
+
+        true
+    }
+
+    pub fn alloc_free_page(&self) -> Option<PageNo> {
+        Some(self.page_no.fetch_add(1, Ordering::Relaxed))
+    }
 }
 
 /// Represents a full 16 KiB InnoDB page buffer in memory.
@@ -321,6 +361,7 @@ impl Fsp {
 pub struct FspHeaderPage<'a> {
     /// The raw byte buffer representing the page
     buf: &'a mut [u8; UNIV_PAGE_SIZE],
+    page: Page,
 }
 
 #[cfg(test)]
@@ -348,7 +389,16 @@ impl<'a> FspHeaderPage<'a> {
             buf.len() >= UNIV_PAGE_SIZE,
             "PageFrame needs a full UNIV_PAGE_SIZE buffer"
         );
-        FspHeaderPage { buf }
+        let page = Page::new(buf.as_mut_ptr());
+        FspHeaderPage { buf, page }
+    }
+
+    pub fn get_space_id(&self) -> SpaceId {
+        self.page.page_get_space_id()
+    }
+
+    pub fn get_page_no(&self) -> PageNo {
+        self.page.page_get_fil_offset()
     }
 
     /// Initializes the FSP (File Space) header in this page.
@@ -959,5 +1009,188 @@ impl<'a> ExtentDescriptor<'a> {
         self.set_state(new_state);
         // 4) Compute and return the global page number
         Some(extent_no * (FSP_EXTENT_SIZE as u32) + page_idx as u32)
+    }
+}
+
+/// Represents a single **file segment inode** (`fseg_inode_t`)
+/// inside an InnoDB inode page (`FIL_PAGE_TYPE_INODE`).
+///
+/// Each inode entry is a fixed-size structure of [`FSEG_INODE_SIZE`] bytes
+/// (192 bytes), which tracks the extents and fragment pages owned by
+/// a single file segment (e.g. a B-tree leaf segment, non-leaf segment,
+/// or a BLOB column segment).
+///
+/// # Layout
+///
+/// An `fseg_inode_t` on the disk contains:
+///
+/// - **Three extent list heads** (`FREE`, `NOT_FULL`, `FULL`)
+///   Each is a [`flst_base_node_t`] (12 bytes) pointing into
+///   [`xdes_t`] extent descriptors owned by this segment.
+///
+/// - **Segment ID** (`FSEG_ID`, 8 bytes)  
+///   Uniquely identifies the file segment.
+///  `0` means unused/free.
+///
+/// - **Reserved / Magic (4 bytes)**  
+///   Internal marker field.
+///
+/// - **Fragment page array (`frag_arr`, 32 × 4 = 128 bytes)**  
+///   Tracks up to 32 individually allocated pages from
+///   fragment extents (for small segments).
+///
+/// Total size = 192 bytes = [`FSEG_INODE_SIZE`].
+///
+pub struct FSegInode<'a> {
+    buf: Frame<'a, FSEG_INODE_SIZE>,
+}
+
+impl<'a> FSegInode<'a> {
+    pub fn new(buf: Frame<'a, FSEG_INODE_SIZE>) -> Self {
+        FSegInode { buf }
+    }
+
+    /// Get the segment inode ID from the inode buffer.
+    ///
+    /// This method reads the first 8 bytes of the inode buffer,
+    /// which contains the segment ID.
+    ///
+    /// # Returns
+    ///
+    /// The segment ID as a 64-bit unsigned integer.
+    ///
+    pub fn fseg_inode_get_fseg_id(&self) -> u64 {
+        mach_read_from_8(self.buf.0)
+    }
+
+    /// Set the segment inode ID in the inode buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `fseg_id` - The segment ID to set, represented as a `FSegId`.
+    ///
+    pub fn fseg_inode_set_fseg_id(&mut self, fseg_id: FSegId) {
+        mach_write_to_8(self.buf.0, fseg_id.0);
+    }
+}
+
+/// Represents a ** InnoDB inode page ** (`FIL_PAGE_TYPE_INODE`).
+///
+/// An inode page stores multiple [`fseg_inode_t`] entries (each 192 bytes),
+/// which describe file segments belonging to B‑trees or BLOB columns.
+///
+/// # Layout
+///
+/// Each inode page is 16 KB (`UNIV_PAGE_SIZE`) and consists of:
+///
+/// - The standard page header (`FIL_PAGE_HEADER`)
+/// - An array of [`fseg_inode_t`] entries (≈85 entries per page)
+///
+pub struct FSegInodePage {
+    page: Page,
+}
+
+impl FSegInodePage {
+    pub fn new(page: Page) -> Self {
+        Self { page }
+    }
+
+    /// Retrieves the nth inode from the segment inode page.
+    ///
+    /// # Arguments
+    ///
+    /// * `n` - The index of the inode to retrieve (0-based)
+    /// * `mtr` - A mutable reference to the multi-versioning transaction record
+    ///
+    /// # Returns
+    ///
+    /// A `FsegInode` representing the nth inode in the segment inode page.
+    ///
+    pub fn fsp_seg_inode_page_get_nth_inode(
+        &self,
+        n: usize,
+        mtr: &mut Mtr,
+    ) -> FSegInode {
+        ut_ad!(n < FSP_SEG_INODES_PER_PAGE);
+        ut_ad!(mtr.memo_contains(&MemoSlot::PageFix(
+            self.page.page_get_page_id(),
+            FixMode::Exclusive
+        )));
+
+        let page_frame = self.page.to_page_frame();
+        let start = FSEG_ARR_OFFSET + n * FSEG_INODE_SIZE;
+        let end = start + FSEG_INODE_SIZE;
+        let frame = Frame(
+            <&mut [u8; 192]>::try_from(&mut page_frame.0[start..end]).unwrap(),
+        );
+
+        FSegInode { buf: frame }
+    }
+
+    /// Find an unused segment inode on a segment inode page.
+    ///
+    /// # Arguments
+    ///
+    /// * `mtr` - A mutable reference to the multi-versioning transaction record
+    ///
+    /// # Returns
+    ///
+    /// `Some(n)` where `n` is the index of the first unused inode, or `None` if all inodes are used.
+    ///
+    pub fn fsp_seg_inode_page_find_free(
+        &self,
+        mtr: &mut Mtr,
+    ) -> Option<usize> {
+        for n in 0..FSP_SEG_INODES_PER_PAGE {
+            let inode = self.fsp_seg_inode_page_get_nth_inode(n, mtr);
+            if inode.fseg_inode_get_fseg_id() == 0 {
+                return Some(n);
+            }
+        }
+
+        None
+    }
+
+    /// Find a used segment inode on a segment inode page.
+    ///
+    /// # Arguments
+    ///
+    /// * `mtr` - A mutable reference to the multi-versioning transaction record
+    ///
+    /// # Returns
+    ///
+    /// `Some(n)` where `n` is the index of the first used inode, or `None` if all inodes are unused.
+    ///
+    pub fn fsp_seg_inode_page_find_used(
+        &self,
+        mtr: &mut Mtr,
+    ) -> Option<usize> {
+        for n in 0..FSP_SEG_INODES_PER_PAGE {
+            let inode = self.fsp_seg_inode_page_get_nth_inode(n, mtr);
+            if inode.fseg_inode_get_fseg_id() != 0 {
+                return Some(n);
+            }
+        }
+
+        None
+    }
+
+    /// Get all the segment ids on the fseg inode page.
+    ///
+    /// # Returns
+    ///
+    /// `Vec<FSegId>` containing all the segment ids on the page.
+    ///
+    #[cfg(test)]
+    pub fn fsp_seg_inode_page_get_seg_ids(
+        &self,
+        mtr: &mut Mtr,
+    ) -> Vec<FSegId> {
+        let mut seg_ids = Vec::new();
+        for n in 0..FSP_SEG_INODES_PER_PAGE {
+            let inode = self.fsp_seg_inode_page_get_nth_inode(n, mtr);
+            seg_ids.push(FSegId(inode.fseg_inode_get_fseg_id()));
+        }
+        seg_ids
     }
 }
