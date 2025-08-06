@@ -56,7 +56,7 @@ use crate::{
         fil0fil::Fil,
         fil0types::{
             FIL_PAGE_DATA, FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN,
-            FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID,
+            FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID, FILL_NULL,
         },
     },
     fsp::fsp0types::{Direction, FSegId},
@@ -65,7 +65,9 @@ use crate::{
         Frame, PageFrame as InnoPageFrame, PageId, PageNo, SpaceId,
         UNIV_PAGE_SIZE,
     },
-    mach::mach0data::{mach_read_from_4, mach_read_from_8, mach_write_to_8},
+    mach::mach0data::{
+        mach_read_from_4, mach_read_from_8, mach_write_to_4, mach_write_to_8,
+    },
     mtr::{
         mtr0mtr::Mtr,
         mtr0types::{FixMode, MemoSlot},
@@ -1050,6 +1052,17 @@ impl<'a> FSegInode<'a> {
         FSegInode { buf }
     }
 
+    /// Initialize the inode entry.
+    ///
+    /// * `mtr` - Mini-transaction for logging the operation
+    ///
+    pub fn init(&mut self, mtr: &mut Mtr) {
+        // Go through all the slots and set the fragment slot to FILL_NULL.
+        for i in 0..FSEG_FRAG_ARR_N_SLOTS {
+            self.fseg_set_nth_frag_page_no(i, FILL_NULL, mtr);
+        }
+    }
+
     /// Get the segment inode ID from the inode buffer.
     ///
     /// This method reads the first 8 bytes of the inode buffer,
@@ -1071,6 +1084,101 @@ impl<'a> FSegInode<'a> {
     ///
     pub fn fseg_inode_set_fseg_id(&mut self, fseg_id: FSegId) {
         mach_write_to_8(self.buf.0, fseg_id.0);
+    }
+
+    /// Get the page number from the nth fragment page slot.
+    ///
+    /// # Arguments
+    ///
+    /// * `n`: The index of the fragment page slot (0-based).
+    ///
+    /// # Returns
+    ///
+    /// `PageNo` at the nth frag position.
+    pub fn fseg_get_nth_frag_page_no(&self, n: usize) -> PageNo {
+        ut_ad!(n < FSEG_FRAG_ARR_N_SLOTS);
+
+        let start = FSEG_ARR_OFFSET + n * FSEG_FRAG_SLOT_SIZE;
+        let end = start + FSEG_FRAG_SLOT_SIZE;
+        mach_read_from_4(&self.buf.0[start..end])
+    }
+
+    /// Set the page number for the nth fragment page slot.
+    ///
+    /// # Arguments
+    ///
+    /// * `n`: The index of the fragment page slot (0-based).
+    /// * `page_no`: The page no to write to the slot.
+    /// * `mtr` - Mini-transaction for logging the operation.
+    ///
+    pub fn fseg_set_nth_frag_page_no(
+        &mut self,
+        n: usize,
+        page_no: PageNo,
+        mtr: &mut Mtr,
+    ) {
+        ut_ad!(n < FSEG_FRAG_ARR_N_SLOTS);
+
+        let start = FSEG_ARR_OFFSET + n * FSEG_FRAG_SLOT_SIZE;
+        let end = start + FSEG_FRAG_SLOT_SIZE;
+        mach_write_to_4(&mut self.buf.0[start..end], page_no);
+
+        // mtr.write_u32()
+    }
+
+    /// Find a free fragment page slot.
+    ///
+    /// # Returns
+    ///
+    /// `Some(usize)` is the index of the first free fragment page slot,
+    /// or `None` if all slots are used.
+    ///
+    pub fn fseg_find_free_frag_page_slot(&self) -> Option<usize> {
+        for i in 0..FSEG_FRAG_ARR_N_SLOTS {
+            if self.fseg_get_nth_frag_page_no(i) == FILL_NULL {
+                return Some(i);
+            }
+        }
+
+        None
+    }
+
+    /// Find a fragment page slot which is used and last in the array.
+    ///
+    /// # Returns
+    ///
+    /// `Some(uszie)` is the index of the first free fragment page slot,
+    /// or `None` if all slots are used.
+    ///
+    pub fn fseg_find_last_used_frag_page_slot(&self) -> Option<usize> {
+        for i in (0..FSEG_FRAG_ARR_N_SLOTS).rev() {
+            if self.fseg_get_nth_frag_page_no(i) != FILL_NULL {
+                return Some(i);
+            }
+        }
+
+        None
+    }
+
+    /// Calculate reserved fragment page slots.
+    ///
+    /// # Returns
+    ///
+    /// `usize` total count of reserved fragment page slots.
+    pub fn fseg_get_n_frag_pages(&self) -> usize {
+        (0..FSEG_FRAG_ARR_N_SLOTS)
+            .into_iter()
+            .filter(|&i| self.fseg_get_nth_frag_page_no(i) != FILL_NULL)
+            .count()
+    }
+
+    /// Get all the frag pages from the inode slot.
+    #[cfg(test)]
+    pub fn fseg_get_all_frag_pages(&self) -> Vec<PageNo> {
+        (0..FSEG_FRAG_ARR_N_SLOTS)
+            .into_iter()
+            .map(|i| self.fseg_get_nth_frag_page_no(i))
+            .collect::<Vec<_>>()
     }
 }
 
@@ -1100,7 +1208,7 @@ impl FSegInodePage {
     /// # Arguments
     ///
     /// * `n` - The index of the inode to retrieve (0-based)
-    /// * `mtr` - A mutable reference to the multi-versioning transaction record
+    /// * `mtr` - Mini-transaction for logging the operation
     ///
     /// # Returns
     ///
@@ -1131,7 +1239,7 @@ impl FSegInodePage {
     ///
     /// # Arguments
     ///
-    /// * `mtr` - A mutable reference to the multi-versioning transaction record
+    /// * `mtr` - Mini-transaction for logging the operation
     ///
     /// # Returns
     ///
@@ -1155,7 +1263,7 @@ impl FSegInodePage {
     ///
     /// # Arguments
     ///
-    /// * `mtr` - A mutable reference to the multi-versioning transaction record
+    /// * `mtr` - Mini-transaction for logging the operation
     ///
     /// # Returns
     ///
