@@ -3,7 +3,7 @@ mod tests {
     use crate::{
         fil::fil0types::{
             FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET,
-            FIL_PAGE_SPACE_ID,
+            FIL_PAGE_SPACE_ID, FILL_NULL,
         },
         fsp::{fsp0fsp::*, fsp0types::FSegId},
         fut::fut0lst::*,
@@ -802,5 +802,142 @@ mod tests {
         assert!(fseg_inode.is_some(), "Should find a free inode");
         let found_index = fseg_inode.unwrap();
         assert_eq!(found_index, write_index, "Found wrong inode");
+    }
+
+    #[test]
+    fn test_fseg_get_nth_frag_page_no() {
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let owning_page = create_fseg_inode_page();
+        let page = owning_page.page;
+        let fsp_seg_inode_page = FSegInodePage::new(owning_page.page);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            page.page_get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        let mut fsp_seg_inode =
+            fsp_seg_inode_page.fsp_seg_inode_page_get_nth_inode(0, &mut mtr);
+
+        fsp_seg_inode.init(&mut mtr);
+
+        // Test that all frag pages are set to FILL_NULL
+        {
+            let frag_pages = fsp_seg_inode.fseg_get_all_frag_pages();
+            assert_eq!(frag_pages.len(), FSEG_FRAG_ARR_N_SLOTS);
+
+            for frag_page_no in frag_pages {
+                assert_eq!(frag_page_no, FILL_NULL);
+            }
+        }
+
+        // Set some fragment page numbers
+        {
+            let test_pages = [100u32, 200u32, 300u32];
+            for (i, &page_no) in test_pages.iter().enumerate() {
+                fsp_seg_inode.fseg_set_nth_frag_page_no(i, page_no, &mut mtr);
+            }
+            let frag_pages = fsp_seg_inode.fseg_get_all_frag_pages();
+            assert_eq!(frag_pages.len(), FSEG_FRAG_ARR_N_SLOTS);
+
+            for (i, &page_no) in test_pages.iter().enumerate() {
+                assert_eq!(frag_pages[i], page_no);
+            }
+        }
+    }
+
+    #[test]
+    fn test_fseg_get_n_frag_pages() {
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let owning_page = create_fseg_inode_page();
+        let page = owning_page.page;
+        let fsp_seg_inode_page = FSegInodePage::new(owning_page.page);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            page.page_get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        let mut fsp_seg_inode =
+            fsp_seg_inode_page.fsp_seg_inode_page_get_nth_inode(0, &mut mtr);
+
+        fsp_seg_inode.init(&mut mtr);
+
+        let n_frag_pages = fsp_seg_inode.fseg_get_n_frag_pages();
+        assert_eq!(n_frag_pages, 0);
+
+        let test_pages = [1u32, 2u32, 3u32, 9u32, 19u32];
+        for (index, page_no) in test_pages.iter().enumerate() {
+            fsp_seg_inode.fseg_set_nth_frag_page_no(index, *page_no, &mut mtr);
+        }
+
+        let n_frag_pages = fsp_seg_inode.fseg_get_n_frag_pages();
+        assert_eq!(n_frag_pages, test_pages.len());
+    }
+
+    #[test]
+    fn test_fseg_find_last_used_frag_page_slot() {
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let owning_page = create_fseg_inode_page();
+        let page = owning_page.page;
+        let fsp_seg_inode_page = FSegInodePage::new(owning_page.page);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            page.page_get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        let mut fsp_seg_inode =
+            fsp_seg_inode_page.fsp_seg_inode_page_get_nth_inode(0, &mut mtr);
+
+        fsp_seg_inode.init(&mut mtr);
+
+        let n_frag_pages = fsp_seg_inode.fseg_get_n_frag_pages();
+        assert_eq!(n_frag_pages, 0);
+
+        let test_cases = [0u32, 1u32, 2u32, 3u32, 9u32, 19u32];
+        for i in test_cases.iter() {
+            fsp_seg_inode.fseg_set_nth_frag_page_no(*i as usize, *i, &mut mtr);
+        }
+
+        let res = fsp_seg_inode.fseg_find_last_used_frag_page_slot();
+        assert_eq!(res.unwrap(), *test_cases.last().unwrap() as usize);
+    }
+
+    #[test]
+    fn test_fseg_find_free_frag_page_slot() {
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let owning_page = create_fseg_inode_page();
+        let page = owning_page.page;
+        let fsp_seg_inode_page = FSegInodePage::new(owning_page.page);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            page.page_get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        let mut fsp_seg_inode =
+            fsp_seg_inode_page.fsp_seg_inode_page_get_nth_inode(0, &mut mtr);
+
+        fsp_seg_inode.init(&mut mtr);
+
+        let n_frag_pages = fsp_seg_inode.fseg_get_n_frag_pages();
+        assert_eq!(n_frag_pages, 0);
+
+        let test_cases = [0u32, 1u32, 2u32, 3u32, 9u32, 19u32];
+        for i in test_cases.iter() {
+            fsp_seg_inode.fseg_set_nth_frag_page_no(*i as usize, *i, &mut mtr);
+        }
+
+        let res = fsp_seg_inode.fseg_find_free_frag_page_slot();
+        assert_eq!(res.unwrap(), 4);
     }
 }
