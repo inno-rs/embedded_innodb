@@ -17,6 +17,7 @@ use crate::{
         DTupleBuilder, DType,
     },
     dict::dict0types::{Column, Field, Index},
+    fil::fil0types::FIL_PAGE_DATA,
     innodb::innodb0types::{PageId, PageNo, UNIV_PAGE_SIZE, UNIV_SQL_NULL},
     lock::lock0lock::LockSys,
     mach::mach0data::mach_write_to_4,
@@ -169,6 +170,21 @@ pub fn create_raw_page() -> OwningPage {
         ),
         buf_block: buf_block_clone,
     }
+}
+
+/// Create an fseg inode page.
+/// todo: Don't use OwningPage as it has index, and other data.
+///
+/// # Returns
+///
+/// `OwningPage` page object.
+pub fn create_fseg_inode_page() -> OwningPage {
+    let owning_page = create_raw_page();
+    let page_frame = owning_page.page.to_page_frame();
+
+    page_frame.0[FIL_PAGE_DATA..].fill(0);
+
+    owning_page
 }
 
 /// Creates a specified number of data tuples for testing purposes.

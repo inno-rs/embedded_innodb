@@ -611,7 +611,7 @@ pub(super) mod tests {
         let pool = buf_pool_fixture.buf_pool.clone();
         {
             // make sure there's no pending flush work
-            let mut p = pool.lock().unwrap();
+            let p = pool.lock().unwrap();
             p.inner().lock().unwrap().set_lru_flush_ended(0);
         }
 
@@ -634,7 +634,7 @@ pub(super) mod tests {
         let pool = buf_pool_fixture.buf_pool.clone();
         {
             // seed with some pending work
-            let mut p = pool.lock().unwrap();
+            let p = pool.lock().unwrap();
             p.inner().lock().unwrap().set_lru_flush_ended(3);
         }
 
@@ -667,7 +667,7 @@ pub(super) mod tests {
         let owning = test0utils::create_raw_page();
         let block = owning.buf_block.clone();
         {
-            let mut pool_guard = pool.lock().unwrap();
+            let pool_guard = pool.lock().unwrap();
             // mark it as a file page
             {
                 let mut b = block.write().unwrap();
@@ -699,7 +699,7 @@ pub(super) mod tests {
         let owning = test0utils::create_raw_page();
         let block = owning.buf_block.clone();
         {
-            let mut pool_guard = pool.lock().unwrap();
+            let pool_guard = pool.lock().unwrap();
             // prep the page as file‐page, inserted into both hash and LRU
             {
                 let mut b = block.write().unwrap();
@@ -740,15 +740,15 @@ pub(super) mod tests {
 
         // snapshot clocks
         let (before_pool_clk, before_block_clk) = {
-            let mut p = pool.lock().unwrap();
-            let mut inner = p.inner().lock().unwrap();
+            let p = pool.lock().unwrap();
+            let inner = p.inner().lock().unwrap();
             let free_clk = inner.freed_page_clock();
             let block_clk = block.read().unwrap().buf_block_get_clock();
             (free_clk, block_clk)
         };
 
         {
-            let mut p = pool.lock().unwrap();
+            let p = pool.lock().unwrap();
             // prep the page as file‐page, inserted into both hash and LRU
             {
                 let mut b = block.write().unwrap();

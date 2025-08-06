@@ -16,3 +16,6 @@ pub enum Direction {
     /// No Order.
     FspNoDir = 113,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FSegId(pub u64);

@@ -13,7 +13,6 @@ use crate::{
         DType,
     },
     dict::dict0types::{Column, Index},
-    innodb::innodb0types::TrxId,
     ut::ut0dbg::ut_ad,
 };
 

@@ -9,7 +9,7 @@ use crate::{
     data::data0types::{
         DATA_NOT_NULL, DATA_SYS_CHILD, DFieldBuilder, DTuple, DType,
     },
-    dict::dict0table::{Table, TableId},
+    dict::dict0table::Table,
     innodb::innodb0types::{PageId, PageNo},
     rem::rem0rec::{REC_STATUS_NODE_PTR, Record},
     some_or_panic,

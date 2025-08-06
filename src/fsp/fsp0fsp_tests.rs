@@ -5,9 +5,14 @@ mod tests {
             FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET,
             FIL_PAGE_SPACE_ID,
         },
-        fsp::fsp0fsp::*,
+        fsp::{fsp0fsp::*, fsp0types::FSegId},
         fut::fut0lst::*,
         innodb::innodb0types::{RawPage, UNIV_PAGE_SIZE},
+        mtr::{
+            mtr0mtr::Mtr,
+            mtr0types::{FixMode, MemoSlot},
+        },
+        tests::test0utils::create_fseg_inode_page,
     };
 
     #[test]
@@ -679,5 +684,123 @@ mod tests {
 
         // Test space_available (should be 63)
         assert_eq!(fsp_header_page.space_available(), 63);
+    }
+
+    #[test]
+    fn test_fsp_seg_inode_page_new() {
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let owning_page = create_fseg_inode_page();
+        let page = owning_page.page;
+        let fsp_seg_inode_page = FSegInodePage::new(owning_page.page);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            page.page_get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        let seg_ids =
+            fsp_seg_inode_page.fsp_seg_inode_page_get_seg_ids(&mut mtr);
+
+        for seg_id in seg_ids {
+            assert_eq!(seg_id, FSegId(0u64), "Segment ID mismatch");
+        }
+    }
+
+    #[test]
+    fn test_fsp_seg_inode_page_get_nth_inode() {
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let owning_page = create_fseg_inode_page();
+        let page = owning_page.page;
+        let fsp_seg_inode_page = FSegInodePage::new(owning_page.page);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            page.page_get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        // Write segment id
+        let segment_id = 42u64;
+        let mut fseg_inode =
+            fsp_seg_inode_page.fsp_seg_inode_page_get_nth_inode(19, &mut mtr);
+
+        fseg_inode.fseg_inode_set_fseg_id(FSegId(segment_id));
+
+        // Verify segment id is set correctly
+        let read_fseg_id = fsp_seg_inode_page
+            .fsp_seg_inode_page_get_nth_inode(19, &mut mtr)
+            .fseg_inode_get_fseg_id();
+
+        assert_eq!(read_fseg_id, segment_id, "Segment ID mismatch");
+    }
+
+    #[test]
+    fn test_fsp_seg_inode_page_find_free() {
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let owning_page = create_fseg_inode_page();
+        let page = owning_page.page;
+        let fsp_seg_inode_page = FSegInodePage::new(owning_page.page);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            page.page_get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        // Write segment id to all except one.
+        let skip_index = 19;
+        for index in 0..FSP_SEG_INODES_PER_PAGE {
+            if index == skip_index {
+                continue;
+            }
+
+            let segment_id = 42u64;
+            let mut fseg_inode = fsp_seg_inode_page
+                .fsp_seg_inode_page_get_nth_inode(index, &mut mtr);
+
+            fseg_inode.fseg_inode_set_fseg_id(FSegId(segment_id));
+        }
+
+        // Now find free inode
+        let fseg_inode =
+            fsp_seg_inode_page.fsp_seg_inode_page_find_free(&mut mtr);
+        assert!(fseg_inode.is_some(), "Should find a free inode");
+        let found_index = fseg_inode.unwrap();
+        assert_eq!(found_index, skip_index, "Found wrong inode");
+    }
+
+    #[test]
+    fn test_fsp_seg_inode_page_find_used() {
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let owning_page = create_fseg_inode_page();
+        let page = owning_page.page;
+        let fsp_seg_inode_page = FSegInodePage::new(owning_page.page);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            page.page_get_page_id(),
+            FixMode::Exclusive,
+        ));
+
+        // Write segment id to all except one.
+        let write_index = 19;
+
+        let segment_id = 42u64;
+        let mut fseg_inode = fsp_seg_inode_page
+            .fsp_seg_inode_page_get_nth_inode(write_index, &mut mtr);
+
+        fseg_inode.fseg_inode_set_fseg_id(FSegId(segment_id));
+
+        // Now find free inode
+        let fseg_inode =
+            fsp_seg_inode_page.fsp_seg_inode_page_find_used(&mut mtr);
+        assert!(fseg_inode.is_some(), "Should find a free inode");
+        let found_index = fseg_inode.unwrap();
+        assert_eq!(found_index, write_index, "Found wrong inode");
     }
 }

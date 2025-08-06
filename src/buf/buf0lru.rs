@@ -11,9 +11,7 @@ use crate::{
         buf0buf::BufPoolInner,
         buf0types::{
             BufBlock, BufIoFix, BufPage, BufPageState,
-            BufPageState::{
-                BufBlockNotUsed, BufBlockReadyForUse, BufBlockRemoveHash,
-            },
+            BufPageState::{BufBlockNotUsed, BufBlockReadyForUse},
             BufPoolStats, FreeListAdapter, LruAdapter,
         },
     },
