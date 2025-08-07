@@ -92,7 +92,7 @@ pub struct BTreeCursor<'a> {
 impl<'a> BTreeCursor<'a> {
     /// Creates a new BTreeCursor instance.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `index` - A reference to the index being accessed
     /// * `fsp` - A reference to the file space manager
     /// * `btree` - A reference to the B-tree being traversed
@@ -122,7 +122,7 @@ impl<'a> BTreeCursor<'a> {
     /// Leaf pages contain actual data records, while non-leaf pages contain
     /// pointers to other pages.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `page` - The page to check
     ///
     /// # Returns
@@ -141,7 +141,7 @@ impl<'a> BTreeCursor<'a> {
     /// The operation will not succeed if there is not enough space on the page.
     /// If there is only one record on the page, the operation will always succeed.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `flags` - Flags controlling the insert operation
     /// * `dtuple` - The data tuple to be inserted
     /// * `n_ext` - Number of externally stored fields
@@ -374,7 +374,7 @@ impl<'a> BTreeCursor<'a> {
     /// and maximize the available free space. This is typically called when
     /// an insert operation fails due to insufficient space.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `mtr` - Mini-transaction for managing locks and logging
     ///
     /// # Returns
@@ -803,7 +803,7 @@ impl<'a> BTreeCursor<'a> {
     /// pointers in the parent node to link the new page into the B-tree structure. The method
     /// handles different split directions and updates the tree structure accordingly.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `split_rec` - The record at which the page was split
     /// * `buf_block` - The original buffer block that was split
     /// * `new_block` - The newly created buffer block
@@ -898,7 +898,7 @@ impl<'a> BTreeCursor<'a> {
     /// the level of the current page and searches for the parent block
     /// at that level.
     ///
-    /// # Parameters
+    /// # Arguments
     ///
     /// * `mtr` - A mutable reference to the mini-transaction used for managing locks and logging.
     ///

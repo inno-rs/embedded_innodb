@@ -225,7 +225,7 @@ impl Index {
     /// This method updates the number of columns needed to uniquely identify
     /// a record in this index.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `n_uniq` - The new number of columns forming the unique key
     pub fn set_n_uniq(&self, n_uniq: usize) {
         self.inner.lock().unwrap().n_uniq = n_uniq;
@@ -269,7 +269,7 @@ impl Index {
     /// This method appends a field to the list of fields in the index.
     /// Fields represent the columns that make up the index.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `field` - The field to add to the index
     pub fn add_field(&self, field: Field) {
         let mut inner = self.inner.lock().unwrap();
@@ -403,7 +403,7 @@ impl Index {
     /// inner node in a B-tree, containing only a reference to a child page.
     /// It's typically used when creating new index pages or during page splits.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `page_no` - The page number of the child page to reference
     ///
     /// # Returns

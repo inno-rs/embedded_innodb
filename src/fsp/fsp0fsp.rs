@@ -20,7 +20,7 @@
 // │ Extent Desc 0    Extent Desc 1    Extent Desc 2    …    Extent Desc N         │
 // │ (40 bytes each, packed back-to-back)                                             │
 // └───────────────────────────────────────────────────────────────────────────────┘
-//!Page-offset	Length	Field	Description
+// Page-offset  Length  Field  	Description
 // 0..37	38 B	Generic page header	InnoDB’s universal per-page fields (LSN, page number, etc.)
 // 38..41	4 B	space_id	Tablespace identifier (LE u32)
 // 42..45	4 B	not_used	Reserved (zero)
@@ -56,11 +56,12 @@ use crate::{
         fil0fil::Fil,
         fil0types::{
             FIL_PAGE_DATA, FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN,
-            FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID, FILL_NULL,
+            FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID, FIL_PAGE_TYPE, FILL_NULL,
+            FilPageType,
         },
     },
-    fsp::fsp0types::{Direction, FSegId},
-    fut::fut0lst::{FilAddr, flst_init},
+    fsp::fsp0types::{Direction, ExtentNo, FSegId},
+    fut::fut0lst::{FLst, FLstBaseNode, FilAddr},
     innodb::innodb0types::{
         Frame, PageFrame as InnoPageFrame, PageId, PageNo, SpaceId,
         UNIV_PAGE_SIZE,
@@ -70,7 +71,7 @@ use crate::{
     },
     mtr::{
         mtr0mtr::Mtr,
-        mtr0types::{FixMode, MemoSlot},
+        mtr0types::{FixMode, MemoSlot, MlogType},
     },
     page::page0page::Page,
     some_or_panic,
@@ -96,7 +97,7 @@ pub const FSP_EXTENT_SIZE: usize = 64;
 /// Compute how many bytes are needed to store the given number of bits
 #[inline]
 pub const fn ut_bits_in_bytes(bits: usize) -> usize {
-    (bits + 7) / 8
+    bits.div_ceil(8)
 }
 
 // Space header offsets and sizes
@@ -174,6 +175,7 @@ pub struct Fsp {
     buf_pool: Arc<Mutex<BufPool>>,
     /// Reference to fil.
     fil: Arc<Mutex<Fil>>,
+    /// The page number of the next page to allocate.
     page_no: AtomicU32,
 }
 
@@ -199,9 +201,8 @@ impl Fsp {
     ///
     pub fn init_fields(buf: &mut [u8], space_id: SpaceId, flags: usize) {
         // Initialize the fields of the FSP header to zero
-        buf[FSP_SPACE_ID_RANGE].copy_from_slice(&space_id.to_le_bytes());
-        buf[FSP_SPACE_FLAGS_RANGE]
-            .copy_from_slice(&(flags as u32).to_le_bytes());
+        mach_write_to_4(&mut buf[FSP_SPACE_ID_RANGE], space_id);
+        mach_write_to_4(&mut buf[FSP_SPACE_FLAGS_RANGE], flags as u32);
     }
 
     /// Retrieves the space header block for a given tablespace.
@@ -214,11 +215,12 @@ impl Fsp {
     /// # Returns
     ///
     /// An `Arc<RwLock<BufBlock>>` containing the space header block.
+    ///
     pub fn get_space_header_block(
         &self,
         space_id: SpaceId,
         mtr: &mut Mtr,
-    ) -> Arc<RwLock<BufBlock>> {
+    ) -> Option<Arc<RwLock<BufBlock>>> {
         let buf_block = self.buf_pool.lock().unwrap().get(Request {
             rw_latch: ReadWriteLatch::XLatch,
             page_id: PageId { space_id, page_no: 0 },
@@ -226,18 +228,20 @@ impl Fsp {
             mtr,
         });
 
-        let block = some_or_panic!(buf_block);
+        if let Some(buf_block) = buf_block {
+            let block_read = buf_block.read().unwrap();
+            let frame = block_read.get_page_frame();
 
-        let block_read = block.read().unwrap();
-        let frame = block_read.get_page_frame();
+            ut_ad!(block_read.is_frame_x_latched());
+            ut_ad!(
+                some_or_panic!(Self::get_space_header_from_page(frame))
+                    == space_id
+            );
 
-        ut_ad!(block_read.is_frame_x_latched());
-        ut_ad!(
-            some_or_panic!(Self::get_space_header_from_page(frame))
-                == space_id
-        );
+            return Some(buf_block.clone());
+        }
 
-        block.clone()
+        None
     }
 
     /// Extracts the space ID from a given page frame.
@@ -249,6 +253,7 @@ impl Fsp {
     /// # Returns
     ///
     /// An `Option<SpaceId>` containing the space ID if it can be read, or `None` if the page frame is invalid.
+    ///
     pub fn get_space_header_from_page(
         page_frame: InnoPageFrame,
     ) -> Option<SpaceId> {
@@ -265,13 +270,22 @@ impl Fsp {
     /// # Returns
     ///
     /// A `Page` representing the header page of the specified tablespace.
-    fn get_header_page(&self, space_id: SpaceId, mtr: &mut Mtr) -> Page {
+    ///
+    fn get_header_page(
+        &self,
+        space_id: SpaceId,
+        mtr: &mut Mtr,
+    ) -> Option<Page> {
         let header_block = self.get_space_header_block(space_id, mtr);
-        let read_guard = header_block.read().unwrap();
 
-        ut_ad!(read_guard.is_frame_x_latched());
+        if let Some(header_block) = header_block {
+            let read_guard = header_block.read().unwrap();
+            ut_ad!(read_guard.is_frame_x_latched());
 
-        read_guard.get_page()
+            return Some(read_guard.get_page());
+        }
+
+        None
     }
 
     pub fn header_init(
@@ -281,9 +295,11 @@ impl Fsp {
         mtr: &mut Mtr,
     ) {
         let header_page = self.get_header_page(space_id, mtr);
-        let mut fsp_header_page =
-            FspHeaderPage::new(header_page.to_page_frame().0);
-        fsp_header_page.header_init(space_id, space_size);
+        if let Some(header_page) = header_page {
+            let mut fsp_header_page =
+                FspHeaderPage::new(header_page.to_page_frame().0);
+            fsp_header_page.header_init(space_id, space_size);
+        }
     }
 
     /// Allocates a single free page from the segment. We try to minimize page fragmentation.
@@ -317,13 +333,28 @@ impl Fsp {
         page_no
     }
 
+    /// Allocates a segment inode page and adds it to the free list of segment inode pages.
+    ///
+    /// # Arguments
+    ///
+    /// * `fsp_header_page`: A mutable reference to the FSP header page for the space id.
+    /// * `space_id`: The ID of the tablespace to allocate the segment inode page in.
+    /// * `hint`: A hint for the page number to allocate.
+    /// * `mtr`: A mutable reference to the mini transaction.
+    ///
+    /// # Returns
+    ///
+    /// `bool` - Returns `true` if the allocation was successful, `false` otherwise.
+    ///
     pub fn alloc_seg_inode_page(
         &self,
         fsp_header_page: &mut FspHeaderPage,
+        space_id: SpaceId,
+        hint: PageNo,
         mtr: &mut Mtr,
     ) -> bool {
-        let space_id = fsp_header_page.get_space_id();
-        let page_no = self.alloc_free_page();
+        let space_id = fsp_header_page.fsp_get_space_id();
+        let page_no = self.alloc_free_page(space_id, hint, mtr);
 
         if page_no.is_none() {
             return false;
@@ -341,13 +372,92 @@ impl Fsp {
         let buf_block = some_or_panic!(block);
         let page = buf_block.read().unwrap().get_page();
 
-        let page_frame = page.to_page_frame();
+        mtr.write_u32(
+            &page,
+            FIL_PAGE_TYPE,
+            FilPageType::Inode as u32,
+            MlogType::MLog2Bytes,
+        );
+
+        let mut fseg_inode_page = FSegInodePage::new(page);
+        for i in 0..FSP_SEG_INODES_PER_PAGE {
+            let mut fseg_inode =
+                fseg_inode_page.fsp_seg_inode_page_get_nth_inode(i, mtr);
+            // todo: mtr log
+            // mtr.write_uint64()
+            fseg_inode.fseg_inode_set_fseg_id(FSegId(0));
+        }
+
+        self.add_to_fseg_inode_free_list_last(
+            fsp_header_page,
+            &mut fseg_inode_page,
+            mtr,
+        );
 
         true
     }
 
-    pub fn alloc_free_page(&self) -> Option<PageNo> {
+    pub fn alloc_free_page(
+        &self,
+        space_id: SpaceId,
+        hint_page_no: PageNo,
+        mtr: &mut Mtr,
+    ) -> Option<PageNo> {
         Some(self.page_no.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Adds a segment inode page to the free list of segment inode pages.
+    ///
+    /// # Arguments
+    ///
+    /// * `fsp_header_page` - The FSP header page containing the free list
+    /// * `fseg_inode_page` - The segment inode page to add
+    /// * `mtr` - A mutable reference to mini transaction
+    ///
+    pub fn add_to_fseg_inode_free_list_last(
+        &self,
+        fsp_header_page: &mut FspHeaderPage,
+        fseg_inode_page: &mut FSegInodePage,
+        mtr: &mut Mtr,
+    ) {
+        let space_id = fsp_header_page.fsp_get_space_id();
+        let mut fseg_inode_free_list =
+            fsp_header_page.fsp_get_seg_inodes_free_list_mut();
+        let last = fseg_inode_free_list.get_last();
+        if last == FilAddr::NULL {
+            let fil_addr = FilAddr {
+                page_no: fseg_inode_page.get_page_no(),
+                byte_off: FSEG_INODE_PAGE_NODE as u16,
+            };
+
+            fseg_inode_free_list.set_last(fil_addr);
+            fseg_inode_free_list.set_first(fil_addr);
+
+            fseg_inode_page.set_prev_page(FILL_NULL);
+            fseg_inode_page.set_next_page(FILL_NULL);
+        } else {
+            let last_page_no = last.page_no;
+            let last_byte_off = last.byte_off;
+            let last_block = self.buf_pool.lock().unwrap().get(Request {
+                rw_latch: ReadWriteLatch::NoLatch,
+                page_id: PageId { space_id, page_no: last_page_no },
+                mode: BUF_GET_ALWAYS,
+                mtr,
+            });
+
+            let last_buf_page = some_or_panic!(last_block);
+            let last_page = last_buf_page.read().unwrap().get_page();
+
+            fseg_inode_page.set_prev_page(last_page_no);
+            last_page.set_next_page(fseg_inode_page.get_page_no());
+
+            fseg_inode_free_list.set_last(FilAddr {
+                page_no: fseg_inode_page.get_page_no(),
+                byte_off: FSEG_INODE_PAGE_NODE as u16,
+            });
+        }
+
+        fseg_inode_free_list.incr_length();
     }
 }
 
@@ -371,7 +481,7 @@ impl<'a> FspHeaderPage<'a> {
     pub fn get_buf_mut(&mut self) -> &mut [u8; UNIV_PAGE_SIZE] {
         ut_ad!(self.buf.as_ptr() as usize % UNIV_PAGE_SIZE == 0);
 
-        &mut self.buf
+        self.buf
     }
 }
 
@@ -395,12 +505,85 @@ impl<'a> FspHeaderPage<'a> {
         FspHeaderPage { buf, page }
     }
 
-    pub fn get_space_id(&self) -> SpaceId {
-        self.page.page_get_space_id()
-    }
-
     pub fn get_page_no(&self) -> PageNo {
         self.page.page_get_fil_offset()
+    }
+
+    /// Get space ID from the FSP header.
+    ///
+    /// # Returns
+    ///
+    /// `SpaceId` - FSP space ID
+    /// .
+    pub fn fsp_get_space_id(&self) -> SpaceId {
+        mach_read_from_4(&self.buf[FSP_SPACE_ID_RANGE])
+    }
+
+    /// Sets the space ID in the FSP header.
+    ///
+    /// # Arguments
+    ///
+    /// * `space_id` - SpaceId to write.
+    ///
+    pub fn fsp_set_space_id(&mut self, space_id: SpaceId) {
+        // Byte 38 to Byte 41
+        mach_write_to_4(&mut self.buf[FSP_SPACE_ID_RANGE], space_id);
+    }
+
+    pub fn fsp_get_fsp_size(&self) -> u32 {
+        mach_read_from_4(
+            &self.buf[FSP_HEADER_OFFSET + FSP_SIZE
+                ..FSP_HEADER_OFFSET + FSP_SIZE + 4],
+        )
+    }
+
+    pub fn fsp_set_fsp_size(&mut self, fsp_size: u32) {
+        // Byte 46 to 49
+        mach_write_to_4(
+            &mut self.buf[FSP_HEADER_OFFSET + FSP_SIZE
+                ..FSP_HEADER_OFFSET + FSP_SIZE + 4],
+            fsp_size,
+        );
+    }
+
+    pub fn fsp_get_fsp_free_limit(&self) -> u32 {
+        mach_read_from_4(
+            &self.buf[FSP_HEADER_OFFSET + FSP_FREE_LIMIT
+                ..FSP_HEADER_OFFSET + FSP_FREE_LIMIT + 4],
+        )
+    }
+
+    pub fn fsp_set_fsp_free_limit(&mut self, limit: u32) {
+        // Byte 50 to 53
+        mach_write_to_4(
+            &mut self.buf[FSP_HEADER_OFFSET + FSP_FREE_LIMIT
+                ..FSP_HEADER_OFFSET + FSP_FREE_LIMIT + 4],
+            limit,
+        );
+    }
+
+    /// Retrieves the free list base node for the FSP_FREE list.
+    ///
+    /// # Returns
+    ///
+    /// `FLstBaseNode` - The base node of the free list, which contains
+    /// the first and last addresses of free extents.
+    ///
+    pub fn fsp_get_seg_inodes_free_list_mut(&mut self) -> FLst<'_> {
+        let base_node = FLstBaseNode::new(
+            FilAddr { page_no: 0, byte_off: FSP_SEG_INODES_FREE as u16 },
+            Frame(
+                <&mut [u8; FLST_BASE_NODE_SIZE]>::try_from(
+                    &mut self.buf[(FSP_HEADER_OFFSET + FSP_SEG_INODES_FREE)
+                        ..(FSP_HEADER_OFFSET
+                            + FSP_SEG_INODES_FREE
+                            + FLST_BASE_NODE_SIZE)],
+                )
+                .unwrap(),
+            ),
+        );
+
+        FLst::new(base_node)
     }
 
     /// Initializes the FSP (File Space) header in this page.
@@ -410,22 +593,22 @@ impl<'a> FspHeaderPage<'a> {
     /// that track free, partially free, and full extents.
     ///
     /// # Arguments
+    ///
     /// * `space_id` - The unique identifier for this tablespace
     /// * `space_size` - The initial size of the tablespace in pages
+    ///
     pub fn header_init(&mut self, space_id: u32, space_size: u32) {
         let start = FSP_HEADER_OFFSET; // Byte 38
         let end = start + FSP_HEADER_SIZE; // Byte 150 (Total 112 Bytes)
         self.buf[start..end].fill(0);
-        self.buf[start + FSP_SPACE_ID..start + FSP_SPACE_ID + 4] // Byte 38 to Byte 41
-            .copy_from_slice(&space_id.to_le_bytes());
-        self.buf[start + FSP_SIZE..start + FSP_SIZE + 4] // Byte 46 to 49
-            .copy_from_slice(&space_size.to_le_bytes());
-        self.buf[start + FSP_FREE_LIMIT..start + FSP_FREE_LIMIT + 4] // Byte 50 to 53
-            .copy_from_slice(&space_size.to_le_bytes());
+
+        self.fsp_set_space_id(space_id);
+        self.fsp_set_fsp_size(space_size);
+        self.fsp_set_fsp_free_limit(space_size);
 
         // Flags and frag_n_used are already zeroed
 
-        // Below are 5 linked list
+        // Below are 5 linked lists
         let heads = [
             FSP_FREE,            // free list Byte 62-77 [38 + 24 -- 38+24+16]
             FSP_FREE_FRAG,       // partially free extents // Byte 78-93
@@ -435,21 +618,35 @@ impl<'a> FspHeaderPage<'a> {
         ];
         for &off in &heads {
             let abs = start + off;
-            flst_init(&mut self.buf[abs..abs + FLST_BASE_NODE_SIZE]);
+            let mut base_node = FLstBaseNode::new(
+                FilAddr { page_no: 0, byte_off: FSP_FREE as u16 },
+                Frame(
+                    <&mut [u8; FLST_BASE_NODE_SIZE]>::try_from(
+                        &mut self.buf[abs..abs + FLST_BASE_NODE_SIZE],
+                    )
+                    .unwrap(),
+                ),
+            );
+
+            base_node.set_last(FilAddr::NULL);
+            base_node.set_first(FilAddr::NULL);
         }
 
-        self.buf[start + FSP_SEG_ID..start + FSP_SEG_ID + 4]
-            .copy_from_slice(&0u32.to_le_bytes());
+        mach_write_to_4(
+            &mut self.buf[start + FSP_SEG_ID..start + FSP_SEG_ID + 4],
+            0,
+        );
     }
 
     /// Allocates a free extent from the FSP_FREE list, marks it as partially used,
     /// and moves it to the FSP_FREE_FRAG list.
     ///
     /// This function will:
-    /// •	Pick one free extent from the free list
-    /// •	Mark it as “partially used”
-    /// •	Move it to the “fragmented list”
-    /// •	Return its index
+    /// • Pick one free extent from the free list
+    /// • Mark it as “partially used”
+    /// • Move it to the “fragmented list”
+    /// • Return its index
+    ///
     pub fn alloc_free_extent(&mut self) -> Option<u32> {
         let buf = &mut self.buf;
 
@@ -463,28 +660,28 @@ impl<'a> FspHeaderPage<'a> {
             (first, first.byte_off as usize)
         };
 
-        // Step 2: Split buffer into FSP header + extent descriptor area
-        let (header_part, xdes_area) = buf.split_at_mut(XDES_ARR_OFFSET);
+        // Step 2: Split the buffer into FSP header + extent descriptor area
+        let (header_area, xdes_area) = buf.split_at_mut(XDES_ARR_OFFSET);
 
-        // Step 3: Get mutable slice for the 40-byte extent descriptor
+        // Step 3: Get a mutable slice for the 40-byte extent descriptor
         let rel_off = extent_off - XDES_ARR_OFFSET;
         let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
 
-        // Step 4: Initialize extent descriptor and mark as partially used
+        // Step 4: Initialize the extent descriptor and mark as partially used
         let mut xdes = ExtentDescriptor::new(xdes_buf);
         xdes.xdes_init();
         xdes.set_state(XDES_FREE_FRAG);
 
         // Step 5: Remove from FSP_FREE list (use header_part safely now)
         {
-            let free_head = &mut header_part[FSP_HEADER_OFFSET + FSP_FREE..];
+            let free_head = &mut header_area[FSP_HEADER_OFFSET + FSP_FREE..];
             first.remove(free_head, xdes_buf, None, None);
         }
 
         // Step 6: Add to FSP_FREE_FRAG list
         {
             let free_frag_head =
-                &mut header_part[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
+                &mut header_area[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
             first.add_last(free_frag_head, xdes_buf, None);
         }
 
@@ -500,7 +697,9 @@ impl<'a> FspHeaderPage<'a> {
     /// FREE list.
     ///
     /// # Arguments
+    ///
     /// * `page_no` - The page number to free
+    ///
     pub fn free_page(&mut self, page_no: u32) {
         let buf = &mut self.buf;
 
@@ -547,8 +746,10 @@ impl<'a> FspHeaderPage<'a> {
     /// 4. Updating the list pointers and state if the extent becomes full
     ///
     /// # Returns
+    ///
     /// * `Some(page_no)` - The page number of the allocated page
     /// * `None` - If no free page could be allocated
+    ///
     pub fn alloc_page(&mut self) -> Option<u32> {
         // Get the FSP FREE_FRAG_LIST
         let head = &mut self.buf[FSP_HEADER_OFFSET + FSP_FREE_FRAG..];
@@ -646,10 +847,10 @@ impl<'a> FspHeaderPage<'a> {
 
     /// Extends the space by one extent and returns the new extent number
     pub fn extend_space(&mut self) -> Option<u32> {
-        // 1. Read current space size
-        let current_pages = self.read_u32_le(FSP_HEADER_OFFSET + FSP_SIZE); // Read 4 bytes - Byte 46-49
+        // 1. Read the current space size
+        let current_pages = self.fsp_get_fsp_size();
 
-        // 2. Determine new extent number and its byte offset
+        // 2. Determine a new extent number and its byte offset
         let new_extent_no = current_pages / FSP_EXTENT_SIZE as u32;
         let extent_off = XDES_ARR_OFFSET + new_extent_no as usize * XDES_SIZE;
         let rel_off = extent_off - XDES_ARR_OFFSET;
@@ -674,19 +875,9 @@ impl<'a> FspHeaderPage<'a> {
 
         // 6. Update space size
         let new_size = current_pages + FSP_EXTENT_SIZE as u32;
-        self.write_u32_le(FSP_HEADER_OFFSET + FSP_SIZE, new_size);
+        self.fsp_set_fsp_size(new_size);
 
         Some(new_extent_no)
-    }
-
-    pub fn read_u32_le(&self, offset: usize) -> u32 {
-        let bytes = &self.buf[offset..offset + 4];
-        u32::from_le_bytes(bytes.try_into().expect("Failed to read u32"))
-    }
-
-    pub fn write_u32_le(&mut self, offset: usize, value: u32) {
-        let bytes = value.to_le_bytes();
-        self.buf[offset..offset + 4].copy_from_slice(&bytes);
     }
 
     pub fn is_page_free(&mut self, page_no: u32) -> bool {
@@ -694,43 +885,82 @@ impl<'a> FspHeaderPage<'a> {
         let page_idx = (page_no % FSP_EXTENT_SIZE as u32) as usize;
         let extent_off = XDES_ARR_OFFSET + extent_no as usize * XDES_SIZE;
 
-        // SAFELY access the descriptor
-        let (_, xdes_area) = self.buf.split_at_mut(XDES_ARR_OFFSET);
-        let rel_off = extent_off - XDES_ARR_OFFSET;
-        let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
-        let xdes = ExtentDescriptor::new(xdes_buf);
+        let xdes = self.get_extent_descriptor(ExtentNo(extent_no));
 
         xdes.get_bit(page_idx, XDES_FREE_BIT)
     }
-    pub fn is_extent_used(&mut self, extent_no: u32) -> bool {
-        let extent_off = XDES_ARR_OFFSET + extent_no as usize * XDES_SIZE;
 
-        let (_, xdes_area) = self.buf.split_at_mut(XDES_ARR_OFFSET);
-        let rel_off = extent_off - XDES_ARR_OFFSET;
-        let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
-        let xdes = ExtentDescriptor::new(xdes_buf);
-
+    /// Check if the extent is used.
+    ///
+    /// # Arguments
+    ///
+    /// * `extent_no`: Extent number to check.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the extent is used (has at least one page allocated), `false` otherwise.
+    ///
+    pub fn is_extent_used(&mut self, extent_no: ExtentNo) -> bool {
+        let xdes = self.get_extent_descriptor(extent_no);
         xdes.used_count() > 0
     }
 
     pub fn space_available(&mut self) -> usize {
         let mut free_pages = 0;
-        let total_extents = (self.read_u32_le(FSP_HEADER_OFFSET + FSP_SIZE)
-            as usize)
-            / FSP_EXTENT_SIZE;
-
-        let (_, xdes_area) = self.buf.split_at_mut(XDES_ARR_OFFSET);
+        let total_extents =
+            (self.fsp_get_fsp_size()) as usize / FSP_EXTENT_SIZE;
 
         for extent_no in 0..total_extents {
-            let rel_off = extent_no * XDES_SIZE;
-            let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
-            let xdes = ExtentDescriptor::new(xdes_buf);
+            let xdes = self.get_extent_descriptor(ExtentNo(extent_no as u32));
 
-            free_pages += xdes.free_count(); // how many pages in this extent are marked free
+            free_pages += xdes.free_count(); // Number of pages marked as free in this extent
         }
 
         free_pages
     }
+
+    pub fn get_extent_descriptor(
+        &mut self,
+        extent_no: ExtentNo,
+    ) -> ExtentDescriptor<'_> {
+        let extent_off = XDES_ARR_OFFSET + extent_no.0 as usize * XDES_SIZE;
+        let (_, xdes_area) = self.buf.split_at_mut(XDES_ARR_OFFSET);
+        let rel_off = extent_off - XDES_ARR_OFFSET;
+        let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
+        ExtentDescriptor::new(xdes_buf)
+    }
+
+    fn get_extent_pair(
+        buf: &'a mut [u8],
+        i: usize,
+        j: usize,
+    ) -> (ExtentDescriptor<'a>, ExtentDescriptor<'a>) {
+        assert!(i < j, "Expected i < j");
+        assert!((j + 1) * XDES_SIZE <= buf.len(), "Out of bounds");
+
+        // Split at start of j-th descriptor
+        let (left, right) = buf.split_at_mut(j * XDES_SIZE);
+
+        let desc_i = ExtentDescriptor::new(
+            &mut left[i * XDES_SIZE..(i + 1) * XDES_SIZE],
+        );
+        let desc_j = ExtentDescriptor::new(&mut right[0..XDES_SIZE]);
+
+        (desc_i, desc_j)
+    }
+}
+
+/// Enum representing the possible states of an extent descriptor.
+#[repr(u8)]
+pub enum XDesState {
+    /// XDES_FREE
+    Free = 1,
+    /// XDES_FREE_FRAG
+    FreeFrag = 2,
+    /// XDES_FULL_FRAG
+    FullFrag = 3,
+    /// XDES_FSEG
+    Fseg = 4,
 }
 
 /// Represents an extent descriptor in the InnoDB tablespace.
@@ -789,7 +1019,7 @@ impl<'a> ExtentDescriptor<'a> {
     /// * `page_no` - The page number to assign to this page
     /// * `space_id` - The space ID to assign to this page
     ///
-    pub fn init_file_page_low(&mut self, page_no: u32, space_id: u32) {
+    pub fn init_file_page_low(&mut self, page_no: PageNo, space_id: SpaceId) {
         // debug‐only memory invalidation
         self.univ_mem_invalid();
 
@@ -826,7 +1056,7 @@ impl<'a> ExtentDescriptor<'a> {
     ///
     /// * `page_no` - The page number to assign to this page
     /// * `space_id` - The space ID to assign to this page
-    /// /* `mtr` - The mini-transaction context (commented out in current implementation) */
+    /// * `mtr` - The mini-transaction context (commented out in the current implementation)
     ///
     pub fn init_file_page(
         &mut self,
@@ -843,13 +1073,10 @@ impl<'a> ExtentDescriptor<'a> {
     /// - write the 4-byte state = XDES_FREE
     pub fn xdes_init(&mut self) {
         // 1) Fill the 16-byte bitmap (bytes 24..40) with 0xFF
-        for byte in &mut self.buf[XDES_BITMAP..XDES_SIZE] {
-            *byte = 0xFF;
-        }
+        self.buf[XDES_BITMAP..XDES_SIZE].fill(0xFF);
 
         // 2) Write the 4-byte state = XDES_FREE at bytes 20..24
-        let state_bytes = (XDES_FREE as u32).to_le_bytes();
-        self.buf[XDES_STATE..XDES_STATE + 4].copy_from_slice(&state_bytes);
+        self.set_state(XDES_FREE);
 
         // TODO: emit corresponding MTR log record here
     }
@@ -895,7 +1122,9 @@ impl<'a> ExtentDescriptor<'a> {
     /// indicating that they are allocated and in use.
     ///
     /// # Returns
+    ///
     /// The number of pages (0-64) that are currently in use
+    ///
     pub fn used_count(&self) -> usize {
         let mut used = 0;
         for page_idx in 0..FSP_EXTENT_SIZE {
@@ -936,13 +1165,9 @@ impl<'a> ExtentDescriptor<'a> {
     ///
     /// * `Some(page_idx)` with the index of the first page where the bit is set
     /// * `None` if no pages have the specified bit set
+    ///
     pub fn find_bit(&self, which: usize) -> Option<usize> {
-        for page_idx in 0..FSP_EXTENT_SIZE {
-            if self.get_bit(page_idx, which) {
-                return Some(page_idx);
-            }
-        }
-        None
+        (0..FSP_EXTENT_SIZE).find(|&page_idx| self.get_bit(page_idx, which))
     }
 
     /// Reads the 4-byte descriptor state.
@@ -956,12 +1181,10 @@ impl<'a> ExtentDescriptor<'a> {
     ///
     /// # Returns
     ///
-    /// The current state of the extent descriptor as a usize value
+    /// The current state of the extent descriptor as an usize value
+    ///
     pub fn state(&self) -> usize {
-        let bytes: [u8; 4] = self.buf[XDES_STATE..XDES_STATE + 4]
-            .try_into()
-            .expect("buffer is at least XDES_STATE+4 bytes");
-        u32::from_le_bytes(bytes) as usize
+        mach_read_from_4(&self.buf[XDES_STATE..XDES_STATE + 4]) as usize
     }
 
     /// Writes the 4-byte descriptor state.
@@ -972,9 +1195,12 @@ impl<'a> ExtentDescriptor<'a> {
     /// # Arguments
     ///
     /// * `state` - The new state to set, one of XDES_FREE, XDES_FREE_FRAG, XDES_FULL_FRAG, or XDES_FSEG
+    ///
     pub fn set_state(&mut self, state: usize) {
-        let state_bytes = (state as u32).to_le_bytes();
-        self.buf[XDES_STATE..XDES_STATE + 4].copy_from_slice(&state_bytes);
+        mach_write_to_4(
+            &mut self.buf[XDES_STATE..XDES_STATE + 4],
+            state as u32,
+        );
         // TODO: emit MTR log record for state change
     }
 
@@ -1032,7 +1258,7 @@ impl<'a> ExtentDescriptor<'a> {
 ///
 /// - **Segment ID** (`FSEG_ID`, 8 bytes)  
 ///   Uniquely identifies the file segment.
-///  `0` means unused/free.
+///   `0` means unused/free.
 ///
 /// - **Reserved / Magic (4 bytes)**  
 ///   Internal marker field.
@@ -1134,13 +1360,8 @@ impl<'a> FSegInode<'a> {
     /// or `None` if all slots are used.
     ///
     pub fn fseg_find_free_frag_page_slot(&self) -> Option<usize> {
-        for i in 0..FSEG_FRAG_ARR_N_SLOTS {
-            if self.fseg_get_nth_frag_page_no(i) == FILL_NULL {
-                return Some(i);
-            }
-        }
-
-        None
+        (0..FSEG_FRAG_ARR_N_SLOTS)
+            .find(|&i| self.fseg_get_nth_frag_page_no(i) == FILL_NULL)
     }
 
     /// Find a fragment page slot which is used and last in the array.
@@ -1151,13 +1372,9 @@ impl<'a> FSegInode<'a> {
     /// or `None` if all slots are used.
     ///
     pub fn fseg_find_last_used_frag_page_slot(&self) -> Option<usize> {
-        for i in (0..FSEG_FRAG_ARR_N_SLOTS).rev() {
-            if self.fseg_get_nth_frag_page_no(i) != FILL_NULL {
-                return Some(i);
-            }
-        }
-
-        None
+        (0..FSEG_FRAG_ARR_N_SLOTS)
+            .rev()
+            .find(|&i| self.fseg_get_nth_frag_page_no(i) != FILL_NULL)
     }
 
     /// Calculate reserved fragment page slots.
@@ -1167,7 +1384,6 @@ impl<'a> FSegInode<'a> {
     /// `usize` total count of reserved fragment page slots.
     pub fn fseg_get_n_frag_pages(&self) -> usize {
         (0..FSEG_FRAG_ARR_N_SLOTS)
-            .into_iter()
             .filter(|&i| self.fseg_get_nth_frag_page_no(i) != FILL_NULL)
             .count()
     }
@@ -1176,7 +1392,6 @@ impl<'a> FSegInode<'a> {
     #[cfg(test)]
     pub fn fseg_get_all_frag_pages(&self) -> Vec<PageNo> {
         (0..FSEG_FRAG_ARR_N_SLOTS)
-            .into_iter()
             .map(|i| self.fseg_get_nth_frag_page_no(i))
             .collect::<Vec<_>>()
     }
@@ -1203,6 +1418,26 @@ impl FSegInodePage {
         Self { page }
     }
 
+    pub fn get_prev_page(&self) -> PageNo {
+        self.page.get_prev_page()
+    }
+
+    pub fn set_prev_page(&mut self, prev_page: PageNo) {
+        self.page.set_prev_page(prev_page);
+    }
+
+    pub fn set_next_page(&mut self, next_page: PageNo) {
+        self.page.set_next_page(next_page);
+    }
+
+    pub fn get_next_page(&self) -> PageNo {
+        self.page.get_next_page()
+    }
+
+    pub fn get_page_no(&self) -> PageNo {
+        self.page.page_get_fil_offset()
+    }
+
     /// Retrieves the nth inode from the segment inode page.
     ///
     /// # Arguments
@@ -1217,7 +1452,7 @@ impl FSegInodePage {
     pub fn fsp_seg_inode_page_get_nth_inode(
         &self,
         n: usize,
-        mtr: &mut Mtr,
+        mtr: &Mtr,
     ) -> FSegInode<'_> {
         ut_ad!(n < FSP_SEG_INODES_PER_PAGE);
         ut_ad!(mtr.memo_contains(&MemoSlot::PageFix(

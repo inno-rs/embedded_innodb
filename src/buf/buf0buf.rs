@@ -59,7 +59,7 @@ pub struct BufPool {
     stat: Arc<BufPoolStats>,
     /// Reference to the buffer read manager for handling page reads.
     buf_rea: Arc<Mutex<BufRea>>,
-    /// Reference to the the Buf flusher to flush dirty pages to the memory
+    /// Reference to the Buf flusher to flush dirty pages to the memory
     flusher: Arc<Mutex<BufFlush>>,
 }
 
@@ -87,7 +87,6 @@ pub(crate) struct BufPoolInner {
 
 impl BufPoolInner {
     /// Construct an empty `BufPoolInner` for tests or benches.
-
     pub fn new() -> Self {
         BufPoolInner {
             freed_page_clock: 0,
@@ -102,7 +101,7 @@ impl BufPoolInner {
     }
     /**
 
-     Following methods are package protected and not Thread Safe
+     The following methods are package protected and not Thread Safe
     // Should be called after getting buf pool inner lock.
 
      */
@@ -193,7 +192,7 @@ impl BufPoolInner {
 impl BufPool {
     /// Creates a new Buffer Pool instance.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `fil` - A reference to the file system interface for I/O operations
     ///
     /// # Returns
@@ -291,7 +290,7 @@ impl BufPool {
     /// If the page is found, it returns a reference to the corresponding buffer block.
     /// If the page is not found and the request mode allows, it may load the page from disk.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `request` - The request containing page ID, latch mode, and other parameters
     ///
     /// # Returns
@@ -353,9 +352,8 @@ impl BufPool {
                         Some(block)
                     }
                     Ok(None) => {
-                        ut_panic!(
-                            "Failed to initialize page for read: Page not found in tablespace"
-                        );
+                        info!("page not found for read: {}", request.page_id);
+                        return None;
                     }
                     Err(err) => {
                         error!("Failed to initialize page for read: {}", err);
@@ -491,7 +489,7 @@ impl BufPool {
         let sz = inner.curr_size;
 
         // Use the same formula, converting to u64 as needed
-        std::cmp::min(ut_2_power_up!(sz / 32) as u64, 64)
+        std::cmp::min(ut_2_power_up!(sz / 32), 64)
     }
 
     /// Retrieves a buffer block by its space ID and page number.
@@ -499,7 +497,7 @@ impl BufPool {
     /// This method looks up a page in the buffer pool's hash table using its
     /// space ID and page number.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `space_id` - The ID of the tablespace containing the page
     /// * `page_no` - The page number within the tablespace
     ///
@@ -530,17 +528,19 @@ impl BufPool {
     /// It removes the mapping between the page ID and its buffer block from the
     /// hash table, making the page no longer accessible through the buffer pool.
     ///
-    /// # Parameters
+    /// Remove the given page from the pool’s hash (if present),
+    /// clear its in‐hash flag under the block‐latch, and return true.
+    /// This is a lightweight method to remove a page from the hashmap.
+    /// It does not remove the page from LRU and do page eviction.
+    ///
+    /// # Arguments
     /// * `space_id` - The ID of the tablespace containing the page
     /// * `page_no` - The page number within the tablespace
     ///
     /// # Returns
     /// * `true` - If the page was found and removed from the hash table
     /// * `false` - If the page was not in the hash table
-    /// Remove the given page from the pool’s hash (if present),
-    /// clear its in‐hash flag under the block‐latch, and return true.
-    /// This is a light weight method to remove a page from the hashmap.
-    /// It does not remove the page from LRU and  do page eviction.
+    ///
     pub fn hash_remove_page(
         &self,
         space_id: SpaceId,
@@ -588,7 +588,7 @@ impl BufPool {
 
         // 4) Let the LRU helper unlink it and bump the pool‐clock
 
-        lru.remove_page_from_lru(&mut *inner, &mut block_guard);
+        lru.remove_page_from_lru(&mut inner, &mut block_guard);
         let buf_page = block_guard.buf_block_get_page_mut();
         // 5) Mark it out of the hash map
         buf_page.set_is_in_hash_map(false);
@@ -599,7 +599,7 @@ impl BufPool {
 
         block_guard.buf_block_set_state(BufPageState::BufBlockRemoveHash);
         ut_ad!(
-            inner.page_hash.get(&page_id).is_none(),
+            !inner.page_hash.contains_key(&page_id),
             "evicted page still in hash: {:?}",
             page_id
         );
@@ -611,14 +611,14 @@ impl BufPool {
     /// This method verifies whether a specific page is currently cached
     /// in the buffer pool without retrieving the actual buffer block.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `space_id` - The ID of the tablespace containing the page
     /// * `page_no` - The page number within the tablespace
     ///
     /// # Returns
     /// * `true` - If the page is in the buffer pool
     /// * `false` - If the page is not in the buffer pool
-    /// Returns true if the given page is currently in the buffer‐pool.
+    ///
     pub fn peek(&self, space_id: SpaceId, page_no: PageNo) -> bool {
         let page_id = PageId { space_id, page_no };
         // Lock the inner pool state to access page_hash
@@ -632,7 +632,7 @@ impl BufPool {
     /// on a buffer page completes. It updates the page state and performs
     /// any necessary post-processing.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_page` - The buffer page for which I/O has completed
     pub fn io_complete(&self, buf_page: &mut BufPage) {}
 
@@ -642,7 +642,7 @@ impl BufPool {
     /// It checks if the page is already in the pool and handles the appropriate
     /// initialization based on the page's current state.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `space_id` - The ID of the tablespace containing the page
     /// * `page_no` - The page number within the tablespace
     /// * `table_space_version` - The version of the tablespace
@@ -685,8 +685,8 @@ impl BufPool {
         {
             let mut block_ref = block.write().unwrap();
 
-            let mut buf_page_ref = block_ref.buf_block_get_page_mut();
-            self.add_block(&mut buf_page_ref, false);
+            let buf_page_ref = block_ref.buf_block_get_page_mut();
+            self.add_block(buf_page_ref, false);
         }
 
         self.page_init(space_id, page_no, block.clone());
@@ -701,7 +701,7 @@ impl BufPool {
     /// pages that need to be written back to disk. Pages in the flush list are
     /// ordered by their oldest modification LSN.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_page` - The buffer page to add to the flush list
     pub fn add_to_flush_list(&self, buf_page: &mut BufPage) {
         // 1) Push the node into the pool’s flush_list under the inner mutex
@@ -720,7 +720,7 @@ impl BufPool {
     /// It initializes the buffer page metadata with the provided space ID and page number,
     /// and prepares the block for use in the buffer pool.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `space_id` - The ID of the tablespace containing the page
     /// * `page_no` - The page number within the tablespace
     /// * `buf_block` - The buffer block to initialize
@@ -735,7 +735,7 @@ impl BufPool {
             space_id, page_no
         );
 
-        // Sanity: this block must not already be marked as a file page
+        // Sanity: this block must not yet be marked as a file page
         let curr_state = buf_block.read().unwrap().buf_block_get_state();
         ut_ad!(curr_state != BufPageState::BufBlockFilePage);
 
@@ -781,7 +781,7 @@ impl BufPool {
     /// available for reuse. It delegates to the LRU manager's block_free_non_file_page
     /// method to handle the actual freeing process.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_block` - The buffer block to free
     pub fn block_free(&mut self, buf_block: Arc<RwLock<BufBlock>>) {
         let mut inner = self.inner.lock().unwrap();
@@ -794,7 +794,7 @@ impl BufPool {
             "block_free called on file‐page"
         );
 
-        lru.block_free_non_file_page(&mut *inner, &mut guard);
+        lru.block_free_non_file_page(&mut inner, guard.deref_mut());
     }
 
     /// Creates a new page in the buffer pool for the given space_id and page_no.
@@ -805,13 +805,16 @@ impl BufPool {
     /// time is updated. The page is also pinned in the mini-transaction (mtr).
     ///
     /// # Arguments
+    ///
     /// * `space_id` - The ID of the tablespace containing the page
     /// * `page_no` - The page number within the tablespace
     /// * `mtr` - The mini-transaction that will use this page
     ///
     /// # Returns
+    ///
     /// * `Some(Arc<RwLock<BufBlock>>)` - A reference to the created buffer block if successful
     /// * `None` - If no free block could be allocated from the buffer pool
+    ///
     pub fn create(
         &mut self,
         space_id: SpaceId,
@@ -1009,7 +1012,7 @@ impl BufPool {
     /// fixed-size pages for use in the buffer pool. It creates buffer blocks for
     /// each page and adds them to the free list, making them available for use.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `mem_size` - The total size of memory to allocate (must be a multiple of page size)
     ///
     /// # Returns
@@ -1029,7 +1032,7 @@ impl BufPool {
         let mut buf_pages =
             Vec::<Arc<RwLock<BufBlock>>>::with_capacity(no_of_pages);
 
-        ut_ad!(buf_pages.len() == 0);
+        ut_ad!(buf_pages.is_empty());
 
         let mut buf_frame_ptr = mem_ptr;
         for index in 0..no_of_pages {
@@ -1057,15 +1060,13 @@ impl BufPool {
 
         ut_ad!(buf_pages.len() == no_of_pages);
 
-        let rt = Arc::new(RwLock::new(BufChunk {
+        Arc::new(RwLock::new(BufChunk {
             layout,
             mem_size,
             size: no_of_pages,
             mem: mem_ptr,
             buf_pages,
-        }));
-
-        rt
+        }))
     }
 
     /// Opens and initializes the buffer pool with the specified size.
@@ -1074,10 +1075,10 @@ impl BufPool {
     /// specified size and adding it to the buffer pool's chunks. It updates the
     /// current size of the buffer pool to reflect the allocated memory.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `pool_size` - The size of the buffer pool to initialize (in bytes)
-    /// Allocate the initial chunk(s) and set the pool size.
-    /// After this call returns, `current_size()` will return `pool_size`.
+    ///   Allocate the initial chunk(s) and set the pool size.
+    ///   After this call returns, `current_size()` will return `pool_size`.
     pub fn open(&mut self, pool_size: usize) {
         // 1) Create the chunk (this can still use &self to access `fil`, etc.)
         let chunk = self.chunk_init(pool_size);
@@ -1096,7 +1097,7 @@ impl BufPool {
     /// Updates the access time of a buffer page and, if it's old enough,
     /// promotes it to the front of the LRU list to reduce the chance of eviction.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_page` - The buffer block to update
     /// * `access_time` - The current access time to compare against the page's last access time
     pub fn set_accessed_make_young(
@@ -1111,7 +1112,7 @@ impl BufPool {
     /// This method retrieves the timestamp of when the buffer page was last accessed.
     /// The access time is used to determine if a page should be made young in the LRU list.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_page` - The buffer page to get the access time for
     ///
     /// # Returns
@@ -1137,7 +1138,7 @@ impl BufPool {
     /// and if found, removes it from the list and returns it to the free list.
     /// It performs a limited number of iterations to avoid excessive scanning.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `n_iterations` - The maximum number of iterations to perform while searching
     ///
     /// # Returns
@@ -1175,7 +1176,7 @@ impl BufPool {
     /// This method allows manually setting the freed page clock to a specific value,
     /// which is typically done during initialization or reset of the buffer pool.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `v` - The new value for the freed page clock
     pub fn set_freed_page_clock(&self, v: usize) {
         let mut inner = self.inner.lock().unwrap();
@@ -1213,7 +1214,7 @@ impl BufPool {
     /// This method allows manually setting the buffer pool size to a specific value,
     /// which is typically done during initialization or when resizing the buffer pool.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `v` - The new size for the buffer pool in bytes
     pub fn set_current_size(&self, v: usize) {
         let mut inner = self.inner.lock().unwrap();
@@ -1241,7 +1242,7 @@ impl BufPool {
     /// This method allows manually setting the LRU flush ended counter to a specific value,
     /// which is typically done during initialization or reset of the buffer pool.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `v` - The new value for the LRU flush ended counter
     pub fn set_lru_flush_ended(&self, v: usize) {
         let mut inner = self.inner.lock().unwrap();
@@ -1269,7 +1270,7 @@ impl BufPool {
     /// This method allows setting the initialization status for all flush types at once.
     /// It's typically used during initialization or reset of the buffer pool.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `arr` - An array of boolean values, one for each flush type
     pub fn set_init_flush(&self, arr: [bool; BufFlush::N_TYPES]) {
         let mut inner = self.inner.lock().unwrap();
@@ -1296,7 +1297,7 @@ impl BufPool {
     /// This method allows setting the count of pending flush operations for all flush types
     /// at once. It's typically used during initialization or reset of the buffer pool.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `arr` - An array of counts, one for each flush type
     pub fn set_n_flush(&self, arr: [usize; BufFlush::N_TYPES]) {
         let mut inner = self.inner.lock().unwrap();
@@ -1324,7 +1325,7 @@ impl BufPool {
     /// This method replaces the current set of memory chunks with a new set.
     /// It's typically used during initialization or when reconfiguring the buffer pool.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `chunks` - A vector of references to buffer chunks
     pub fn set_chunks(&self, chunks: Vec<Arc<RwLock<BufChunk>>>) {
         let mut inner = self.inner.lock().unwrap();
@@ -1336,7 +1337,7 @@ impl BufPool {
     /// This is a high-level method that adds a buffer page to the LRU list
     /// by delegating to the internal `add_block_low` method.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_page` - The buffer page to add to the LRU list
     pub fn add_block(&self, buf_page: &mut BufPage, old: bool) {
         // 1) Lock the pool‐inner if you ever need to update pool counters,
@@ -1350,7 +1351,7 @@ impl BufPool {
         lru.add_block_low(buf_page, old);
     }
 
-    /// Change the percent of pages treated as “old.”  If `adjust==true`,
+    /// Change the percentage of pages treated as “old.”  If `adjust==true`,
     /// replay every flipped page through `get()`.  No LRU constants here.
     fn update_old_ratio(&mut self, old_pct: usize, adjust: bool) {
         // 1) Under the LRU lock, set the ratio and get the pages to touch.
@@ -1359,7 +1360,7 @@ impl BufPool {
             lru.set_old_ratio_pct_and_collect(old_pct)
         };
 
-        // 2) If caller said “don’t adjust now” or nothing moved, bail
+        // 2) If the caller said “don’t adjust now” or nothing moved, bail
         if !adjust || changed.is_empty() {
             return;
         }

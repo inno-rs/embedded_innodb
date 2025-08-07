@@ -32,8 +32,7 @@ pub type Frame = *mut u8;
 
 /// Modes for buffer pool page retrieval operations.
 /// These constants define different strategies for retrieving pages from the buffer pool.
-
-/// Always get the page, loading it from disk if necessary.
+/// Always get the page, loading it from the disk if necessary.
 /// This mode ensures the requested page is returned, even if it requires a disk read.
 pub const BUF_GET_ALWAYS: usize = 10;
 
@@ -159,7 +158,7 @@ intrusive_adapter!(pub LruAdapter = UnsafeRef<BufPage>: BufPage { lru_list: Link
 impl BufPage {
     /// Creates a new buffer page with the specified tablespace ID and page number.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `space_id` - The ID of the tablespace containing the page
     /// * `page_no` - The page number within the tablespace
     ///
@@ -205,7 +204,7 @@ impl BufPage {
     ///
     /// This method establishes the connection between a buffer page and its containing buffer block.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_block` - A weak reference to the buffer block containing this page
     pub fn set_buf_block_ref(&mut self, buf_block: Weak<RwLock<BufBlock>>) {
         self.buf_block = buf_block;
@@ -229,7 +228,7 @@ impl BufPage {
 
     /// Sets the log sequence number of the most recent modification to this page.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `lsn` - The LSN to set as the newest modification
     pub fn set_newest_modification(&mut self, lsn: Lsn) {
         self.newest_modification = lsn;
@@ -245,7 +244,7 @@ impl BufPage {
 
     /// Sets the log sequence number of the oldest unflushed modification to this page.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `lsn` - The LSN to set as the oldest modification
     pub fn set_oldest_modification(&mut self, lsn: Lsn) {
         self.oldest_modification = lsn;
@@ -271,7 +270,7 @@ impl BufPage {
 
     /// Sets whether the buffer page is in the LRU list.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `is_in_lru_list` - Whether the page is in the LRU list
     pub fn set_is_in_lru_list(&mut self, is_in_lru_list: bool) {
         self.is_in_lru_list = is_in_lru_list;
@@ -279,7 +278,7 @@ impl BufPage {
 
     /// Sets whether the buffer page is in the flush list.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `is_in_flush_list` - Whether the page is in the flush list
     pub fn set_is_in_flush_list(&mut self, is_in_flush_list: bool) {
         self.is_in_flush_list = is_in_flush_list;
@@ -287,7 +286,7 @@ impl BufPage {
 
     /// Sets whether the buffer page is in the free list.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `is_in_free_list` - Whether the page is in the free list
     pub fn set_is_in_free_list(&mut self, is_in_free_list: bool) {
         self.is_in_free_list = is_in_free_list;
@@ -316,12 +315,12 @@ impl BufPage {
     /// # Returns
     /// * `true` if the page is in the hash map, `false` otherwise
     pub fn is_in_hash_map(&self) -> bool {
-        self.is_in_lru_list
+        self.is_in_hash_map
     }
 
     /// Sets whether the buffer page is in the hash map.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `is_in_hash_map` - Whether the page is in the hash map
     pub fn set_is_in_hash_map(&mut self, is_in_hash_map: bool) {
         self.is_in_hash_map = is_in_hash_map;
@@ -331,7 +330,7 @@ impl BufPage {
     ///
     /// Pages marked as 'old' are candidates for early eviction from the buffer pool.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `old` - Whether to mark the page as old
     pub fn set_old(&mut self, old: bool) {
         self.old = old;
@@ -347,10 +346,7 @@ impl BufPage {
     /// * `true` - If the page is mapped to a tablespace file
     /// * `false` - If the page is not mapped to a file (e.g., it's a memory page or unused)
     pub fn in_file(&self) -> bool {
-        match self.state.clone() {
-            BufPageState::BufBlockFilePage => true,
-            _ => false,
-        }
+        matches!(self.state.clone(), BufPageState::BufBlockFilePage)
     }
 
     #[cfg(test)]
@@ -386,7 +382,7 @@ impl BufPage {
     /// pending read or write operations. This affects how the page can be accessed
     /// and whether it can be evicted from the buffer pool.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `io_fix` - The new I/O fix status to set for the page
     pub fn buf_page_set_io_fix(&mut self, io_fix: BufIoFix) {
         self.io_fix = io_fix.clone();
@@ -412,7 +408,7 @@ impl BufPage {
     /// # Returns
     /// The current flush type of the buffer page
     pub fn buf_page_get_flush_type(&self) -> BufFlushType {
-        self.flush_type.clone()
+        self.flush_type
     }
 
     /// Sets the flush type of the buffer page.
@@ -421,10 +417,10 @@ impl BufPage {
     /// to write it back. Different flush types (LRU, List, Single Page) correspond to
     /// different flushing strategies and priorities.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `flush_type` - The new flush type to set for the page
     pub fn buf_page_set_flush_type(&mut self, flush_type: BufFlushType) {
-        self.flush_type = flush_type.clone();
+        self.flush_type = flush_type;
         ut_ad!(self.buf_page_get_flush_type() == flush_type);
     }
 
@@ -549,7 +545,7 @@ pub struct BufBlock {
 impl BufBlock {
     /// Creates a new buffer block with the specified buffer page and frame.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_page` - The buffer page metadata
     /// * `frame` - Pointer to the memory location where the page data is stored
     ///
@@ -585,7 +581,7 @@ impl BufBlock {
     /// * `true` if the block is latched in shared mode, `false` otherwise
     ///
     pub fn is_frame_s_latched(&self) -> bool {
-        self.is_frame_x_latched() == false && self.rw_lock.is_locked() /* is_locked only tells if it is locked in any form */
+        !self.is_frame_x_latched() && self.rw_lock.is_locked() /* is_locked only tells if it is locked in any form */
     }
 
     /// X latch the page frame.
@@ -625,7 +621,7 @@ impl BufBlock {
     /// The state transition may trigger additional actions such as adding or removing
     /// the page from various buffer pool management lists.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `state` - The new state to set for the buffer page
     ///
     /// # Note
@@ -696,10 +692,7 @@ impl BufBlock {
     /// The caller must ensure that no other references to this memory exist while the
     /// PageFrame is in use.
     pub fn get_page_frame(&self) -> PageFrame<'_> {
-        let page_frame = unsafe {
-            PageFrame(&mut *(self.frame as *mut [u8; UNIV_PAGE_SIZE]))
-        };
-        page_frame
+        unsafe { PageFrame(&mut *(self.frame as *mut [u8; UNIV_PAGE_SIZE])) }
     }
     /// Grab the block’s write‐lock, then decrement its buf_fix_count.
     pub fn fix_dec(&mut self) {
@@ -779,7 +772,7 @@ impl Drop for BufChunk {
             "releasing BufChunk with page: {}, mem_size: {}",
             self.size, self.mem_size
         );
-        ut_ad!(self.mem.is_null() == false);
+        ut_ad!(!self.mem.is_null());
         unsafe {
             std::alloc::dealloc(self.mem, self.layout);
         }

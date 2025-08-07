@@ -1,19 +1,141 @@
 #[cfg(test)]
 mod tests {
+    use rstest::{fixture, rstest};
+
     use crate::{
         fil::fil0types::{
             FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET,
             FIL_PAGE_SPACE_ID, FILL_NULL,
         },
-        fsp::{fsp0fsp::*, fsp0types::FSegId},
+        fsp::{
+            fsp0fsp::*,
+            fsp0types::{ExtentNo, FSegId},
+        },
         fut::fut0lst::*,
         innodb::innodb0types::{RawPage, UNIV_PAGE_SIZE},
         mtr::{
             mtr0mtr::Mtr,
             mtr0types::{FixMode, MemoSlot},
         },
-        tests::test0utils::create_fseg_inode_page,
+        some_or_panic,
+        tests::{
+            test0fixture::CommonFixture,
+            test0utils::{create_blocks_in_buf_pool, create_fseg_inode_page},
+        },
     };
+
+    #[fixture]
+    fn common_fixture() -> CommonFixture {
+        CommonFixture::new()
+    }
+
+    #[rstest]
+    fn test_get_space_header_block(common_fixture: CommonFixture) {
+        let buf_pool = common_fixture.buf_pool;
+        create_blocks_in_buf_pool(buf_pool, 1, 1);
+        let fsp = common_fixture.fsp.lock().unwrap();
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let block = fsp.get_space_header_block(0, &mut mtr);
+
+        assert!(block.is_some());
+
+        let page_id = block.unwrap().read().unwrap().get_page_id();
+        assert_eq!(page_id.page_no, 0);
+    }
+
+    #[rstest]
+    fn test_get_space_header_block_non_existing_space_id(
+        common_fixture: CommonFixture,
+    ) {
+        let buf_pool = common_fixture.buf_pool;
+        create_blocks_in_buf_pool(buf_pool, 1, 1);
+        let fsp = common_fixture.fsp.lock().unwrap();
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let block = fsp.get_space_header_block(1, &mut mtr);
+
+        assert!(block.is_none());
+    }
+
+    #[rstest]
+    fn test_alloc_seg_inode_page_empty(common_fixture: CommonFixture) {
+        let buf_pool = common_fixture.buf_pool;
+        create_blocks_in_buf_pool(buf_pool, 10, 10);
+        let fsp = common_fixture.fsp;
+        let fsp = fsp.lock().unwrap();
+
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let block = fsp.get_space_header_block(0, &mut mtr);
+
+        assert!(block.is_some());
+        let buf_block = some_or_panic!(block);
+        let page = buf_block.read().unwrap().get_page();
+        let mut fsp_header = FspHeaderPage::new(page.to_page_frame().0);
+
+        let fseg_inode_list = fsp_header.fsp_get_seg_inodes_free_list_mut();
+
+        assert_eq!(fseg_inode_list.len(), 0);
+    }
+    #[rstest]
+    fn test_alloc_seg_inode_page(common_fixture: CommonFixture) {
+        let buf_pool = common_fixture.buf_pool;
+        create_blocks_in_buf_pool(buf_pool, 10, 10);
+        let fsp = common_fixture.fsp;
+        let fsp = fsp.lock().unwrap();
+
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let block = fsp.get_space_header_block(0, &mut mtr);
+
+        assert!(block.is_some());
+        let buf_block = some_or_panic!(block);
+        let page = buf_block.read().unwrap().get_page();
+        let mut fsp_header = FspHeaderPage::new(page.to_page_frame().0);
+
+        for i in 0..9 {
+            fsp.alloc_seg_inode_page(&mut fsp_header, 1, i + 1, &mut mtr);
+
+            let fseg_inode_list =
+                fsp_header.fsp_get_seg_inodes_free_list_mut();
+
+            assert_eq!(fseg_inode_list.len(), (1 + i) as usize);
+        }
+    }
+
+    #[rstest]
+    fn test_seg_inode_verify_free_list(common_fixture: CommonFixture) {
+        let buf_pool = common_fixture.buf_pool;
+        create_blocks_in_buf_pool(buf_pool, 10, 10);
+        let fsp = common_fixture.fsp;
+        let fsp = fsp.lock().unwrap();
+
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let block = fsp.get_space_header_block(0, &mut mtr);
+
+        assert!(block.is_some());
+        let buf_block = some_or_panic!(block);
+        let page = buf_block.read().unwrap().get_page();
+        let mut fsp_header = FspHeaderPage::new(page.to_page_frame().0);
+
+        for i in 0..9 {
+            fsp.alloc_seg_inode_page(&mut fsp_header, 1, i + 1, &mut mtr);
+
+            let fseg_inode_list =
+                fsp_header.fsp_get_seg_inodes_free_list_mut();
+
+            assert_eq!(fseg_inode_list.len(), (1 + i) as usize);
+        }
+
+        let fseg_inode_list = fsp_header.fsp_get_seg_inodes_free_list_mut();
+    }
 
     #[test]
     fn test_init_file_page_low_zero_and_headers() {
@@ -69,13 +191,13 @@ mod tests {
     #[test]
     fn test_xdes_init() {
         let mut buf = vec![0xAAu8; XDES_SIZE];
-        let mut desc = ExtentDescriptor::new(&mut buf);
-        desc.xdes_init();
+        let mut x_desc = ExtentDescriptor::new(&mut buf);
+        x_desc.xdes_init();
 
-        // state == XDES_FREE_STATE
-        let mut state_bytes = [0u8; 4];
-        state_bytes.copy_from_slice(&buf[XDES_STATE..XDES_STATE + 4]);
-        assert_eq!(u32::from_le_bytes(state_bytes) as usize, XDES_FREE);
+        // state == XDES_FREE
+        let state = XDES_FREE;
+        x_desc.set_state(state);
+        assert_eq!(x_desc.state(), XDES_FREE);
 
         // bitmap bytes all 0xFF
         assert!(buf[XDES_BITMAP..XDES_SIZE].iter().all(|&b| b == 0xFF));
@@ -192,24 +314,24 @@ mod tests {
         // 1) space_id written correctly
         let span = FSP_HEADER_OFFSET + FSP_SPACE_ID;
         assert_eq!(
-            &frame[span..span + 4],
-            &sid.to_le_bytes(),
+            fsp_header_page.fsp_get_space_id(),
+            sid,
             "space_id mismatch"
         );
 
         // 2) space_size
         let span = FSP_HEADER_OFFSET + FSP_SIZE;
         assert_eq!(
-            &frame[span..span + 4],
-            &sz.to_le_bytes(),
+            fsp_header_page.fsp_get_fsp_size(),
+            sz,
             "space_size mismatch"
         );
 
         // 3) free_limit = space_size
         let span = FSP_HEADER_OFFSET + FSP_FREE_LIMIT;
         assert_eq!(
-            &frame[span..span + 4],
-            &sz.to_le_bytes(),
+            fsp_header_page.fsp_get_fsp_free_limit(),
+            sz,
             "free_limit mismatch"
         );
 
@@ -585,8 +707,7 @@ mod tests {
         assert_eq!(new_extent, Some(1)); // This should be extent #1
 
         // Verify that the space size was updated
-        let new_size =
-            fsp_header_page.read_u32_le(FSP_HEADER_OFFSET + FSP_SIZE);
+        let new_size = fsp_header_page.fsp_get_fsp_size();
         assert_eq!(new_size, 128); // 64 (old) + 64 (new extent)
 
         // Get extent descriptor at new extent offset
@@ -648,7 +769,7 @@ mod tests {
         }
 
         // Test extent 0 (should be used)
-        assert_eq!(fsp_header_page.is_extent_used(0), true);
+        assert_eq!(fsp_header_page.is_extent_used(ExtentNo(0)), true);
 
         // Initialize extent descriptor for extent 1
         {
@@ -661,7 +782,7 @@ mod tests {
         }
 
         // Test extent 1 (should be free)
-        assert_eq!(fsp_header_page.is_extent_used(1), false);
+        assert_eq!(fsp_header_page.is_extent_used(ExtentNo(1)), false);
     }
 
     #[test]
