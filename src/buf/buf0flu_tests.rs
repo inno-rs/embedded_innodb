@@ -32,6 +32,7 @@ mod tests {
             let os_io = Arc::new(Mutex::new(OsIo::new(runtime.clone())));
             let fil =
                 Arc::new(Mutex::new(Fil::new(100, os_io.clone(), runtime)));
+
             let block = Box::new(WriteBuffer([0u8; DOUBLE_WRITE_BUFFER_SIZE]));
             let dblwr_buf = Arc::new(Mutex::new(DoubleWriteBuffer::new(
                 block,

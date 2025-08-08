@@ -59,6 +59,8 @@ pub struct BufPool {
     stat: Arc<BufPoolStats>,
     /// Reference to the buffer read manager for handling page reads.
     buf_rea: Arc<Mutex<BufRea>>,
+    /// Reference to the the Buf flusher to flush dirty pages to the memory
+    flusher: Arc<Mutex<BufFlush>>,
 }
 
 /// All the data that used to live *inside* the pool mutex
@@ -200,6 +202,7 @@ impl BufPool {
         fil: Arc<Mutex<Fil>>,
         buf_lru: Arc<Mutex<BufLRU>>,
         buf_rea: Arc<Mutex<BufRea>>,
+        flusher: Arc<Mutex<BufFlush>>,
     ) -> Self {
         BufPool {
             inner: Mutex::new(BufPoolInner::new()),
@@ -207,6 +210,7 @@ impl BufPool {
             buf_lru,
             stat: Arc::new(BufPoolStats::new()),
             buf_rea,
+            flusher,
         }
     }
 
@@ -219,13 +223,65 @@ impl BufPool {
     /// # Returns
     /// * `Some(BufBlock)` - A free buffer block if available
     /// * `None` - If no free blocks are available
-    pub fn get_free_block(&self) -> Option<Arc<RwLock<BufBlock>>> {
-        if let Some(r) = self.buf_lru.lock().unwrap().get_free_block() {
-            info!("free block found");
-            Some(r)
-        } else {
-            info!("free block not found");
-            None
+    pub fn get_free_block(&mut self) -> Option<Arc<RwLock<BufBlock>>> {
+        let mut n_iterations = 1;
+        // remember the monitor state if you re-implement that…
+        // let mut started_monitor = false;
+        // let mut mon_value_was = false;
+
+        loop {
+            // 1) Lock the pool mutex
+            let inner = self.inner.lock().unwrap();
+
+            let mut lru = self.buf_lru.lock().unwrap();
+
+            // (optional) check high‐water warnings on free+LRU list sizes…
+            // if inner.free_list_len() + inner.lru_list_len() < inner.curr_size() / 20 {
+            //     … panic or log error …
+            // }
+
+            // 2) Try to take from the free list
+
+            if let Some(b) = lru.get_free_only() {
+                // (optional) restore monitor state if you paused it…
+                return Some(b);
+            }
+
+            // 3) No free block right now: release pool mutex and
+            //    try evicting one from the LRU
+            drop(lru);
+            drop(inner);
+
+            let freed = {
+                // search_and_free_block will re-lock pool.inner and buf_lru internally
+                self.search_and_free_block(n_iterations)
+            };
+
+            if freed {
+                // if we actually freed something, go back and
+                // try free_list again
+                n_iterations += 1;
+                continue;
+            }
+
+            // 4) If we still haven’t found a block, we can
+            //    trigger a flush of dirty pages, wait, then loop:
+            if !freed {
+                {
+                    let lru = self.buf_lru.lock().unwrap();
+                    let recommendation = lru.recommendation();
+                    self.flusher.lock().unwrap().free_margin(recommendation);
+                }
+                self.inner.lock().unwrap().lru_flush_ended += 1;
+                self.try_free_flushed_blocks();
+            }
+
+            // maybe sleep when n_iterations is large
+            if n_iterations > 10 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+
+            n_iterations += 1;
         }
     }
 
@@ -591,7 +647,7 @@ impl BufPool {
     /// * `page_no` - The page number within the tablespace
     /// * `table_space_version` - The version of the tablespace
     pub fn init_for_read(
-        &self,
+        &mut self,
         space_id: SpaceId,
         page_no: PageNo,
         table_space_version: i64,

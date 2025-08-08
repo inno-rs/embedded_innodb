@@ -5,9 +5,9 @@
 /// moving pages within the list, and ensuring proper page aging and eviction.
 #[cfg(test)]
 mod tests {
-
     use rstest::{fixture, rstest};
 
+    use crate::tests::test0utils::create_raw_page;
     use crate::{
         buf::{
             buf0buf::BufPoolInner,
@@ -133,5 +133,82 @@ mod tests {
 
         // --- 5) global freed_page_clock stays at zero (this helper doesn’t bump it) ---
         assert_eq!(inner.freed_page_clock(), 0);
+    }
+
+    #[test]
+    fn test_recommendation_end_to_end() {
+        use std::cmp::min;
+
+        use crate::buf::{
+            buf0buf::BufPoolInner,
+            buf0lru::BufLRU,
+            buf0types::{BufIoFix, BufPageState},
+        };
+
+        // 1) create LRU + pool
+        let mut lru = BufLRU::new();
+        let _inner = BufPoolInner::new();
+        let total = 64usize;
+
+        // recompute margins & scan_len
+        let read_ahead = min((total / 32).next_power_of_two(), 64);
+        let free_block_margin = 5 + read_ahead as usize;
+        let extra_margin = free_block_margin / 4 + 100;
+        let target = free_block_margin + extra_margin;
+        let scan_len = lru.get_free_search_len(total);
+
+        // 2) build & stash real BufBlock Arcs
+        let mut holders: Vec<test0utils::OwningPage> =
+            Vec::with_capacity(total);
+        for i in 0..total {
+            let owning = create_raw_page();
+            //let block = test0utils::make_buf_block(); // from step 1
+            {
+                let block = owning.buf_block.clone();
+                let mut g = block.write().unwrap(); // getting error here
+                g.buf_block_set_state(BufPageState::BufBlockFilePage);
+                let pg = g.buf_block_get_page_mut();
+                pg.set_in_file();
+
+                // only the last `scan_len` slots can be counted:
+                if i >= total - scan_len {
+                    if i % 2 == 0 {
+                        // even = “replaceable”
+                        pg.buf_page_set_io_fix(BufIoFix::BufIoNone);
+                        pg.set_buf_page_io_fix_count(0);
+                    } else {
+                        // odd = “pinned” ⇒ skipped
+                        pg.buf_page_set_io_fix(BufIoFix::BufIoWrite);
+                        pg.set_buf_page_io_fix_count(1);
+                    }
+                } else {
+                    // everything else pinned, so it never counts
+                    pg.buf_page_set_io_fix(BufIoFix::BufIoWrite);
+                    pg.set_buf_page_io_fix_count(1);
+                }
+
+                // insert into the *intrusive* LRU list
+                lru.add_block_to_end_low(pg);
+            }
+            holders.push(owning);
+        }
+
+        // 3) now call the real recommendation()
+        let rec = lru.recommendation();
+
+        // 4) compute expected flush count
+        let clean_count =
+            (total - scan_len..total).filter(|&i| i % 2 == 0).count();
+        let expected = if clean_count >= free_block_margin {
+            0
+        } else {
+            target - clean_count
+        };
+
+        assert_eq!(
+            rec, expected,
+            "recommendation = {}, expected {} (clean_count = {})",
+            rec, expected, clean_count
+        );
     }
 }
