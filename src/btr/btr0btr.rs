@@ -22,7 +22,7 @@ use crate::{
     mtr::{
         mtr0mtr::Mtr,
         mtr0types::{
-            FixMode, MemoSlot, MlogType, MlogType::MLOG_PAGE_REORGANIZE,
+            FixMode, MemoSlot, MlogType, MlogType::MLogPageReorganize,
             MtrLogMode,
         },
     },
@@ -160,7 +160,7 @@ impl BTree {
     ///
     /// A new instance of `BTreeCursor` initialized with the current B-tree
     ///
-    pub fn create_btr_cursor(&self) -> BTreeCursor {
+    pub fn create_btr_cursor(&self) -> BTreeCursor<'_> {
         BTreeCursor::new(
             self,
             self.index.clone(),
@@ -305,7 +305,7 @@ impl BTree {
             &page,
             PAGE_HEADER + PAGE_LEVEL,
             level as u32,
-            MlogType::MLOG_2BYTES,
+            MlogType::MLog2Bytes,
         );
 
         ut_ad!(Self::page_get_level(page) == level);
@@ -413,7 +413,7 @@ impl BTree {
     /// * `next` - The page number to set as the next page
     /// * `mtr` - The mini-transaction that logs this operation
     pub fn page_set_next(page: &Page, next: PageNo, mtr: &mut Mtr) {
-        mtr.write_u32(page, FIL_PAGE_NEXT, next as u32, MlogType::MLOG_4BYTES);
+        mtr.write_u32(page, FIL_PAGE_NEXT, next as u32, MlogType::MLog4Bytes);
     }
 
     /// Gets the next page pointer from the given page.
@@ -458,7 +458,7 @@ impl BTree {
     /// * `prev` - The page number to set as the previous page
     /// * `mtr` - The mini-transaction that logs this operation
     pub fn page_set_prev(page: &Page, prev: PageNo, mtr: &mut Mtr) {
-        mtr.write_u32(page, FIL_PAGE_PREV, prev as u32, MlogType::MLOG_4BYTES);
+        mtr.write_u32(page, FIL_PAGE_PREV, prev as u32, MlogType::MLog4Bytes);
     }
 
     /// Creates and initializes a B-tree page.
@@ -625,10 +625,10 @@ impl BTree {
         let old_page_size = page.page_get_max_insert_size(1);
 
         // 1. Write the log record.
-        mtr.open_and_write_index(&page, MLOG_PAGE_REORGANIZE, 0);
+        mtr.open_and_write_index(&page, MLogPageReorganize, 0);
 
         // Turn logging off
-        let mtr_log_mode = mtr.set_log_mode(MtrLogMode::MTR_LOG_NONE);
+        let mtr_log_mode = mtr.set_log_mode(MtrLogMode::MtrLogNone);
 
         // 2. Get a temp block from buf_pool.
         let temp_block = self.buf_pool.lock().unwrap().block_alloc();
@@ -677,7 +677,7 @@ impl BTree {
 
         // Restore logging mode
         let old_log_mode = mtr.set_log_mode(mtr_log_mode);
-        ut_ad!(old_log_mode == MtrLogMode::MTR_LOG_NONE);
+        ut_ad!(old_log_mode == MtrLogMode::MtrLogNone);
 
         success
     }

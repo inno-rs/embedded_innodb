@@ -28,7 +28,7 @@ pub enum IbInsertState {
     InsNodeIndexEntries,
 }
 
-struct InsertNode {
+pub struct InsertNode {
     /// The mode of the insert operation.
     ins_type: IbInsertMode,
     /// The state of the insert operation.

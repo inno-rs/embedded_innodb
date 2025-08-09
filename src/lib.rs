@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![deny(warnings)]
+
 pub mod btr;
 pub mod buf;
 pub mod data;

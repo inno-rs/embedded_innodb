@@ -58,7 +58,7 @@ impl Mtr {
     pub fn new() -> Self {
         Self {
             mtr_state: MtrState::MtrUndefined,
-            log_mode: MtrLogMode::MTR_LOG_NONE,
+            log_mode: MtrLogMode::MtrLogNone,
             modifications: false,
             n_log_records: 0,
             memo: Vec::new(),
@@ -74,7 +74,7 @@ impl Mtr {
     /// Start (or restart) this mini‐transaction.
     pub fn start(&mut self) {
         // logging mode → ALL
-        self.log_mode = MtrLogMode::MTR_LOG_MODE_ALL;
+        self.log_mode = MtrLogMode::MtrLogModeAll;
         // no buffer‐page modifications yet
         self.modifications = false;
         // clear any prior log-record count
@@ -406,7 +406,7 @@ impl Mtr {
     /// This sets the log mode to NONE, preventing any redo log records
     /// from being generated during this mini-transaction.
     pub fn disable_redo_logging(&mut self) {
-        self.log_mode = MtrLogMode::MTR_LOG_NONE;
+        self.log_mode = MtrLogMode::MtrLogNone;
     }
 
     /// Release a shared latch stored at a savepoint.

@@ -65,16 +65,16 @@ mod tests {
             lru.add_block_low(pg, false);
         }
 
-        let mut before_i = 0usize;
-        let mut after_i = 0usize;
+        let mut _before_i = 0usize;
+        let mut _after_i = 0usize;
 
-        let mut before_b = 0usize;
-        let mut after_b = 0usize;
+        let mut _before_b = 0usize;
+        let mut _after_b = 0usize;
 
         // snapshot before
         {
-            before_i = inner.freed_page_clock();
-            before_b = block.read().unwrap().buf_block_get_clock();
+            _before_i = inner.freed_page_clock();
+            _before_b = block.read().unwrap().buf_block_get_clock();
         }
         // PHASE B: eviction
 
@@ -85,11 +85,11 @@ mod tests {
 
         // snapshot after
         {
-            after_i = inner.freed_page_clock();
-            after_b = block.read().unwrap().buf_block_get_clock();
+            _after_i = inner.freed_page_clock();
+            _after_b = block.read().unwrap().buf_block_get_clock();
         }
-        assert_eq!(after_i - before_i, 1);
-        assert_eq!(after_b - before_b, 1);
+        assert_eq!(_after_i - _before_i, 1);
+        assert_eq!(_after_b - _before_b, 1);
     }
 
     #[test]

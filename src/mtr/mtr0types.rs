@@ -45,65 +45,65 @@ use crate::innodb;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MtrLogMode {
     /// Default log mode. Log all operations modifying the disk based data.
-    MTR_LOG_MODE_ALL = 0,
+    MtrLogModeAll = 0,
     /// Log only operations modifying file space page allocation data(e.g., fsp0fsp.rs).
-    MTR_LOG_SPACE = 1,
+    MtrLogSpace = 1,
     /// Do not log any operations.
-    MTR_LOG_NONE = 2,
+    MtrLogNone = 2,
     /// Inserts are logged in short form.
-    MTR_LOG_SHORT_INSERTS = 3,
+    MtrLogShortInserts = 3,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MlogType {
     /// Unknown log type.
-    MLOG_UNKNOWN = 0,
+    MLogUnknown = 0,
     /// 1 byte is written.
-    MLOG_1BYTE = 1,
+    MLog1Byte = 1,
     /// 2 bytes are written.
-    MLOG_2BYTES = 2,
+    MLog2Bytes = 2,
     /// 4 bytes are written.
-    MLOG_4BYTES = 4,
+    MLog4Bytes = 4,
     /// 8 bytes are written.
-    MLOG_8BYTES = 8,
+    MLog8Bytes = 8,
     /// Record is inserted.
-    MLOG_REC_INSERT = 9,
+    MLogRecInsert = 9,
     /// Mark a clustered-index record deleted.
-    MLOG_REC_CLUST_DELETE_MARK = 10,
+    MLogRecClustDeleteMark = 10,
     /// Mark a secondary-index record deleted.
-    MLOG_REC_SEC_DELETE_MARK = 11,
+    MLogRecSecDeleteMark = 11,
     /// Update record in place (same field sizes).
-    MLOG_REC_UPDATE_IN_PLACE = 13,
+    MLogRecUpdateInPlace = 13,
     /// Delete a record from a page.
-    MLOG_REC_DELETE = 14,
+    MLogRecDelete = 14,
     /// Delete record list end on index page.
-    MLOG_LIST_END_DELETE = 15,
+    MLogListEndDelete = 15,
     /// Delete record list start on index page.
-    MLOG_LIST_START_DELETE = 16,
+    MLogListStartDelete = 16,
     /// Copy the record list end to a newly created index page.
-    MLOG_LIST_END_COPY_CREATED = 17,
+    MLogListEndCopyCreated = 17,
     /// Reorganize (defragment) an index page.
-    MLOG_PAGE_REORGANIZE = 18,
+    MLogPageReorganize = 18,
     /// Create a new index page.
-    MLOG_PAGE_CREATE = 19,
+    MLogPageCreate = 19,
     /// Insert into an undo-log page.
-    MLOG_UNDO_INSERT = 20,
+    MLogUndoInsert = 20,
     /// Erase end of an undo-log page.
-    MLOG_UNDO_ERASE_END = 21,
+    MLogUndoEraseEnd = 21,
     /// Initialize an undo-log page.  
-    MLOG_UNDO_INIT = 22,
+    MLogUndoInit = 22,
     /// Discard an undo-log header.
-    MLOG_UNDO_HDR_DISCARD = 23,
+    MLogUndoHdrDiscard = 23,
     ///If a single mtr writes several log records, this
     ///log record ends the sequence of these records
-    MLOG_MULTI_REC_END = 24,
+    MLogMultiRecEnd = 24,
 
-    MLOG_WRITE_STRING = 25,
+    MLogWriteString = 25,
 
-    MLOG_FULL_PAGE = 26,
+    MLogFullPage = 26,
 
     /** Biggest value (used in assertions) */
-    MLOG_BIGGEST_TYPE = 47,
+    MLogBiggestType = 47,
 }
 
 #[derive(Display, Clone, Eq, PartialEq, Debug)]

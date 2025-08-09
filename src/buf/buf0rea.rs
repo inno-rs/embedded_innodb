@@ -59,7 +59,7 @@ impl BufRea {
         let fil = self.fil.lock().unwrap();
         let table_space_version = fil.space_get_version(space_id);
 
-        self.buf_read_page_low(
+        let _ret = self.buf_read_page_low(
             io_request,
             false,
             buf_block,

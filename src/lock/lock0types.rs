@@ -35,7 +35,7 @@ pub const LOCK_INSERT_INTENTION: LockType = 2048;
 /// Lock compatibility matrix.
 #[rustfmt::skip]
 pub const LOCK_COMPATIBILITY_MATRIX: [[bool; 4]; 4] = [
-    /**         IS     IX       S     X     */ //
+    /*          IS     IX       S     X     */ //
     /* IS */ [  true,  true,  true,  false  ], //
     /* IX */ [  true,  true,  false, false  ], //
     /* S  */ [  true,  false, true,  false  ], //
@@ -45,7 +45,7 @@ pub const LOCK_COMPATIBILITY_MATRIX: [[bool; 4]; 4] = [
 /// Lock strength matrix. This defines the stronger-or-equal lock relation.
 #[rustfmt::skip]
 pub const LOCK_STRENGTH_MATRIX: [[bool; 4]; 4] = [
-    /**           IS     IX       S     X     */ //
+    /*            IS     IX       S     X     */ //
     /* IS */ [  true,  false,  false,  false  ], //
     /* IX */ [  true,  true,   false,  false  ], //
     /* S  */ [  true,  false,  true,   false  ], //

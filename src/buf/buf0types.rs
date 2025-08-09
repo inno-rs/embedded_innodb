@@ -695,7 +695,7 @@ impl BufBlock {
     /// This method uses unsafe code to create a mutable reference to the page's memory.
     /// The caller must ensure that no other references to this memory exist while the
     /// PageFrame is in use.
-    pub fn get_page_frame(&self) -> PageFrame {
+    pub fn get_page_frame(&self) -> PageFrame<'_> {
         let page_frame = unsafe {
             PageFrame(&mut *(self.frame as *mut [u8; UNIV_PAGE_SIZE]))
         };
