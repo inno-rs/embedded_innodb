@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use crate::{
-    data::data0types::{DATA_FLOAT, DTuple},
+    data::data0types::{DATA_DECIMAL, DATA_DOUBLE, DATA_FLOAT, DTuple},
     dict::dict0types::Index,
     innodb::innodb0types::UNIV_SQL_NULL,
     rem::rem0rec::{REC_INFO_MIN_REC_FLAG, Record},
@@ -34,19 +34,19 @@ fn cmp_whole_field(
     b: &[u8],
 ) -> Ordering {
     match m_type {
-        DATA_FLOAT => {
+        e if e == DATA_FLOAT => {
             let d1 = f32::from_le_bytes(a.try_into().unwrap());
             let d2 = f32::from_le_bytes(b.try_into().unwrap());
             d1.total_cmp(&d2)
         }
 
-        DATA_DOUBLE => {
+        e if e == DATA_DOUBLE => {
             let d1 = f64::from_le_bytes(a.try_into().unwrap());
             let d2 = f64::from_le_bytes(b.try_into().unwrap());
             d1.total_cmp(&d2)
         }
 
-        DATA_DECIMAL => {
+        e if e == DATA_DECIMAL => {
             ut_panic!("Handle decimal comparison")
         }
 

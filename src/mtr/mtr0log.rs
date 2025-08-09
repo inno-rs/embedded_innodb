@@ -4,7 +4,7 @@ use crate::{
         mach_uint64_write_compressed, mach_write_compressed, mach_write_to_1,
         mach_write_to_2, mach_write_to_4, mach_write_to_8,
     },
-    mtr::mtr0types::{MlogType, MtrLogMode, MtrLogMode::MTR_LOG_NONE},
+    mtr::mtr0types::{MlogType, MtrLogMode, MtrLogMode::MtrLogNone},
     page::page0page::Page,
     ut::ut0dbg::ut_ad,
     ut_panic,
@@ -68,20 +68,20 @@ impl MLog {
         // 1) In-memory update
         let frame = page.to_page_frame();
         match mlog_type {
-            MlogType::MLOG_1BYTE => {
+            MlogType::MLog1Byte => {
                 mach_write_to_1(&mut frame.0[offset..offset + 1], val as u8);
             }
-            MlogType::MLOG_2BYTES => {
+            MlogType::MLog2Bytes => {
                 mach_write_to_2(&mut frame.0[offset..offset + 2], val as u16);
             }
-            MlogType::MLOG_4BYTES => {
+            MlogType::MLog4Bytes => {
                 mach_write_to_4(&mut frame.0[offset..offset + 4], val as u32);
             }
             _ => ut_panic!("Invalid mlog type for u32 write: {:?}", mlog_type),
         }
 
         // 2) Bail if logging disabled
-        if log_mode == MTR_LOG_NONE {
+        if log_mode == MtrLogNone {
             return;
         }
 
@@ -132,7 +132,7 @@ impl MLog {
         mach_write_to_8(&mut frame.0[offset..offset + 8], val);
 
         // 3) If logging is off, bail out
-        if log_mode == MTR_LOG_NONE {
+        if log_mode == MtrLogNone {
             return;
         }
 
@@ -146,7 +146,7 @@ impl MLog {
         // 5) Write the initial header (type + varints)
         let mut pos = self.mlog_write_initial_log_record_fast(
             page,
-            MlogType::MLOG_8BYTES,
+            MlogType::MLog8Bytes,
             start,
         );
 
@@ -185,7 +185,7 @@ impl MLog {
         frame.0[offset..offset + data.len()].copy_from_slice(data);
 
         // 2) Bail if logging is disabled
-        if log_mode == MTR_LOG_NONE {
+        if log_mode == MtrLogNone {
             return;
         }
 
@@ -198,7 +198,7 @@ impl MLog {
         // 4) Emit the “fast” header: 1B type + varint(space_id) + varint(page_no)
         let mut pos = self.mlog_write_initial_log_record_fast(
             page,
-            MlogType::MLOG_WRITE_STRING,
+            MlogType::MLogWriteString,
             start,
         );
 
@@ -223,7 +223,7 @@ impl MLog {
     /// operations that generate multiple log records that need to be processed
     /// together during recovery.
     pub(in crate::mtr) fn mlog_multi_rec_end(&mut self) {
-        self.buf.push(MlogType::MLOG_MULTI_REC_END as u8);
+        self.buf.push(MlogType::MLogMultiRecEnd as u8);
     }
 
     /// Appends a 64-bit integer in compressed form to the log buffer.
@@ -242,7 +242,7 @@ impl MLog {
         log_mode: MtrLogMode,
     ) {
         // 1) If logging is disabled, do nothing
-        if log_mode == MTR_LOG_NONE {
+        if log_mode == MtrLogNone {
             return;
         }
 
@@ -272,7 +272,7 @@ impl MLog {
         log_mode: MtrLogMode,
     ) {
         // 1) If logging is disabled, do nothing
-        if log_mode == MTR_LOG_NONE {
+        if log_mode == MtrLogNone {
             return;
         }
         // 2) Append exactly those bytes
@@ -352,11 +352,11 @@ impl MLog {
     ) {
         // 1) Sanity checks: type in (8‐byte, BIGGEST] range
         let t = mlog_type as u8;
-        ut_ad!(t <= MlogType::MLOG_BIGGEST_TYPE as u8);
-        ut_ad!(t > MlogType::MLOG_8BYTES as u8);
+        ut_ad!(t <= MlogType::MLogBiggestType as u8);
+        ut_ad!(t > MlogType::MLog8Bytes as u8);
 
         // 2) `mlog_open(mtr, 11)` → skip entirely if logging‐mode is NONE
-        if log_mode == MTR_LOG_NONE {
+        if log_mode == MtrLogNone {
             return;
         }
 
@@ -462,7 +462,7 @@ impl MLog {
         mtr_log_mode: MtrLogMode,
     ) -> Option<&mut [u8]> {
         // 1) Bail out if logging is off
-        if mtr_log_mode == MTR_LOG_NONE {
+        if mtr_log_mode == MtrLogNone {
             return None;
         }
 

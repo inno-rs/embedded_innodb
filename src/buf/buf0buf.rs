@@ -259,7 +259,7 @@ impl BufPool {
         );
 
         self.stat.n_pages_get.fetch_add(1, Relaxed);
-        let mut n_retries = 0u32;
+        let mut _n_retries = 0u32;
 
         // TODO(Rahul): Understand the logic of `guess`.
 
@@ -325,7 +325,7 @@ impl BufPool {
                     let buf_page_ref = buf_block.buf_block_get_page_mut();
                     self.io_complete(buf_page_ref);
 
-                    n_retries += 1;
+                    _n_retries += 1;
                 }
             }
             Some(block) => {

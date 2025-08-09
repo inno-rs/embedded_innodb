@@ -1218,7 +1218,7 @@ impl FSegInodePage {
         &self,
         n: usize,
         mtr: &mut Mtr,
-    ) -> FSegInode {
+    ) -> FSegInode<'_> {
         ut_ad!(n < FSP_SEG_INODES_PER_PAGE);
         ut_ad!(mtr.memo_contains(&MemoSlot::PageFix(
             self.page.page_get_page_id(),

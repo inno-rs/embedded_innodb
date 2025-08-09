@@ -21,7 +21,7 @@ use crate::{
         mach_read_from_2, mach_read_from_4, mach_read_from_8, mach_write_to_2,
         mach_write_to_4, mach_write_to_8,
     },
-    mtr::{mtr0mtr::Mtr, mtr0types::MtrLogMode::MTR_LOG_NONE},
+    mtr::{mtr0mtr::Mtr, mtr0types::MtrLogMode::MtrLogNone},
     page::page0cur::PageCur,
     rem::rem0rec::{
         REC_N_EXTRA_BYTES, REC_STATUS_INFIMUM, REC_STATUS_SUPREMUM, Record,
@@ -1385,11 +1385,11 @@ impl Page {
 
         // Individual delete records are not logged.
         // todo: Why??
-        let log_mode = mtr.set_log_mode(MTR_LOG_NONE);
+        let log_mode = mtr.set_log_mode(MtrLogNone);
 
         // Restore log mode
         let old_mode = mtr.set_log_mode(log_mode);
-        ut_ad!(old_mode == MTR_LOG_NONE);
+        ut_ad!(old_mode == MtrLogNone);
     }
 
     /// Deletes records from the page starting from the given record to the end of the page.

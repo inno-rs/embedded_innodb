@@ -35,8 +35,8 @@ use crate::{
     mtr::{
         mtr0mtr::Mtr,
         mtr0types::{
-            MlogType::{MLOG_UNDO_INIT, MLOG_UNDO_INSERT},
-            MtrLogMode::{MTR_LOG_MODE_ALL, MTR_LOG_SHORT_INSERTS},
+            MlogType::{MLogUndoInit, MLogUndoInsert},
+            MtrLogMode::{MtrLogModeAll, MtrLogShortInserts},
         },
     },
     page::page0page::Page,
@@ -151,7 +151,7 @@ impl UndoPage {
     /// # Returns
     ///
     /// A PageFrame representing the raw memory of the page
-    pub fn page_to_frame(&self) -> PageFrame {
+    pub fn page_to_frame(&self) -> PageFrame<'_> {
         self.page.to_page_frame()
     }
 
@@ -257,11 +257,7 @@ impl UndoPage {
         );
 
         // Log the initialization in the mini-transaction log
-        mtr.write_initial_log_record(
-            &self.page,
-            MLOG_UNDO_INIT,
-            MTR_LOG_MODE_ALL,
-        );
+        mtr.write_initial_log_record(&self.page, MLogUndoInit, MtrLogModeAll);
 
         // Log the undo type
         mtr.catenate_u64_compressed(undo_type as u64);
@@ -395,8 +391,8 @@ impl UndoPage {
     ) {
         mtr.write_initial_log_record(
             &self.page,
-            MLOG_UNDO_INSERT,
-            MTR_LOG_SHORT_INSERTS,
+            MLogUndoInsert,
+            MtrLogShortInserts,
         );
 
         // Write the newly created page contents to the log.

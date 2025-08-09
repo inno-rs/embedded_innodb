@@ -18,9 +18,9 @@ mod tests {
     fn test_log_mode_and_disable() {
         let mut mtr = Mtr::new();
         mtr.start();
-        assert_eq!(mtr.get_log_mode(), MtrLogMode::MTR_LOG_MODE_ALL);
+        assert_eq!(mtr.get_log_mode(), MtrLogMode::MtrLogModeAll);
         mtr.disable_redo_logging();
-        assert_eq!(mtr.get_log_mode(), MtrLogMode::MTR_LOG_NONE);
+        assert_eq!(mtr.get_log_mode(), MtrLogMode::MtrLogNone);
     }
 
     #[test]
