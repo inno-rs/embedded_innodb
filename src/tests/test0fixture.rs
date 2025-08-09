@@ -2,6 +2,12 @@ use std::sync::{Arc, Mutex};
 
 use tokio::runtime::Runtime;
 
+use crate::buf::buf0dblwr::{
+    DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer, WriteBuffer,
+};
+use crate::buf::buf0flu::BufFlush;
+use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
+use crate::log::log0log::Log;
 use crate::{
     buf::{buf0buf::BufPool, buf0lru::BufLRU, buf0rea::BufRea},
     dict::dict0dict::Dict,
@@ -31,6 +37,22 @@ impl CommonFixture {
             os_io.clone(),
             runtime.clone(),
         )));
+        let block = Box::new(WriteBuffer([0u8; DOUBLE_WRITE_BUFFER_SIZE]));
+        let dblwr_buf = Arc::new(Mutex::new(DoubleWriteBuffer::new(
+            block,
+            fil.clone(),
+            UNIV_PAGE_SIZE,
+        )));
+        let redo_log = Arc::new(Mutex::new(Log::new(
+            UNIV_PAGE_SIZE,
+            fil.clone(),
+            Default::default(),
+        )));
+        let flusher = Arc::new(Mutex::new(BufFlush::new(
+            dblwr_buf.clone(),
+            fil.clone(),
+            redo_log.clone(),
+        )));
         let buf_rea =
             Arc::new(std::sync::Mutex::new(BufRea::new(fil.clone())));
         let buf_lru = Arc::new(std::sync::Mutex::new(BufLRU::new()));
@@ -38,6 +60,7 @@ impl CommonFixture {
             fil.clone(),
             buf_lru.clone(),
             buf_rea.clone(),
+            flusher.clone(),
         )));
 
         let fsp =

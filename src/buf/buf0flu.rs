@@ -393,4 +393,47 @@ impl BufFlush {
         // If they are corrupted due to a crash,
         // they will be recovered from the double write buffer.
     }
+
+    /// Frees up space in the buffer pool by flushing pages from the LRU list.
+    ///
+    /// This method attempts to flush a specified number of pages from the LRU (Least Recently Used)
+    /// list to make room for new pages in the buffer pool. If a batch flush operation is already
+    /// in progress (indicated by `batch` returning `usize::MAX`), it waits for that operation
+    /// to complete before returning.
+    ///
+    /// # Parameters
+    /// * `n_to_flush` - The number of pages to flush from the LRU list
+    ///
+    /// # Implementation Note
+    /// This method uses the `batch` operation with `BufFlushLru` type to perform the actual
+    /// flushing of pages. The LSN limit and neighborhood parameters are set to 0, meaning
+    /// all eligible pages can be flushed regardless of their LSN.
+    pub fn free_margin(&mut self, n_to_flush: usize) {
+        if n_to_flush == 0 {
+            return;
+        }
+        let n_flushed = self.batch(BufFlushLru, n_to_flush, 0, 0);
+        if n_flushed == usize::MAX {
+            self.wait_batch_end(BufFlushLru);
+        }
+    }
+
+    /// Waits for the completion of an in-flight batch flush operation.
+    ///
+    /// This method blocks the current thread until a batch flush operation of the specified
+    /// type completes. It is called when the `batch` method returns `usize::MAX`, indicating
+    /// that there is already a batch operation in progress for the given flush type.
+    ///
+    /// # Parameters
+    /// * `flush_type` - The type of flush operation to wait for (BufFlushLru or BufFlushList)
+    ///
+    /// # Implementation Note
+    /// This method should block on an OS-specific event or condition variable associated with
+    /// the specified flush type. The implementation will depend on the threading and
+    /// synchronization mechanisms used in the system.
+    ///  TODO need to discuss how to implement this
+    fn wait_batch_end(&self, flush_type: BufFlushType) {
+        // block on your OS‐event or Condvar for that flush_type…
+        unimplemented!()
+    }
 }

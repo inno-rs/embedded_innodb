@@ -152,24 +152,28 @@ pub fn create_records_in_page(
 ///
 /// An `OwningPage` instance containing the newly created page and its memory.
 pub fn create_raw_page() -> OwningPage {
+    // 1) allocate frame
     let layout =
         Layout::from_size_align(UNIV_PAGE_SIZE, UNIV_PAGE_SIZE).unwrap();
     let mem = unsafe { alloc_zeroed(layout) };
 
-    let index = Index::new(PageId::dummy());
+    // 2) BufBlock inside Arc
     let buf_block =
         Arc::new(RwLock::new(BufBlock::new(BufPage::dummy(), mem)));
 
-    let buf_block_clone = buf_block.clone();
-    OwningPage {
-        page_mem: mem,
-        page: Page::page_create(
-            &index,
-            buf_block.read().unwrap().deref(),
-            None,
-        ),
-        buf_block: buf_block_clone,
+    // 3) set back-pointer on the *BufBlock’s* BufPage
+    {
+        let mut g = buf_block.write().unwrap();
+        g.buf_block_get_page_mut()
+            .set_buf_block_ref(Arc::downgrade(&buf_block));
     }
+
+    // 4) (optional) keep Page if you use it elsewhere, but it’s not part of LRU
+    let index = Index::new(PageId::dummy());
+    let page =
+        Page::page_create(&index, buf_block.read().unwrap().deref(), None);
+
+    OwningPage { page_mem: mem, page, buf_block }
 }
 
 /// Create an fseg inode page.

@@ -175,6 +175,13 @@ impl PageId {
     }
 }
 
+impl PageFrame<'_> {
+    /// Set *every* byte of this page to `val`.
+    pub fn fill(&mut self, val: u8) {
+        self.0.fill(val);
+    }
+}
+
 /// InnoDB error codes.
 /// Most of the error codes are internal to the engine and will not be seen by user applications.
 /// The partial error codes reflect the substate of an operation within InnoDB.

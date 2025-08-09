@@ -1,10 +1,10 @@
+use intrusive_collections::{LinkedList, UnsafeRef};
+use std::sync::Weak;
 use std::{
     cmp::min,
     ops::Deref,
     sync::{Arc, RwLock, RwLockWriteGuard, atomic::Ordering::Relaxed},
 };
-
-use intrusive_collections::{LinkedList, UnsafeRef};
 
 use crate::{
     buf::{
@@ -36,6 +36,10 @@ pub const OLD_MIN_LENGTH: usize = 512;
 const OLD_TOLERANCE: usize = 20;
 /// Minimum amount of non-old blocks when the BufLru::lru_old_head exists.
 const NON_MIN_LENGTH: usize = 5;
+
+/// How many pages deep into the LRU list we scan looking for
+/// candidates to “top up” our free‐list.
+const FREE_SEARCH_LEN: usize = 100;
 
 /// Represents the status of a buffer block after attempting to free it.
 ///
@@ -69,6 +73,11 @@ pub struct BufLRU {
     lru_old_len: usize,
     /// List of free buffer blocks available for allocation
     free_list: LinkedList<FreeListAdapter>,
+
+    /// Tracking the size of the free list
+    free_list_size: usize,
+    /// Tracking the lru size
+    lru_size: usize,
 }
 
 impl BufLRU {
@@ -86,6 +95,8 @@ impl BufLRU {
             lru_old_head: None,
             lru_old_len: 0,
             free_list: Default::default(),
+            free_list_size: 0,
+            lru_size: 0,
         }
     }
 
@@ -152,7 +163,7 @@ impl BufLRU {
             let mut cursor = lru_ref.cursor_mut_from_ptr(buf_page);
             cursor.remove();
         }
-        buf_page.set_is_in_lru_list(false);
+        self.mark_page_not_in_lru_list(buf_page);
     }
 
     /// Adds a buffer page to the end of the LRU list.
@@ -165,10 +176,27 @@ impl BufLRU {
     ///
     /// # Note
     /// This method is currently a stub and needs to be implemented.
-    fn add_block_to_end_low(&mut self, buf_page: &mut BufPage) {
+    pub fn add_block_to_end_low(&mut self, buf_page: &mut BufPage) {
         ut_ad!(buf_page.in_file());
         ut_ad!(!buf_page.is_in_lru_list());
-        // TODO: Implement this method to add the page to the end of the LRU list
+
+        // 1) Append at the back (least recently used)
+        let page_ref = unsafe { UnsafeRef::from_raw(buf_page) };
+        self.lru_list.push_back(page_ref);
+
+        // 2) Mark it as in the list
+        self.mark_page_in_lru_list(buf_page);
+
+        // 3) Update “old” marking based on list size
+        let length = self.lru_size;
+        if length > OLD_MIN_LENGTH {
+            // Once we exceed the threshold, everything beyond is “old”
+            ut_ad!(self.lru_old_head.is_some());
+            self.buf_page_set(buf_page, /* old = */ true);
+        } else if length < OLD_MIN_LENGTH {
+            // Still building up: use whichever region we’ve already marked
+            self.buf_page_set(buf_page, self.lru_old_head.is_some());
+        }
     }
 
     /// Adds a buffer page to the LRU list.
@@ -185,7 +213,7 @@ impl BufLRU {
     /// * `buf_page` - The buffer page to add to the LRU list
     /// * `old` - Whether to add the page to the old section of the LRU list
     pub(crate) fn add_block_low(&mut self, buf_page: &mut BufPage, old: bool) {
-        let length = self.lru_list.iter().count();
+        let length = self.lru_size;
         if !old || length < OLD_MIN_LENGTH {
             // front‐insert
             let page = unsafe { UnsafeRef::from_raw(buf_page) };
@@ -198,7 +226,7 @@ impl BufLRU {
         }
 
         // **Always** mark it as in the list:
-        buf_page.set_is_in_lru_list(true);
+        self.mark_page_in_lru_list(buf_page);
 
         // 2) Update our own LRU‐old pointers/timestamps
         //    No pool‐lock or upgrade() here! We already have everything
@@ -211,6 +239,18 @@ impl BufLRU {
             // still building up: use whichever region we’ve already marked
             self.buf_page_set(buf_page, self.lru_old_head.is_some());
         }
+    }
+
+    /// Mark the page as part of lru list and incrementing the lru_size.
+    fn mark_page_in_lru_list(&mut self, buf_page: &mut BufPage) {
+        buf_page.set_is_in_lru_list(true);
+        self.lru_size += 1;
+    }
+
+    /// Mark the page as NOT a part of lru list and decrementing the lru_size.
+    fn mark_page_not_in_lru_list(&mut self, buf_page: &mut BufPage) {
+        self.lru_size -= 1;
+        buf_page.set_is_in_lru_list(false);
     }
 
     /// Sets the 'old' status of a buffer page.
@@ -264,7 +304,7 @@ impl BufLRU {
         let mut old_len = self.lru_old_len;
 
         let mut changed = Vec::new();
-        let lru_len = self.lru_list.iter().count();
+        let lru_len = self.lru_size;
         let target = min(
             lru_len * new_ratio / OLD_RATIO_DIV,
             lru_len - OLD_TOLERANCE - NON_MIN_LENGTH,
@@ -306,7 +346,7 @@ impl BufLRU {
     /// * `Some(BufBlock)` - A free buffer block if available on the free list
     /// * `None` - If the free list is empty
     pub fn get_free_only(&mut self) -> Option<Arc<RwLock<BufBlock>>> {
-        let buf_page = self.free_list.pop_front();
+        let buf_page = self.remove_from_free_list_top();
 
         if let Some(buf_page) = buf_page {
             let buf_block = buf_page.buf_page_get_buf_block();
@@ -316,16 +356,13 @@ impl BufLRU {
                 {
                     let buf_page_ref = block_ref.buf_block_get_page_mut();
 
-                    ut_ad!(buf_page_ref.is_in_free_list());
                     ut_ad!(buf_page_ref.is_in_lru_list() == false);
                     ut_ad!(buf_page_ref.is_in_flush_list() == false);
                     ut_ad!(buf_page_ref.in_file() == false);
-
-                    // Set the page is not in free list anymore
-                    buf_page_ref.set_is_in_free_list(false);
                 }
 
                 block_ref.buf_block_set_state(BufBlockReadyForUse);
+                block_ref.get_page().page_reset();
 
                 return Some(block.clone());
             }
@@ -369,7 +406,8 @@ impl BufLRU {
         unsafe {
             free_list_ref.push_back(UnsafeRef::from_raw(buf_page));
         }
-        buf_page.set_is_in_free_list(true);
+
+        self.mark_page_as_part_of_free_list(buf_page);
     }
 
     /// Adds a buffer page to the free list from FRONT.
@@ -385,6 +423,42 @@ impl BufLRU {
         unsafe {
             free_list_ref.push_front(UnsafeRef::from_raw(buf_page));
         }
+        self.mark_page_as_part_of_free_list(buf_page);
+    }
+
+    fn remove_from_free_list_top(&mut self) -> Option<UnsafeRef<BufPage>> {
+        let page_ref = self.free_list.pop_front()?;
+
+        // Clear the “in free list” flag under the block's write lock.
+        if let Some(block) = page_ref.buf_page_get_buf_block().upgrade() {
+            let mut guard = block.write().unwrap();
+            self.mark_page_not_a_part_of_free_list(
+                guard.buf_block_get_page_mut(),
+            )
+        }
+
+        Some(page_ref)
+    }
+
+    /// Mark the page as a part of free list and incrementing the free list size by 1
+    fn mark_page_not_a_part_of_free_list(&mut self, buf_page: &mut BufPage) {
+        // Optional sanity:
+        ut_a!(buf_page.is_in_free_list());
+        self.free_list_size = self
+            .free_list_size
+            .checked_sub(1)
+            .expect("free_list_size underflow");
+        buf_page.set_is_in_free_list(false);
+    }
+
+    /// Mark the page as part  of the free list and incrementing the free_list_size
+    fn mark_page_as_part_of_free_list(&mut self, buf_page: &mut BufPage) {
+        // Optional sanity:
+        ut_a!(!buf_page.is_in_free_list());
+        self.free_list_size = self
+            .free_list_size
+            .checked_add(1)
+            .expect("free_list_size underflow");
         buf_page.set_is_in_free_list(true);
     }
 
@@ -407,7 +481,7 @@ impl BufLRU {
     /// # Returns
     /// * `usize` - The number of blocks in the free list
     pub fn get_free_list_size(&self) -> usize {
-        self.free_list.iter().count()
+        self.free_list_size
     }
 
     /// Attempts to free a buffer block from the LRU list.
@@ -446,13 +520,8 @@ impl BufLRU {
         }
 
         // 1) unlink from LRU
-        unsafe {
-            let buf_page = block_guard.buf_block_get_page_mut();
-            let mut cursor = self.lru_list.cursor_mut_from_ptr(buf_page);
-            cursor.remove();
-            buf_page.set_is_in_lru_list(false);
-        }
-
+        let buf_page = block_guard.buf_block_get_page_mut();
+        self.remove_block(buf_page);
         // 2) bump global freed‐page clock
         pool_inner.set_freed_page_clock(
             pool_inner.freed_page_clock().wrapping_add(1),
@@ -818,5 +887,75 @@ impl BufLRU {
     /// * `free_list` - The new free list
     pub fn set_free_list(&mut self, free_list: LinkedList<FreeListAdapter>) {
         self.free_list = free_list;
+    }
+
+    /// Compute how many pages to flush/evict so that we always have
+    /// at least a “baseline” of ready frames plus a small cushion.
+    ///
+    /// 1. free_block_margin = 5 + read_ahead  
+    ///    • read_ahead = min(next_power_of_two(curr_size/32), 64)  
+    /// 2. extra_margin = free_block_margin/4 + 100  
+    /// 3. Count how many frames are already free (free_list_len).  
+    /// 4. Scan up to get_free_search_len() pages from the LRU tail,
+    ///    adding 1 for each clean, unpinned page you could evict.  
+    /// 5. If available >= free_block_margin, return 0.  
+    ///    Otherwise return (free_block_margin + extra_margin) – available.
+    ///
+    pub(crate) fn recommendation(&self) -> usize {
+        // 1) compute the two margins
+        let read_ahead = min((self.lru_size / 32).next_power_of_two(), 64);
+
+        let free_block_margin = 5 + read_ahead as usize;
+        let extra_margin = free_block_margin / 4 + 100;
+
+        let mut n_replaceable = self.get_free_list_size();
+
+        // 3) scan backwards through the LRU
+        for page_ref in self
+            .lru_list
+            .iter()
+            .rev()
+            .take(self.get_free_search_len(self.lru_size))
+        {
+            // once we've seen enough candidates, stop
+            if n_replaceable >= free_block_margin + extra_margin {
+                break;
+            }
+
+            // upgrade to the block, grab its page‐level lock
+            // grab the Weak<RwLock<BufBlock>>
+            let weak_block: Weak<RwLock<BufBlock>> =
+                page_ref.buf_page_get_buf_block();
+            // upgrade it to Arc, or panic if it’s gone:
+            let block: Arc<RwLock<BufBlock>> =
+                weak_block.upgrade().expect("BufBlock vanished!");
+            let guard = block.read().unwrap();
+            let buf_page = guard.buf_block_get_page();
+
+            if buf_page.in_file()
+                && buf_page.buf_page_get_io_fix() == BufIoFix::BufIoNone
+                && buf_page.buf_page_io_fix_count() == 0
+                && !buf_page.buf_page_modified()
+            {
+                n_replaceable += 1;
+            }
+        }
+
+        // 4) if we already meet the “free block margin”, nothing to do
+        if n_replaceable >= free_block_margin {
+            0
+        } else {
+            // otherwise tell the flusher how many to push through
+            (free_block_margin + extra_margin) - n_replaceable
+        }
+    }
+
+    /// How many pages deep into the LRU we will scan.
+    /// Mirrors: 5 + 2 * read_ahead_area.
+    pub(crate) fn get_free_search_len(&self, curr_size: usize) -> usize {
+        // same read_ahead you use for free_block_margin:
+        let read_ahead =
+            std::cmp::min((curr_size / 32).next_power_of_two(), 64);
+        5 + 2 * (read_ahead as usize)
     }
 }

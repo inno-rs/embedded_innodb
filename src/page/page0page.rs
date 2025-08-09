@@ -2,7 +2,6 @@ use std::{
     ops::Add,
     sync::{Arc, RwLock},
 };
-
 use tracing::{info, warn};
 
 use crate::{
@@ -229,6 +228,19 @@ impl Page {
     pub fn page_set_space_id(&mut self, space_id: SpaceId) {
         let page = self.to_page_frame();
         mach_write_to_4(&mut page.0[FIL_PAGE_SPACE_ID..], space_id);
+    }
+
+    /// Resets the page by filling it with zeros.
+    ///
+    /// This function converts the page to a page frame and then fills
+    /// the entire page with zeros, effectively clearing all data on the page.
+    ///
+    /// # Returns
+    ///
+    /// * `()`: This function does not return a value.
+    pub fn page_reset(&mut self) {
+        let mut pf = self.to_page_frame();
+        pf.fill(0);
     }
 
     /// Get the file page offset of the page.
