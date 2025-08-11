@@ -2,6 +2,7 @@ use std::{
     ops::Add,
     sync::{Arc, RwLock},
 };
+
 use tracing::{info, warn};
 
 use crate::{
@@ -179,7 +180,7 @@ impl Page {
 
     /// Checks if a record belongs to the page and is within valid boundaries.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `rec` - The record to check
     ///
     /// # Returns
@@ -363,7 +364,7 @@ impl Page {
     ///
     /// This method creates a new `Record` object from the specified offset.
     ///
-    /// # Parameters
+    /// # Arguments
     ///
     /// * `offset`: The offset in bytes from the start of the page where the record is located.
     ///
@@ -380,7 +381,7 @@ impl Page {
     /// This method verifies that the record is stored within this page by comparing
     /// the page-aligned address of the record with the page's address.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `record` - The record to check
     ///
     /// # Returns
@@ -402,7 +403,7 @@ impl Page {
 
     /// Sets the value of a given field in the page header.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `field`: The offset (in `usize`) of the specific field within the page header.
     /// - `value`: The value to set for the field.
     ///
@@ -415,7 +416,7 @@ impl Page {
 
     /// Retrieves the value of a given field from the page header.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `field`: The offset (in `usize`) of the specific field within the page header.
     ///
     /// # Returns
@@ -550,7 +551,7 @@ impl Page {
 
     /// Sets the record pointer in the page directory slot.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `slot`: The slot number in the page directory.
     /// - `rec`: The record to set in the slot.
     /// # Returns
@@ -565,7 +566,7 @@ impl Page {
 
     /// Get the record pointer to by the slot in the page directory.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `slot`: The slot number in the page directory.
     ///
     /// # Returns
@@ -585,7 +586,7 @@ impl Page {
     /// It does not set the record pointers in the added slots or update n_owned values.
     /// The caller is responsible for these changes.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `slot` - The position where the new slot should be added
     ///
     /// # Returns
@@ -671,7 +672,7 @@ impl Page {
     /// in the page directory. This is typically called when adding or removing
     /// slots from the directory.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `n_slots` - The new number of slots to set
     ///
     /// # Returns
@@ -700,7 +701,7 @@ impl Page {
     /// page directory owns. This is important for maintaining the balance of
     /// records across directory slots.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `slot` - The slot ID to set the number of owned records for
     /// * `n_owned` - The new number of records owned by the slot
     pub fn page_dir_set_n_owned(&self, slot: SlotId, n_owned: usize) {
@@ -710,7 +711,7 @@ impl Page {
 
     /// Finds the owner slot of a given record in the page directory.
     ///
-    /// # Parameters
+    /// # Arguments
     ///
     /// - `record`: The record to find the owner slot for.
     ///
@@ -741,7 +742,7 @@ impl Page {
 
     /// Retrieves the pointer to the nth slot in the page directory.
     ///
-    /// # Parameters
+    /// # Arguments
     ///
     /// - `slot_id`: The slot ID of the directory slot.
     ///
@@ -812,7 +813,7 @@ impl Page {
     /// The created page is empty except for the system records (infimum and supremum)
     /// and is ready to have user records inserted into it.
     ///
-    /// # Parameters
+    /// # Arguments
     ///
     /// * `index` - The index to which the page belongs
     /// * `buf` - The buffer block where the page will be created
@@ -926,7 +927,7 @@ impl Page {
 
     /// Get the offset of the record within the page.
     ///
-    /// # Parameters
+    /// # Arguments
     ///
     /// - `rec`: The record to get the offset for.
     ///
@@ -940,7 +941,7 @@ impl Page {
 
     /// Checks if the given record is the infimum record of the page.
     ///
-    /// # Parameters
+    /// # Arguments
     ///
     /// - `rec`: The record to check.
     ///
@@ -956,7 +957,7 @@ impl Page {
 
     /// Checks if the given record is the supremum record of the page.
     ///
-    /// # Parameters
+    /// # Arguments
     ///
     /// - `rec`: The record to check.
     ///
@@ -973,7 +974,7 @@ impl Page {
 
     /// Checks if the given record is a user record.
     ///
-    /// # Parameters
+    /// # Arguments
     ///
     /// - `rec`: The record to check.
     ///
@@ -999,7 +1000,7 @@ impl Page {
     /// sequentially until it finds a record with a matching `heap_no`
     /// or reaches the supremum record.
     ///
-    /// # Parameters
+    /// # Arguments
     ///
     /// - `heap_no`: The heap number of the record to find.
     ///
@@ -1031,7 +1032,7 @@ impl Page {
 
     /// Create a log record for the creation of page.
     ///
-    /// # Parameters
+    /// # Arguments
     ///
     /// - `buf`: The buffer block associated with the page.
     /// - `mtr`: The transaction object.
@@ -1100,7 +1101,7 @@ impl Page {
     /// another record or to null (indicating end of list). This is used to maintain
     /// the linked list of records on the page.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `rec` - The record whose next pointer will be updated
     /// * `next_rec` - The record that should be set as the next record, or None to indicate end of list
     ///
@@ -1136,7 +1137,7 @@ impl Page {
     /// until it finds a record that has a non-zero n_owned value, indicating
     /// that it's an owner record in the page directory.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `rec` - The record to find the owner for
     ///
     /// # Returns
@@ -1153,13 +1154,24 @@ impl Page {
     /// Gets the page number of the previous page in the linked list of pages.
     ///
     /// This method retrieves the page number of the previous page in the
-    /// doubly-linked list of pages in the tablespace.
+    /// doubly linked list of pages in the tablespace.
     ///
     /// # Returns
     /// * The page number of the previous page as a `PageNo`
     pub fn get_prev_page(&self) -> PageNo {
         let page = self.to_page_frame();
         mach_read_from_4(&page.0[FIL_PAGE_PREV..])
+    }
+
+    /// Set the link to the previous page in the linked list of pages.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_no` - The page number of the previous page to set
+    ///
+    pub fn set_prev_page(&self, page_no: PageNo) {
+        let page = self.to_page_frame();
+        mach_write_to_4(&mut page.0[FIL_PAGE_PREV..], page_no);
     }
 
     /// Gets the page number of the next page in the linked list of pages.
@@ -1174,6 +1186,17 @@ impl Page {
         mach_read_from_4(&page.0[FIL_PAGE_NEXT..])
     }
 
+    /// Set the link to the next page in the linked list of pages.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_no` - The page number of the previous page to set
+    ///
+    pub fn set_next_page(&self, page_no: PageNo) {
+        let page = self.to_page_frame();
+        mach_write_to_4(&mut page.0[FIL_PAGE_NEXT..], page_no);
+    }
+
     /// Checks if a record needs to be stored externally due to its size.
     ///
     /// This method determines if a record is too large to be stored inline
@@ -1181,7 +1204,7 @@ impl Page {
     /// pointer in the page. A record is considered too large if its size
     /// exceeds half of the free space available in an empty page.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `rec_size` - The size of the record in bytes
     ///
     /// # Returns
@@ -1201,7 +1224,7 @@ impl Page {
     /// to verify the integrity of the page. The checksum is calculated based on the
     /// contents of the page and can be used to detect corruption or tampering.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `page_frame` - A reference to the page frame containing the data to checksum
     ///
     /// # Returns
@@ -1221,7 +1244,7 @@ impl Page {
     /// the specified record.
     /// Infimum and Supremum records are not copied.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `dest` - Destination buffer block where records will be copied to
     /// * `src` - Source buffer block where records will be copied from
     /// * `rec` - The record up to which copying should occur (exclusive)
@@ -1270,7 +1293,7 @@ impl Page {
     /// Infimum and Supremum records are not copied.
     /// The records are copied to the start of the record list on the destination page.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `dest` - Destination buffer block where records will be copied to
     /// * `rec` - The starting record from which copying should begin (inclusive)
     /// * `index` - Index to which the records belong
@@ -1317,7 +1340,7 @@ impl Page {
     /// of the page. The function first copies the records to the destination page and then
     /// deletes them from the source page.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `dest` - Destination buffer block where records will be moved to
     /// * `rec` - Starting record to be moved (and all records after it)
     /// * `index` - Index to which the records belong
@@ -1504,7 +1527,7 @@ impl Page {
     /// transaction ID is greater than the current maximum. This is used to track the
     /// highest transaction ID that has modified the page.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `txn_id` - The transaction ID to potentially set as the new maximum
     /// * `mtr` - Mini-transaction handle for logging the change
     ///
@@ -1540,7 +1563,7 @@ impl Page {
 
     /// Returns the fill factor of the page after inserting a record of the given size.
     ///
-    /// # Parameters
+    /// # Arguments
     ///
     /// * `insert_size`: The size of the record to be inserted.
     ///
@@ -1572,7 +1595,7 @@ impl Page {
     /// (but not including) the specified record to a newly created (empty) destination page.
     /// It is optimized for the case where the destination page has just been initialized.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `dest_page` - Destination page where records will be copied to
     /// * `rec` - The record up to which copying should occur (exclusive)
     /// * `index` - Index to which the records belong
@@ -1622,7 +1645,7 @@ impl Page {
     /// (including the specified record) to a newly created (empty) destination page.
     /// It is optimized for the case where the destination page has just been initialized.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `dest_page` - Destination page where records will be copied to
     /// * `rec` - The starting record from which copying should begin (inclusive)
     /// * `index` - Index to which the records belong

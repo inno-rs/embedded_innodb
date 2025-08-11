@@ -19,3 +19,6 @@ pub enum Direction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FSegId(pub u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ExtentNo(pub u32);

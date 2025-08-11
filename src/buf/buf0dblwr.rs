@@ -62,7 +62,7 @@ pub struct DoubleWriteBufferPage {
 impl DoubleWriteBufferPage {
     /// Creates a new DoubleWriteBufferPage with the specified space ID and page number.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `space_id` - The space ID of the page
     /// * `page_no` - The page number within its space
     ///
@@ -94,7 +94,7 @@ impl DoubleWriteBuffer {
     /// This constructor ensures that the provided block is properly aligned to page boundaries,
     /// which is critical for database page operations.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `block` - The pre-allocated memory block for the double write buffer
     /// * `size` - The number of pages the buffer can hold
     ///
@@ -126,7 +126,7 @@ impl DoubleWriteBuffer {
 
     /// Retrieves a raw byte slice for a specific page in the double write buffer.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `dblwr_buffer_page` - The page descriptor for which to retrieve the raw block
     ///
     /// # Returns
@@ -199,7 +199,7 @@ impl DoubleWriteBuffer {
     /// available slot in the double write buffer and updates the metadata
     /// (space_id and page_no) accordingly.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_block` - The buffer block to append to the double write buffer
     ///
     /// # Panic
@@ -218,7 +218,7 @@ impl DoubleWriteBuffer {
     /// available slot in the double write buffer and updates the metadata
     /// (space_id and page_no) accordingly.
     ///
-    /// # Parameters
+    /// # Arguments
     /// `page_id`: Page id for the block.
     /// `buf`: buffer of memory for the I/O.
     ///

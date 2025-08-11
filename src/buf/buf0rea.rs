@@ -25,7 +25,7 @@ pub struct BufRea {
 impl BufRea {
     /// Creates a new buffer read manager.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_pool` - A reference to the buffer pool
     /// * `fil` - A reference to the file system interface
     ///
@@ -40,7 +40,7 @@ impl BufRea {
     /// This method performs a synchronous read of the specified page
     /// into the buffer pool if it's not already present.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `space_id` - The ID of the tablespace containing the page
     /// * `page_no` - The page number within the tablespace
     ///
@@ -73,7 +73,7 @@ impl BufRea {
     /// This method handles the details of reading a page from disk,
     /// including validation checks and interaction with the buffer pool.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `io_request` - The type of I/O operation (sync or async)
     /// * `batch` - Whether this is part of a batch read operation
     /// * `space_id` - The ID of the tablespace containing the page

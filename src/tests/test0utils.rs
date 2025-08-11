@@ -532,6 +532,7 @@ pub fn create_new_fields(n: usize) -> Vec<Field> {
 ///
 /// * `buf_pool` - The buffer pool to add blocks to
 /// * `count` - The number of blocks to add to the buffer pool
+///
 pub fn create_blocks_in_buf_pool(
     buf_pool: Arc<Mutex<BufPool>>,
     count: usize,

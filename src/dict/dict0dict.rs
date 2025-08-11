@@ -31,7 +31,7 @@ pub struct Dict {
 /// It contains two hashmaps:
 /// - `tables`: Maps table names to their corresponding `Arc<Table>`.
 /// - `tables_by_id`: Maps table IDs to their corresponding `Arc<Table>`.
-/// This allows for efficient retrieval of tables by both name and ID.
+///   This allows for efficient retrieval of tables by both name and ID.
 ///
 pub struct DictInner {
     /// Hashmap of tables based on table name.
@@ -87,15 +87,11 @@ impl Dict {
         let table_id = table.get_id();
 
         let contains = inner.tables.contains_key(&table_name);
-        ut_ad!(
-            contains == false,
-            "Table {} already exists in cache",
-            table_name
-        );
+        ut_ad!(!contains, "Table {} already exists in cache", table_name);
 
         let contains = inner.tables_by_id.contains_key(&table_id);
         ut_ad!(
-            contains == false,
+            !contains,
             "Table with ID {} already exists in cache",
             table_id
         );

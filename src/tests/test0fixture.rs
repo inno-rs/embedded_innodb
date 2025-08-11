@@ -2,17 +2,21 @@ use std::sync::{Arc, Mutex};
 
 use tokio::runtime::Runtime;
 
-use crate::buf::buf0dblwr::{
-    DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer, WriteBuffer,
-};
-use crate::buf::buf0flu::BufFlush;
-use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
-use crate::log::log0log::Log;
 use crate::{
-    buf::{buf0buf::BufPool, buf0lru::BufLRU, buf0rea::BufRea},
+    buf::{
+        buf0buf::BufPool,
+        buf0dblwr::{
+            DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer, WriteBuffer,
+        },
+        buf0flu::BufFlush,
+        buf0lru::BufLRU,
+        buf0rea::BufRea,
+    },
     dict::dict0dict::Dict,
     fil::fil0fil::Fil,
     fsp::fsp0fsp::Fsp,
+    innodb::innodb0types::UNIV_PAGE_SIZE,
+    log::log0log::Log,
     os::{os0io::OsIo, os0runtime::create_runtime},
 };
 
@@ -24,6 +28,7 @@ pub struct CommonFixture {
     pub buf_rea: Arc<Mutex<BufRea>>,
     pub buf_lru: Arc<Mutex<BufLRU>>,
     pub buf_pool: Arc<Mutex<BufPool>>,
+    pub fsp: Arc<Mutex<Fsp>>,
     pub dict: Arc<Dict>,
 }
 
@@ -68,7 +73,7 @@ impl CommonFixture {
 
         let dict = Arc::new(Dict::new(fsp.clone()));
 
-        Self { runtime, os_io, fil, buf_rea, buf_lru, buf_pool, dict }
+        Self { runtime, os_io, fil, buf_rea, buf_lru, buf_pool, fsp, dict }
     }
 }
 

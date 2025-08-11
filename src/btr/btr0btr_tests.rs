@@ -10,16 +10,14 @@ mod tests {
     use rstest::{fixture, rstest};
     use tracing::info;
 
-    use crate::buf::buf0dblwr::{
-        DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer, WriteBuffer,
-    };
-    use crate::buf::buf0flu::BufFlush;
-    use crate::innodb::innodb0types::UNIV_PAGE_SIZE;
-    use crate::log::log0log::Log;
     use crate::{
         btr::{btr0btr::BTree, btr0cur::BTreeCursor},
         buf::{
             buf0buf::BufPool,
+            buf0dblwr::{
+                DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer, WriteBuffer,
+            },
+            buf0flu::BufFlush,
             buf0lru::BufLRU,
             buf0rea::BufRea,
             buf0types::{BUF_GET_ALWAYS, Request},
@@ -28,8 +26,9 @@ mod tests {
         dict::dict0types::{Column, Field, Index, IndexId},
         fil::{fil0fil::Fil, fil0types::FILL_NULL},
         fsp::{fsp0fsp::Fsp, fsp0types::Direction},
-        innodb::innodb0types::PageId,
+        innodb::innodb0types::{PageId, UNIV_PAGE_SIZE},
         lock::lock0lock::LockSys,
+        log::log0log::Log,
         mtr::{
             mtr0mtr::Mtr,
             mtr0types::{FixMode, MemoSlot, MtrState::MtrActive},

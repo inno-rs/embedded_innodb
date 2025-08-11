@@ -60,7 +60,7 @@ pub struct BTree {
 impl BTree {
     /// Creates a new BTree instance.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_pool` - A reference to the buffer pool manager for page caching
     /// * `fsp` - A reference to the file space manager for space allocation
     ///
@@ -97,7 +97,7 @@ impl BTree {
     /// This method navigates to the previous record in the B-tree, potentially
     /// crossing page boundaries if necessary.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `rec` - The current record from which to find the previous record
     /// * `mtr` - An optional mini-transaction for managing locks and logging
     ///
@@ -174,7 +174,7 @@ impl BTree {
     /// This method navigates to the next record in the B-tree, potentially
     /// crossing page boundaries if necessary.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `rec` - The current record from which to find the next record
     /// * `mtr` - An optional mini-transaction for managing locks and logging
     ///
@@ -604,7 +604,7 @@ impl BTree {
     /// and maximize the available free space. This is typically called when
     /// an insert operation fails due to insufficient space.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_block` - The buf block to reorganize.
     /// * `mtr` - Mini-transaction for managing locks and logging
     ///

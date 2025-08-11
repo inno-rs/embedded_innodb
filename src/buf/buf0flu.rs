@@ -63,7 +63,7 @@ impl BufFlush {
 
     /// Creates a new BufFlush instance with the specified components.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `dblwr` - Reference to the double write buffer
     /// * `fil` - Reference to the file interface for I/O operations
     /// * `redo_log` - Reference to the redo log
@@ -91,7 +91,7 @@ impl BufFlush {
     /// This method prepares the buffer block for writing by setting its I/O fix
     /// and flush type, then delegates to write_block_low for the actual I/O operation.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_block` - The buffer block to flush
     /// * `flush_type` - The type of flush operation to perform (LRU or List)
     ///
@@ -141,7 +141,7 @@ impl BufFlush {
     /// in batches for better I/O efficiency, and can limit the flush operation to pages
     /// with a log sequence number (LSN) below a certain threshold.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `flush_type` - The type of flush operation (BufFlushList or BufFlushLru)
     /// * `min_n` - The minimum number of pages to flush
     /// * `lsn_limit` - Only flush pages with LSN less than this value
@@ -182,7 +182,7 @@ impl BufFlush {
     /// 2. It is not currently involved in an I/O operation
     /// 3. For LRU flushes, it must also have no buffer fixes
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_block` - The buffer block to check
     /// * `flush_type` - The type of flush operation (BufFlushList or BufFlushLru)
     ///
@@ -226,7 +226,7 @@ impl BufFlush {
     /// 2. Initializes the block for writing
     /// 3. Posts the block to the double write buffer
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_block` - The buffer block to write
     ///
     /// # Panic
@@ -278,7 +278,7 @@ impl BufFlush {
     /// This method prepares a buffer block before it is written to disk.
     /// Currently, this is a placeholder for future implementation.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_block` - The buffer block to initialize
     /// * `new_lsn` - The newest log sequence number (LSN) for this block
     pub fn init_for_writing(page_frame: &mut PageFrame, new_lsn: Lsn) {
@@ -306,7 +306,7 @@ impl BufFlush {
     /// retrying if the operation fails. It continues trying until the operation
     /// succeeds.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `buf_block` - The buffer block to post to the double write buffer
     ///
     /// # Panic
@@ -401,7 +401,7 @@ impl BufFlush {
     /// in progress (indicated by `batch` returning `usize::MAX`), it waits for that operation
     /// to complete before returning.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `n_to_flush` - The number of pages to flush from the LRU list
     ///
     /// # Implementation Note
@@ -424,7 +424,7 @@ impl BufFlush {
     /// type completes. It is called when the `batch` method returns `usize::MAX`, indicating
     /// that there is already a batch operation in progress for the given flush type.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `flush_type` - The type of flush operation to wait for (BufFlushLru or BufFlushList)
     ///
     /// # Implementation Note

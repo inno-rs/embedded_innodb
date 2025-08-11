@@ -7,7 +7,6 @@
 mod tests {
     use rstest::{fixture, rstest};
 
-    use crate::tests::test0utils::create_raw_page;
     use crate::{
         buf::{
             buf0buf::BufPoolInner,
@@ -15,7 +14,7 @@ mod tests {
             buf0lru::BufLRU,
             buf0types::{BufIoFix, BufPageState},
         },
-        tests::test0utils,
+        tests::{test0utils, test0utils::create_raw_page},
     };
 
     /// Creates a new buffer pool fixture for testing.
@@ -78,7 +77,7 @@ mod tests {
         }
         // PHASE B: eviction
 
-        let new_state = {
+        {
             let mut g = block.write().unwrap();
             lru.remove_page_from_lru(&mut inner, &mut g)
         };
