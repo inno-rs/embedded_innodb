@@ -246,7 +246,8 @@ mod tests {
     fn test_io_read_with_no_filespace(mut fil: Fil) {
         let mut data = b"Hello, world!".to_vec();
         data.resize(UNIV_PAGE_SIZE, 0);
-        let page_frame = PageFrame(data.as_mut_slice().try_into().unwrap());
+        let page_frame =
+            PageFrame::new(data.as_mut_slice().try_into().unwrap());
 
         let result = fil.io(
             IORequest::SyncRead,
@@ -278,7 +279,8 @@ mod tests {
 
         let mut data = b"Hello, world!".to_vec();
         data.resize(UNIV_PAGE_SIZE, 0);
-        let page_frame = PageFrame(data.as_mut_slice().try_into().unwrap());
+        let page_frame =
+            PageFrame::new(data.as_mut_slice().try_into().unwrap());
 
         // Perform a read operation
         let read_result = fil.io(

@@ -75,13 +75,19 @@ impl Hash for TrxId {
     }
 }
 
+pub struct Frame<'a, const N: usize>(pub &'a mut [u8; N]);
+
 /// A wrapper around a mutable byte array representing a database page in memory.
 ///
 /// This struct provides a type-safe way to pass page data around the system.
 /// The page size is fixed at UNIV_PAGE_SIZE bytes.
-pub struct PageFrame<'a>(pub &'a mut [u8; UNIV_PAGE_SIZE]);
+pub type PageFrame<'a> = Frame<'a, UNIV_PAGE_SIZE>;
 
-pub struct Frame<'a, const N: usize>(pub &'a mut [u8; N]);
+impl<'a> PageFrame<'a> {
+    pub fn new(slice: &'a mut [u8; UNIV_PAGE_SIZE]) -> PageFrame<'a> {
+        Frame(slice)
+    }
+}
 
 /// A raw page buffer that owns its memory allocation.
 ///
@@ -122,7 +128,7 @@ impl RawPage {
     pub fn as_page_frame(&mut self) -> PageFrame<'_> {
         let ptr = self.ptr as *mut [u8; UNIV_PAGE_SIZE];
         let slice = unsafe { &mut *ptr };
-        PageFrame(slice)
+        PageFrame::new(slice)
     }
 }
 

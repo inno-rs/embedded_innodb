@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn test_page_data_calc_checksum() {
         let mut my_byte_array: [u8; UNIV_PAGE_SIZE] = [0; UNIV_PAGE_SIZE];
-        let page_frame = PageFrame(&mut my_byte_array);
+        let page_frame = PageFrame::new(&mut my_byte_array);
         assert_eq!(2194025712, Page::page_data_calc_checksum(&page_frame));
     }
 

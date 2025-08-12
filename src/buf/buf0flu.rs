@@ -373,7 +373,7 @@ impl BufFlush {
                 TRX_SYS_SPACE as SpaceId,
                 page_no,
                 0,
-                PageFrame(
+                PageFrame::new(
                     raw_page
                         .as_mut()
                         .try_into()
