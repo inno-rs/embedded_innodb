@@ -282,7 +282,7 @@ impl Page {
     pub fn to_page_frame(&self) -> PageFrame<'_> {
         unsafe {
             let array_ptr = self.ptr as *mut [u8; UNIV_PAGE_SIZE];
-            PageFrame(&mut *array_ptr)
+            PageFrame::new(&mut *array_ptr)
         }
     }
 

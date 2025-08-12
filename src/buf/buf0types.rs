@@ -692,7 +692,9 @@ impl BufBlock {
     /// The caller must ensure that no other references to this memory exist while the
     /// PageFrame is in use.
     pub fn get_page_frame(&self) -> PageFrame<'_> {
-        unsafe { PageFrame(&mut *(self.frame as *mut [u8; UNIV_PAGE_SIZE])) }
+        unsafe {
+            PageFrame::new(&mut *(self.frame as *mut [u8; UNIV_PAGE_SIZE]))
+        }
     }
     /// Grab the block’s write‐lock, then decrement its buf_fix_count.
     pub fn fix_dec(&mut self) {
