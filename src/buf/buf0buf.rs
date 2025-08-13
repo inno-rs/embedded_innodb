@@ -39,7 +39,7 @@ use crate::{
         ut0dbg::{ut_a, ut_ad},
         ut0ut::ut_time_ms,
     },
-    ut_panic,
+    ut_2_power_up, ut_panic,
 };
 
 /// Buffer Pool manages the caching of database pages in memory.
@@ -65,7 +65,7 @@ pub struct BufPool {
 
 /// All the data that used to live *inside* the pool mutex
 /// (i.e., everything protected by that lock) goes here.
-pub(crate) struct BufPoolInner {
+pub struct BufPoolInner {
     /// A sequence number used to count pages evicted off the LRU list
     freed_page_clock: usize,
     /// Total number of frames in the pool
@@ -199,7 +199,7 @@ impl BufPoolInner {
     #[inline]
     pub fn get_read_ahead_area(&self) -> usize {
         let buckets = (self.curr_size() / 32).max(1); // Atleast 1 bucket
-        buckets.next_power_of_two().min(64) // Cap at 64
+        (ut_2_power_up!(buckets) as usize).min(64) // Cap at 64
     }
 }
 
@@ -236,7 +236,7 @@ impl BufPool {
     /// # Returns
     /// * `Some(BufBlock)` - A free buffer block if available
     /// * `None` - If no free blocks are available
-    pub fn get_free_block(&mut self) -> Option<Arc<RwLock<BufBlock>>> {
+    pub fn get_free_block(&self) -> Option<Arc<RwLock<BufBlock>>> {
         let mut n_iterations = 1;
         // remember the monitor state if you re-implement that…
         // let mut started_monitor = false;
@@ -256,7 +256,7 @@ impl BufPool {
             // 2) Try to take from the free list
 
             if let Some(b) = lru.get_free_only() {
-                // (optional) restore monitor state if you paused it…
+                // (optional) restore the monitor state if you paused it…
                 return Some(b);
             }
 
@@ -313,7 +313,7 @@ impl BufPool {
     /// # Returns
     /// * `Some(&BufBlock)` - A reference to the buffer block containing the requested page
     /// * `None` - If the page is not in the pool and cannot be loaded based on request mode
-    pub fn get(&mut self, request: Request) -> Option<Arc<RwLock<BufBlock>>> {
+    pub fn get(&self, request: Request) -> Option<Arc<RwLock<BufBlock>>> {
         ut_ad!(request.mtr.get_mtr_state() == MtrState::MtrActive);
         ut_ad!(
             request.rw_latch == ReadWriteLatch::NoLatch
@@ -647,7 +647,7 @@ impl BufPool {
     /// * `page_no` - The page number within the tablespace
     /// * `table_space_version` - The version of the tablespace
     pub fn init_for_read(
-        &mut self,
+        &self,
         space_id: SpaceId,
         page_no: PageNo,
         table_space_version: i64,
@@ -744,7 +744,7 @@ impl BufPool {
         {
             let mut blk = buf_block.write().unwrap();
             // buf_block_set_file_page takes &mut BufBlock
-            self.buf_block_set_file_page(&mut *blk, space_id, page_no);
+            self.buf_block_set_file_page(&mut blk, space_id, page_no);
         }
 
         // 2) Insert into the pool’s hash under the pool‐inner mutex
@@ -1143,7 +1143,7 @@ impl BufPool {
     ///
     /// # Returns
     /// * `bool` - `true` if a page was successfully freed, `false` otherwise
-    pub fn search_and_free_block(&mut self, n_iterations: usize) -> bool {
+    pub fn search_and_free_block(&self, n_iterations: usize) -> bool {
         // 1) Lock the pool‐inner state
         let mut inner = self.inner.lock().unwrap();
         // 2) Lock the LRU manager
@@ -1383,7 +1383,7 @@ impl BufPool {
     ///Loop until all “ended” work is done
     ///As long as that counter is > 0, we call search_and_free_block(1) to evict exactly one page, then re-check the counter.
     ///Exit when the counter hits zeroOnce we’ve evicted as many pages as were flushed, we stop.
-    pub(crate) fn try_free_flushed_blocks(&mut self) {
+    pub(crate) fn try_free_flushed_blocks(&self) {
         loop {
             // peek whether there’s still work to do
             let has_work = {

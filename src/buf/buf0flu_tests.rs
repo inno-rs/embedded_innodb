@@ -1,28 +1,29 @@
 #[cfg(test)]
 mod tests {
-    use intrusive_collections::UnsafeRef;
-    use rstest::{fixture, rstest};
     use std::sync::{Arc, Mutex, RwLock};
 
-    use crate::buf::buf0buf::BufPoolInner;
+    use intrusive_collections::UnsafeRef;
+    use rstest::{fixture, rstest};
+
+    // use crate::buf::buf0flu::BufFlushType;
+    use crate::buf::buf0flu::BufFlushType::BufFlushList;
+    //use crate::innodb::innodb0types::Lsn;
+    use crate::tests::test0utils;
     use crate::{
         buf::{
+            buf0buf::BufPoolInner,
             buf0dblwr::{
                 DOUBLE_WRITE_BUFFER_SIZE, DoubleWriteBuffer, WriteBuffer,
             },
             buf0flu::BufFlush,
+            buf0lru::BufLRU,
+            buf0types::{BufBlock, BufIoFix, BufPageState},
         },
         fil::fil0fil::Fil,
         innodb::innodb0types::UNIV_PAGE_SIZE,
         log::log0log::Log,
         os::{os0io::OsIo, os0runtime::create_runtime},
     };
-    // use crate::buf::buf0flu::BufFlushType;
-    use crate::buf::buf0flu::BufFlushType::BufFlushList;
-    use crate::buf::buf0lru::BufLRU;
-    use crate::buf::buf0types::{BufBlock, BufIoFix, BufPageState};
-    //use crate::innodb::innodb0types::Lsn;
-    use crate::tests::test0utils;
 
     struct BufFluFixture {
         buf_flu: BufFlush,

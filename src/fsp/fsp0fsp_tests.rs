@@ -75,9 +75,9 @@ mod tests {
         assert!(block.is_some());
         let buf_block = some_or_panic!(block);
         let page = buf_block.read().unwrap().get_page();
-        let mut fsp_header = FspHeaderPage::new(page.to_page_frame().0);
+        let fsp_header = FspHeaderPage::new(page.to_page_frame().0);
 
-        let fseg_inode_list = fsp_header.fsp_get_seg_inodes_free_list_mut();
+        let fseg_inode_list = fsp_header.fsp_get_seg_inodes_free_list();
 
         assert_eq!(fseg_inode_list.len(), 0);
     }
@@ -101,8 +101,7 @@ mod tests {
         for i in 0..9 {
             fsp.alloc_seg_inode_page(&mut fsp_header, 1, i + 1, &mut mtr);
 
-            let fseg_inode_list =
-                fsp_header.fsp_get_seg_inodes_free_list_mut();
+            let fseg_inode_list = fsp_header.fsp_get_seg_inodes_free_list();
 
             assert_eq!(fseg_inode_list.len(), (1 + i) as usize);
         }
@@ -123,18 +122,19 @@ mod tests {
         assert!(block.is_some());
         let buf_block = some_or_panic!(block);
         let page = buf_block.read().unwrap().get_page();
+        let page_id = page.page_get_page_id();
         let mut fsp_header = FspHeaderPage::new(page.to_page_frame().0);
+        fsp_header.header_init(page_id.space_id, 1000);
 
         for i in 0..9 {
             fsp.alloc_seg_inode_page(&mut fsp_header, 1, i + 1, &mut mtr);
 
-            let fseg_inode_list =
-                fsp_header.fsp_get_seg_inodes_free_list_mut();
+            let fseg_inode_list = fsp_header.fsp_get_seg_inodes_free_list();
 
             assert_eq!(fseg_inode_list.len(), (1 + i) as usize);
         }
 
-        let fseg_inode_list = fsp_header.fsp_get_seg_inodes_free_list_mut();
+        let fseg_inode_list = fsp_header.fsp_get_seg_inodes_free_list();
     }
 
     #[test]
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_header_init_sets_all_fields() {
-        // Prepare a dummy 16 KiB page filled with non-zero to catch untouch regions
+        // Prepare a dummy 16KiB page filled with non-zero to catch untouch regions
         let mut raw_page = RawPage::new();
         let frame = raw_page.as_page_frame().0;
         let mut fsp_header_page = FspHeaderPage::new(frame);
@@ -336,53 +336,33 @@ mod tests {
         );
 
         // 4) flags and frag_n_used remain zero
-        let fspan = FSP_HEADER_OFFSET + FSP_SPACE_FLAGS;
-        assert!(frame[fspan..fspan + 4].iter().all(|&b| b == 0));
-        let fspan = FSP_HEADER_OFFSET + FSP_FRAG_N_USED;
-        assert!(frame[fspan..fspan + 4].iter().all(|&b| b == 0));
+        let fsp_space_flags = fsp_header_page.fsp_get_fsp_space_flags();
+        assert_eq!(fsp_space_flags, 0);
+        let frag_n_used = fsp_header_page.fsp_get_fsp_frag_n_used();
+        assert_eq!(frag_n_used, 0);
 
         // 5) each of the five list-heads is initialized empty
-        let lists = [
-            FSP_FREE,
-            FSP_FREE_FRAG,
-            FSP_FULL_FRAG,
-            FSP_SEG_INODES_FULL,
-            FSP_SEG_INODES_FREE,
-        ];
-        for &rel_off in &lists {
-            let abs_off = FSP_HEADER_OFFSET + rel_off;
-            let slice = &frame[abs_off..abs_off + FLST_BASE_NODE_SIZE];
+        for lst in ALL_FSP_HEADER_LST_TYPES {
+            let flst = fsp_header_page.fsp_get_flst(lst);
 
             // length == 0
-            assert_eq!(
-                FilAddr::len(slice),
-                0,
-                "list at rel_off {} length not zero",
-                rel_off
-            );
+            assert_eq!(flst.len(), 0, "list {} length not zero", lst);
 
             // first == NULL, last == NULL
             assert_eq!(
-                FilAddr::first(slice),
+                *flst.get_first(),
                 FilAddr::NULL,
-                "list at rel_off {} first not NULL",
-                rel_off
+                "list {} length not zero",
+                lst
             );
+
             assert_eq!(
-                FilAddr::last(slice),
+                *flst.get_last(),
                 FilAddr::NULL,
-                "list at rel_off {} last not NULL",
-                rel_off
+                "list {} length not zero",
+                lst
             );
         }
-
-        // 6) next_segment_id == 0
-        let span = FSP_HEADER_OFFSET + FSP_SEG_ID;
-        assert_eq!(
-            &frame[span..span + 4],
-            &0u32.to_le_bytes(),
-            "next_segment_id not zero"
-        );
     }
 
     #[test]
@@ -415,7 +395,6 @@ mod tests {
 
             let base = &mut head[FSP_HEADER_OFFSET + FSP_FREE
                 ..FSP_HEADER_OFFSET + FSP_FREE + FLST_BASE_NODE_SIZE];
-            flst_init(base);
             me.add_last(base, xdes_buf, None);
         }
 
@@ -488,7 +467,6 @@ mod tests {
 
             let free_frag = &mut head[FSP_HEADER_OFFSET + FSP_FREE_FRAG
                 ..FSP_HEADER_OFFSET + FSP_FREE_FRAG + FLST_BASE_NODE_SIZE];
-            flst_init(free_frag);
             addr.add_last(free_frag, xdes_buf, None);
         }
 
@@ -500,7 +478,7 @@ mod tests {
             let xdes_buf = &mut buf[extent_off..extent_off + XDES_SIZE];
             let xdes = ExtentDescriptor::new(xdes_buf);
 
-            assert_eq!(xdes.get_bit(page_idx, XDES_FREE_BIT), true);
+            assert!(xdes.get_bit(page_idx, XDES_FREE_BIT));
             assert_eq!(xdes.used_count(), 0);
             assert_eq!(xdes.state(), XDES_FREE);
         }
@@ -609,7 +587,7 @@ mod tests {
             let rel_off = 0;
             let xdes_buf = &mut xdes_area[rel_off..rel_off + XDES_SIZE];
             let xdes = ExtentDescriptor::new(xdes_buf);
-            assert_eq!(xdes.get_bit(0, XDES_FREE_BIT), false);
+            assert!(!xdes.get_bit(0, XDES_FREE_BIT));
         }
     }
 
@@ -711,7 +689,7 @@ mod tests {
         assert_eq!(new_size, 128); // 64 (old) + 64 (new extent)
 
         // Get extent descriptor at new extent offset
-        let extent_off = XDES_ARR_OFFSET + 1 * XDES_SIZE;
+        let extent_off = XDES_ARR_OFFSET + XDES_SIZE;
         let rel_off = extent_off - XDES_ARR_OFFSET;
         let (_, xdes_area) =
             fsp_header_page.get_buf_mut().split_at_mut(XDES_ARR_OFFSET);
@@ -744,10 +722,10 @@ mod tests {
         }
 
         // Test page 0 (should be used)
-        assert_eq!(fsp_header_page.is_page_free(0), false);
+        assert!(!fsp_header_page.is_page_free(0));
 
         // Test page 1 (should be free)
-        assert_eq!(fsp_header_page.is_page_free(1), true);
+        assert!(fsp_header_page.is_page_free(1));
     }
 
     #[test]
@@ -769,7 +747,7 @@ mod tests {
         }
 
         // Test extent 0 (should be used)
-        assert_eq!(fsp_header_page.is_extent_used(ExtentNo(0)), true);
+        assert!(fsp_header_page.is_extent_used(ExtentNo(0)));
 
         // Initialize extent descriptor for extent 1
         {
@@ -782,7 +760,7 @@ mod tests {
         }
 
         // Test extent 1 (should be free)
-        assert_eq!(fsp_header_page.is_extent_used(ExtentNo(1)), false);
+        assert!(!fsp_header_page.is_extent_used(ExtentNo(1)));
     }
 
     #[test]

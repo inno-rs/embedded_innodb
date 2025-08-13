@@ -5,7 +5,7 @@ use crate::innodb::innodb0types::{IB_FILE_BLOCK_SIZE, Lsn, SpaceId};
 /// The counting of the log sequence numbers (LSN) starts from the given value.
 pub const LOG_START_LSN: Lsn = 16 * IB_FILE_BLOCK_SIZE as Lsn;
 
-/// Offsets to the log block header.
+// Offsets to the log block header.
 
 /**************************************************************************
  *                InnoDB Redo Log Block Header (12 bytes)                 *

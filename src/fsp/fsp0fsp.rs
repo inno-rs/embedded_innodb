@@ -47,6 +47,8 @@ use std::{
     },
 };
 
+use strum_macros::Display;
+
 use crate::{
     buf::{
         buf0buf::BufPool,
@@ -61,13 +63,17 @@ use crate::{
         },
     },
     fsp::fsp0types::{Direction, ExtentNo, FSegId},
-    fut::fut0lst::{FLst, FLstBaseNode, FilAddr},
+    fut::fut0lst::{
+        FIL_ADDR_BYTE, FLST_FIRST, FLST_LAST, FLST_NEXT, FLST_PREV, FLst,
+        FLstBaseNode, FLstNode, FLstOperation, FilAddr, PersistFLstOperation,
+    },
     innodb::innodb0types::{
-        Frame, PageFrame as InnoPageFrame, PageId, PageNo, SpaceId,
-        UNIV_PAGE_SIZE,
+        Frame, PageFrame as InnoPageFrame, PageId, PageNo, ReadOnlyFrame,
+        SpaceId, UNIV_PAGE_SIZE,
     },
     mach::mach0data::{
-        mach_read_from_4, mach_read_from_8, mach_write_to_4, mach_write_to_8,
+        mach_read_from_2, mach_read_from_4, mach_read_from_8, mach_write_to_2,
+        mach_write_to_4, mach_write_to_8,
     },
     mtr::{
         mtr0mtr::Mtr,
@@ -288,6 +294,14 @@ impl Fsp {
         None
     }
 
+    /// Initializes the header of a file space.
+    ///
+    /// # Arguments
+    ///
+    /// * `space_id` - The ID of the tablespace to initialize
+    /// * `space_size` - The initial size of the tablespace in pages
+    /// * `mtr` - A mutable reference to the mini-transaction for logging
+    ///
     pub fn header_init(
         &self,
         space_id: SpaceId,
@@ -302,7 +316,20 @@ impl Fsp {
         }
     }
 
-    /// Allocates a single free page from the segment. We try to minimize page fragmentation.
+    /// Allocates a single free page from the segment, attempting to minimize page fragmentation.
+    ///
+    /// # Arguments
+    ///
+    /// * `space_id` - The ID of the tablespace to allocate the page in
+    /// * `hint` - A hint for the page number to allocate
+    /// * `direction` - The direction to search for a free page (currently unused)
+    /// * `reserved` - Whether the page is being allocated from reserved space (currently unused)
+    /// * `mtr` - A mutable reference to the mini-transaction for logging
+    ///
+    /// # Returns
+    ///
+    /// The page number of the allocated page
+    ///
     pub fn fseg_alloc_free_page_general(
         &self,
         space_id: SpaceId,
@@ -397,6 +424,18 @@ impl Fsp {
         true
     }
 
+    /// Allocates a free page in the specified tablespace.
+    ///
+    /// # Arguments
+    ///
+    /// * `space_id` - The ID of the tablespace to allocate the page in
+    /// * `hint_page_no` - A hint for the page number to allocate (currently unused)
+    /// * `mtr` - A mutable reference to the mini-transaction for logging
+    ///
+    /// # Returns
+    ///
+    /// `Option<PageNo>` - The page number of the allocated page
+    ///
     pub fn alloc_free_page(
         &self,
         space_id: SpaceId,
@@ -422,9 +461,9 @@ impl Fsp {
     ) {
         let space_id = fsp_header_page.fsp_get_space_id();
         let mut fseg_inode_free_list =
-            fsp_header_page.fsp_get_seg_inodes_free_list_mut();
+            fsp_header_page.fsp_get_seg_inodes_free_list();
         let last = fseg_inode_free_list.get_last();
-        if last == FilAddr::NULL {
+        if *last == FilAddr::NULL {
             let fil_addr = FilAddr {
                 page_no: fseg_inode_page.get_page_no(),
                 byte_off: FSEG_INODE_PAGE_NODE as u16,
@@ -458,8 +497,32 @@ impl Fsp {
         }
 
         fseg_inode_free_list.incr_length();
+
+        let base_node = fseg_inode_free_list.get_base();
+        write_flst_base_node(
+            base_node,
+            &mut fsp_header_page.buf
+                [FSP_HEADER_OFFSET + FSP_SEG_INODES_FREE..],
+        );
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+pub enum FspHeaderLstType {
+    Free,
+    FreeFrag,
+    FullFrag,
+    SegInodesFull,
+    SegInodesFree,
+}
+
+pub const ALL_FSP_HEADER_LST_TYPES: &[FspHeaderLstType] = &[
+    FspHeaderLstType::Free,
+    FspHeaderLstType::FreeFrag,
+    FspHeaderLstType::FullFrag,
+    FspHeaderLstType::SegInodesFull,
+    FspHeaderLstType::SegInodesFree,
+];
 
 /// Represents a full 16 KiB InnoDB page buffer in memory.
 ///
@@ -505,6 +568,12 @@ impl<'a> FspHeaderPage<'a> {
         FspHeaderPage { buf, page }
     }
 
+    /// Gets the page number of this FSP header page.
+    ///
+    /// # Returns
+    ///
+    /// `PageNo` - The page number
+    ///
     pub fn get_page_no(&self) -> PageNo {
         self.page.page_get_fil_offset()
     }
@@ -530,6 +599,12 @@ impl<'a> FspHeaderPage<'a> {
         mach_write_to_4(&mut self.buf[FSP_SPACE_ID_RANGE], space_id);
     }
 
+    /// Gets the total size of the tablespace in pages from the FSP header.
+    ///
+    /// # Returns
+    ///
+    /// `u32` - The total number of pages in the tablespace
+    ///
     pub fn fsp_get_fsp_size(&self) -> u32 {
         mach_read_from_4(
             &self.buf[FSP_HEADER_OFFSET + FSP_SIZE
@@ -537,6 +612,12 @@ impl<'a> FspHeaderPage<'a> {
         )
     }
 
+    /// Sets the total size of the tablespace in pages in the FSP header.
+    ///
+    /// # Arguments
+    ///
+    /// * `fsp_size` - The total number of pages in the tablespace
+    ///
     pub fn fsp_set_fsp_size(&mut self, fsp_size: u32) {
         // Byte 46 to 49
         mach_write_to_4(
@@ -546,6 +627,14 @@ impl<'a> FspHeaderPage<'a> {
         );
     }
 
+    /// Gets the free limit of the tablespace from the FSP header.
+    ///
+    /// The free limit is the page number limit up to which pages have been allocated.
+    ///
+    /// # Returns
+    ///
+    /// `u32` - The free limit page number
+    ///
     pub fn fsp_get_fsp_free_limit(&self) -> u32 {
         mach_read_from_4(
             &self.buf[FSP_HEADER_OFFSET + FSP_FREE_LIMIT
@@ -553,6 +642,14 @@ impl<'a> FspHeaderPage<'a> {
         )
     }
 
+    /// Sets the free limit of the tablespace in the FSP header.
+    ///
+    /// The free limit is the page number limit up to which pages have been allocated.
+    ///
+    /// # Arguments
+    ///
+    /// * `limit` - The new free limit page number
+    ///
     pub fn fsp_set_fsp_free_limit(&mut self, limit: u32) {
         // Byte 50 to 53
         mach_write_to_4(
@@ -562,6 +659,64 @@ impl<'a> FspHeaderPage<'a> {
         );
     }
 
+    /// Gets the number of used pages in partially filled fragments.
+    ///
+    /// # Returns
+    ///
+    /// `u32` - The number of used pages in partially filled fragments
+    ///
+    pub fn fsp_get_fsp_frag_n_used(&self) -> u32 {
+        mach_read_from_4(
+            &self.buf[FSP_HEADER_OFFSET + FSP_FRAG_N_USED
+                ..FSP_HEADER_OFFSET + FSP_FRAG_N_USED + 4],
+        )
+    }
+
+    /// Sets the number of used pages in partially filled fragments.
+    ///
+    /// # Arguments
+    ///
+    /// * `frag_n_used` - The number of used pages in partially filled fragments
+    ///
+    pub fn set_fsp_frag_n_used(&mut self, frag_n_used: u32) {
+        mach_write_to_4(
+            &mut self.buf[FSP_HEADER_OFFSET + FSP_FRAG_N_USED
+                ..FSP_HEADER_OFFSET + FSP_FRAG_N_USED + 4],
+            frag_n_used,
+        );
+    }
+
+    /// Gets the space flags from the FSP header.
+    ///
+    /// Space flags define various properties of the tablespace.
+    ///
+    /// # Returns
+    ///
+    /// `u32` - The space flags
+    ///
+    pub fn fsp_get_fsp_space_flags(&self) -> u32 {
+        mach_read_from_4(
+            &self.buf[FSP_HEADER_OFFSET + FSP_SPACE_FLAGS
+                ..FSP_HEADER_OFFSET + FSP_SPACE_FLAGS + 4],
+        )
+    }
+
+    /// Sets the space flags in the FSP header.
+    ///
+    /// Space flags define various properties of the tablespace.
+    ///
+    /// # Arguments
+    ///
+    /// * `space_flags` - The space flags to set
+    ///
+    pub fn set_fsp_space_flags(&mut self, space_flags: u32) {
+        mach_write_to_4(
+            &mut self.buf[FSP_HEADER_OFFSET + FSP_SPACE_FLAGS
+                ..FSP_HEADER_OFFSET + FSP_SPACE_FLAGS + 4],
+            space_flags,
+        )
+    }
+
     /// Retrieves the free list base node for the FSP_FREE list.
     ///
     /// # Returns
@@ -569,18 +724,44 @@ impl<'a> FspHeaderPage<'a> {
     /// `FLstBaseNode` - The base node of the free list, which contains
     /// the first and last addresses of free extents.
     ///
-    pub fn fsp_get_seg_inodes_free_list_mut(&mut self) -> FLst<'_> {
-        let base_node = FLstBaseNode::new(
+    pub fn fsp_get_seg_inodes_free_list(&self) -> FLst {
+        let base_node = parse_flst_base_node(
             FilAddr { page_no: 0, byte_off: FSP_SEG_INODES_FREE as u16 },
-            Frame(
-                <&mut [u8; FLST_BASE_NODE_SIZE]>::try_from(
-                    &mut self.buf[(FSP_HEADER_OFFSET + FSP_SEG_INODES_FREE)
+            FLstBaseNodeFrame::new(ReadOnlyFrame(
+                <&[u8; FLST_BASE_NODE_SIZE]>::try_from(
+                    &self.buf[(FSP_HEADER_OFFSET + FSP_SEG_INODES_FREE)
                         ..(FSP_HEADER_OFFSET
                             + FSP_SEG_INODES_FREE
                             + FLST_BASE_NODE_SIZE)],
                 )
                 .unwrap(),
-            ),
+            )),
+        );
+
+        FLst::new(base_node)
+    }
+
+    pub fn fsp_get_flst(&self, flst_type: &FspHeaderLstType) -> FLst {
+        let offset = match flst_type {
+            FspHeaderLstType::Free => FSP_HEADER_OFFSET + FSP_FREE,
+            FspHeaderLstType::FreeFrag => FSP_HEADER_OFFSET + FSP_FREE_FRAG,
+            FspHeaderLstType::FullFrag => FSP_HEADER_OFFSET + FSP_FULL_FRAG,
+            FspHeaderLstType::SegInodesFull => {
+                FSP_HEADER_OFFSET + FSP_SEG_INODES_FULL
+            }
+            FspHeaderLstType::SegInodesFree => {
+                FSP_HEADER_OFFSET + FSP_SEG_INODES_FREE
+            }
+        };
+
+        let base_node = parse_flst_base_node(
+            FilAddr { page_no: 0, byte_off: offset as u16 },
+            FLstBaseNodeFrame::new(ReadOnlyFrame(
+                <&[u8; FLST_BASE_NODE_SIZE]>::try_from(
+                    &self.buf[offset..(offset + FLST_BASE_NODE_SIZE)],
+                )
+                .unwrap(),
+            )),
         );
 
         FLst::new(base_node)
@@ -618,18 +799,14 @@ impl<'a> FspHeaderPage<'a> {
         ];
         for &off in &heads {
             let abs = start + off;
-            let mut base_node = FLstBaseNode::new(
-                FilAddr { page_no: 0, byte_off: FSP_FREE as u16 },
-                Frame(
-                    <&mut [u8; FLST_BASE_NODE_SIZE]>::try_from(
-                        &mut self.buf[abs..abs + FLST_BASE_NODE_SIZE],
-                    )
-                    .unwrap(),
-                ),
+            let base_node = FLstBaseNode::new(
+                FilAddr { page_no: 0, byte_off: off as u16 },
+                0,
+                FilAddr::NULL,
+                FilAddr::NULL,
             );
 
-            base_node.set_last(FilAddr::NULL);
-            base_node.set_first(FilAddr::NULL);
+            write_flst_base_node(&base_node, &mut self.buf[abs..]);
         }
 
         mach_write_to_4(
@@ -1414,26 +1591,62 @@ pub struct FSegInodePage {
 }
 
 impl FSegInodePage {
+    /// Creates a new segment inode page from a Page.
+    ///
+    /// # Arguments
+    ///
+    /// * `page` - The page to wrap
+    ///
     pub fn new(page: Page) -> Self {
         Self { page }
     }
 
+    /// Gets the previous page number in the linked list of segment inode pages.
+    ///
+    /// # Returns
+    ///
+    /// `PageNo` - The previous page number
+    ///
     pub fn get_prev_page(&self) -> PageNo {
         self.page.get_prev_page()
     }
 
+    /// Sets the previous page number in the linked list of segment inode pages.
+    ///
+    /// # Arguments
+    ///
+    /// * `prev_page` - The previous page number to set
+    ///
     pub fn set_prev_page(&mut self, prev_page: PageNo) {
         self.page.set_prev_page(prev_page);
     }
 
+    /// Sets the next page number in the linked list of segment inode pages.
+    ///
+    /// # Arguments
+    ///
+    /// * `next_page` - The next page number to set
+    ///
     pub fn set_next_page(&mut self, next_page: PageNo) {
         self.page.set_next_page(next_page);
     }
 
+    /// Gets the next page number in the linked list of segment inode pages.
+    ///
+    /// # Returns
+    ///
+    /// `PageNo` - The next page number
+    ///
     pub fn get_next_page(&self) -> PageNo {
         self.page.get_next_page()
     }
 
+    /// Gets the page number of this segment inode page.
+    ///
+    /// # Returns
+    ///
+    /// `PageNo` - The page number
+    ///
     pub fn get_page_no(&self) -> PageNo {
         self.page.page_get_fil_offset()
     }
@@ -1452,7 +1665,7 @@ impl FSegInodePage {
     pub fn fsp_seg_inode_page_get_nth_inode(
         &self,
         n: usize,
-        mtr: &Mtr,
+        mtr: &mut Mtr,
     ) -> FSegInode<'_> {
         ut_ad!(n < FSP_SEG_INODES_PER_PAGE);
         ut_ad!(mtr.memo_contains(&MemoSlot::PageFix(
@@ -1535,5 +1748,137 @@ impl FSegInodePage {
             seg_ids.push(FSegId(inode.fseg_inode_get_fseg_id()));
         }
         seg_ids
+    }
+}
+
+pub type FLstBaseNodeFrame<'a> = ReadOnlyFrame<'a, FLST_BASE_NODE_SIZE>;
+
+impl<'a> FLstBaseNodeFrame<'a> {
+    pub fn new(frame: ReadOnlyFrame<'a, FLST_BASE_NODE_SIZE>) -> Self {
+        ReadOnlyFrame(frame.0)
+    }
+}
+
+/// Parses a file list base node from a buffer.
+///
+/// # Arguments
+///
+/// * `fil_addr` - The file address of the base node
+/// * `buf` - The buffer containing the base node data
+///
+/// # Returns
+///
+/// A `FLstBaseNode` representing the parsed base node
+///
+pub fn parse_flst_base_node(
+    fil_addr: FilAddr,
+    buf: FLstBaseNodeFrame,
+) -> FLstBaseNode {
+    let len = mach_read_from_4(buf.0);
+    let first = parse_fil_addr(&buf.0[FLST_FIRST..]);
+    let last = parse_fil_addr(&buf.0[FLST_LAST..]);
+
+    FLstBaseNode::new(fil_addr, len as usize, first, last)
+}
+
+/// Parses a file address from a buffer.
+///
+/// # Arguments
+///
+/// * `buf` - The buffer containing the file address data
+///
+/// # Returns
+///
+/// A `FilAddr` representing the parsed file address
+///
+pub fn parse_fil_addr(buf: &[u8]) -> FilAddr {
+    let page_no = mach_read_from_4(buf);
+    let page_no =
+        if page_no == FILL_NULL { FILL_NULL } else { page_no as PageNo };
+
+    FilAddr { page_no, byte_off: mach_read_from_2(&buf[FIL_ADDR_BYTE..]) }
+}
+
+pub fn write_flst_base_node(flst_base_node: &FLstBaseNode, buf: &mut [u8]) {
+    // 1. Write the length.
+    mach_write_to_4(buf, flst_base_node.len() as u32);
+
+    // 2. Write the first and last page/byte offsets.
+    write_fil_addr(flst_base_node.get_first(), &mut buf[FLST_FIRST..]);
+
+    // 3. Write the last page/byte offsets.
+    write_fil_addr(flst_base_node.get_last(), &mut buf[FLST_LAST..]);
+}
+
+pub fn write_flst_node(flst_node: &FLstNode, buf: &mut [u8]) {
+    // 1. Write prev
+    write_fil_addr(flst_node.get_prev(), &mut buf[FLST_PREV..]);
+
+    // 2. Write next
+    write_fil_addr(flst_node.get_next(), &mut buf[FLST_NEXT..]);
+}
+
+pub fn write_fil_addr(fil_addr: &FilAddr, buf: &mut [u8]) {
+    // 1. Write the page number.
+    mach_write_to_4(buf, fil_addr.page_no);
+
+    // 2. Write the byte offset.
+    mach_write_to_2(&mut buf[FIL_ADDR_BYTE..], fil_addr.byte_off);
+}
+
+impl PersistFLstOperation for FLstOperation {
+    fn persist(
+        &self,
+        space_id: SpaceId,
+        buf_pool: Arc<BufPool>,
+        mtr: &mut Mtr,
+    ) -> Result<(), String> {
+        // 1. First, update the fsp header with the new base node.
+        let base_fill_addr = self.flst_base_node.get_fil_addr();
+        {
+            let block = buf_pool.get(Request {
+                rw_latch: ReadWriteLatch::SLatch,
+                page_id: PageId { space_id, page_no: base_fill_addr.page_no },
+                mode: BUF_GET_ALWAYS,
+                mtr,
+            });
+
+            let block = some_or_panic!(block);
+            let buf_block = block.read().unwrap();
+            let page = buf_block.get_page();
+            let page_frame = page.to_page_frame();
+
+            let fsp_header = FspHeaderPage::new(page_frame.0);
+
+            write_flst_base_node(
+                &self.flst_base_node,
+                &mut page_frame.0
+                    [FSP_HEADER_OFFSET + base_fill_addr.byte_off as usize..],
+            );
+        }
+
+        // 2. Go through all the remaining nodes and update the corresponding page.
+        for node in &self.nodes {
+            let fil_addr = node.get_fil_addr();
+            {
+                let block = buf_pool.get(Request {
+                    rw_latch: ReadWriteLatch::NoLatch,
+                    page_id: PageId { space_id, page_no: fil_addr.page_no },
+                    mode: BUF_GET_ALWAYS,
+                    mtr,
+                });
+
+                let block = some_or_panic!(block);
+                let buf_block = block.read().unwrap();
+                let page = buf_block.get_page();
+                let page_frame = page.to_page_frame();
+
+                let node_buf = &mut page_frame.0[fil_addr.byte_off as usize..];
+
+                write_flst_node(node, node_buf);
+            }
+        }
+
+        Ok(())
     }
 }

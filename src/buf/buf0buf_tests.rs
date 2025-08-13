@@ -88,7 +88,7 @@ pub(super) mod tests {
 
     // TODO Implement this test. The current test is not valid anymore.
     fn test_free_list_returns_none(buf_pool_fixture: BufPoolFixture) {
-        let mut buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
+        let buf_pool = buf_pool_fixture.buf_pool.lock().unwrap();
 
         let r = buf_pool.get_free_block();
         assert!(r.is_none());
