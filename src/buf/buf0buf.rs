@@ -39,7 +39,7 @@ use crate::{
         ut0dbg::{ut_a, ut_ad},
         ut0ut::ut_time_ms,
     },
-    ut_2_power_up, ut_panic,
+    ut_panic,
 };
 
 /// Buffer Pool manages the caching of database pages in memory.
@@ -187,6 +187,20 @@ impl BufPoolInner {
     pub(crate) fn set_n_flush(&mut self, n_flush: [usize; BufFlush::N_TYPES]) {
         self.n_flush = n_flush;
     }
+
+    /// Calculates the size of the read-ahead area.
+    ///
+    /// This method determines the appropriate size for read-ahead operations
+    /// based on the current buffer pool size. It returns the minimum of either
+    /// the next power of 2 of (buffer pool size / 32) or 64.
+    ///
+    /// # Returns
+    /// * `u64` - The calculated read-ahead area size
+    #[inline]
+    pub fn get_read_ahead_area(&self) -> usize {
+        let buckets = (self.curr_size() / 32).max(1); // Atleast 1 bucket
+        buckets.next_power_of_two().min(64) // Cap at 64
+    }
 }
 
 impl BufPool {
@@ -267,9 +281,12 @@ impl BufPool {
             //    trigger a flush of dirty pages, wait, then loop:
             if !freed {
                 {
-                    let lru = self.buf_lru.lock().unwrap();
-                    let recommendation = lru.recommendation();
-                    self.flusher.lock().unwrap().free_margin(recommendation);
+                    let mut inner = self.inner.lock().unwrap();
+                    let mut lru = self.buf_lru.lock().unwrap();
+                    self.flusher
+                        .lock()
+                        .unwrap()
+                        .free_margin(&mut lru, &mut inner);
                 }
                 self.inner.lock().unwrap().lru_flush_ended += 1;
                 self.try_free_flushed_blocks();
@@ -473,23 +490,6 @@ impl BufPool {
         }
 
         buf_block
-    }
-
-    /// Calculates the size of the read-ahead area.
-    ///
-    /// This method determines the appropriate size for read-ahead operations
-    /// based on the current buffer pool size. It returns the minimum of either
-    /// the next power of 2 of (buffer pool size / 32) or 64.
-    ///
-    /// # Returns
-    /// * `u64` - The calculated read-ahead area size
-    pub fn get_read_ahead_area(&self) -> u64 {
-        // Lock the inner state to read curr_size
-        let inner = self.inner.lock().unwrap();
-        let sz = inner.curr_size;
-
-        // Use the same formula, converting to u64 as needed
-        std::cmp::min(ut_2_power_up!(sz / 32), 64)
     }
 
     /// Retrieves a buffer block by its space ID and page number.

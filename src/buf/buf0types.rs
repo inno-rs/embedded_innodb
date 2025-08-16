@@ -336,6 +336,10 @@ impl BufPage {
         self.old = old;
     }
 
+    pub fn is_old(&self) -> bool {
+        self.old
+    }
+
     /// Checks if the buffer page is mapped to a tablespace file.
     ///
     /// This method determines whether the buffer page represents a page in a tablespace file

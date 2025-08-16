@@ -217,6 +217,14 @@ impl FilNode {
         self.n_pending += 1;
     }
 
+    /// Decrement the count of pending I/O operations.
+    ///
+    /// This method increases the pending I/O counter by 1, indicating
+    /// that a new I/O operation has been started on this file.
+    pub fn n_pending_decr(&mut self) {
+        self.n_pending -= 1;
+    }
+
     /// Returns a reference to the chain link for linked list operations.
     ///
     /// # Returns
@@ -224,6 +232,11 @@ impl FilNode {
     /// A reference to the LinkedListLink used for chaining file nodes.
     pub fn chain(&self) -> &LinkedListLink {
         &self.chain
+    }
+
+    /// Set the modification counter for the node.
+    pub fn set_modification_counter(&mut self, counter: usize) {
+        self.modification_counter = counter
     }
 }
 

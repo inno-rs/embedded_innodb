@@ -502,13 +502,15 @@ impl BufLRU {
 
     /// Returns the number of blocks in the free list.
     ///
-    /// This method counts and returns the current number of buffer blocks
-    /// available in the free list.
-    ///
     /// # Returns
     /// * `usize` - The number of blocks in the free list
     pub fn get_free_list_size(&self) -> usize {
         self.free_list_size
+    }
+
+    /// This method returns the size of the lru list.
+    pub fn get_lru_size(&self) -> usize {
+        self.lru_size
     }
 
     /// Attempts to free a buffer block from the LRU list.
@@ -523,63 +525,104 @@ impl BufLRU {
     /// # Returns
     ///
     /// `true` if the block was successfully freed, `false` otherwise.
-    ///
     fn free_block(
         &mut self,
         pool_inner: &mut BufPoolInner,
-        stats: &Arc<BufPoolStats>,
-        block_guard: &mut RwLockWriteGuard<BufBlock>,
+        _stats: &Arc<BufPoolStats>,
+        block: &mut RwLockWriteGuard<BufBlock>,
     ) -> bool {
-        // ——— sanity checks on the page ———
+        // 0) Eligibility
         {
-            let buf_page = block_guard.buf_block_get_page_mut();
-            ut_a!(buf_page.in_file());
-            ut_a!(buf_page.is_in_lru_list());
+            let bp = block.buf_block_get_page_mut();
+            ut_a!(bp.in_file());
+            ut_a!(bp.is_in_lru_list());
             ut_ad!(
-                (buf_page.is_in_flush_list() && buf_page.buf_page_modified())
-                    || (!buf_page.is_in_flush_list()
-                        && !buf_page.buf_page_modified())
+                (bp.is_in_flush_list() && bp.buf_page_modified())
+                    || (!bp.is_in_flush_list() && !bp.buf_page_modified())
             );
-            if buf_page.buf_page_modified()
-                || !buf_page.buf_page_can_relocate()
-            {
+            if bp.buf_page_modified() || !bp.buf_page_can_relocate() {
                 return false;
             }
-            // now we drop `buf_page` at the end of this block
         }
 
-        // 1) unlink from LRU
-        let buf_page = block_guard.buf_block_get_page_mut();
-        self.remove_block(buf_page);
-        // 2) bump global freed‐page clock
+        // 1) Unlink from LRU (sets in_lru_list = false)
+        {
+            let buf_page = block.buf_block_get_page_mut();
+            self.remove_block(buf_page);
+        }
+
+        // 2) Bump global freed-page clock
         pool_inner.set_freed_page_clock(
             pool_inner.freed_page_clock().wrapping_add(1),
         );
 
-        // 3) bump block clock + mark REMOVE_HASH + zap header
-
+        // 3) Transient state: mark REMOVE_HASH and drop from hash using current pid
+        block.buf_block_incr_clock();
+        block.buf_block_set_state(BufPageState::BufBlockRemoveHash);
         {
-            block_guard.buf_block_incr_clock();
-            block_guard.buf_block_set_state(BufPageState::BufBlockRemoveHash);
-            let mut page_frame = block_guard.get_page();
-            page_frame.page_set_space_id(0xFF);
-            page_frame.page_set_fil_offset(0xFF);
-        }
-
-        {
-            // 4) remove from hash
-            let buf_page = block_guard.buf_block_get_page_mut();
-            let pid = buf_page.get_page_id();
+            let buf_page = block.buf_block_get_page_mut();
+            let pid = buf_page.get_page_id(); // capture before zapping
             pool_inner.page_hash_mut().remove(&pid);
             buf_page.set_is_in_hash_map(false);
-
-            // 5) clear other list flags
             buf_page.set_is_in_flush_list(false);
-
-            // 6) push to the free list
-            self.add_to_free_list_front(buf_page);
         }
+
+        // 4) Zap on-disk header and move to free list; final state = NOT_USED
+        {
+            let mut frame = block.get_page();
+            frame.page_set_space_id(0xFF);
+            frame.page_set_fil_offset(0xFF);
+
+            block.buf_block_set_state(BufPageState::BufBlockNotUsed);
+
+            let bp = block.buf_block_get_page_mut();
+            self.add_to_free_list_front(bp);
+        }
+
         true
+    }
+
+    /* 	Purpose: forcibly free a file-backed page when its tablespace has been truncated/dropped. No flushing.
+    •	Preconditions: page is in file; it may be on LRU, hash, and/or flush-list; it may even be dirty or pinned — we ignore that because the file is gone.
+    •	Actions:
+    1.	Unlink from LRU if present.
+    2.	Remove from the page hash.
+    3.	Clear in_flush_list (and have BufFlush remove it from its intrusive flush list).
+    4.	“Zap” header fields (space/page id) so it’s no longer “in file”.
+    5.	Push onto the free list (front).
+    6.	Transition the block’s state to BufBlockNotUsed.
+    7.	Bump pool freed_page_clock and the block’s modify clock.
+    •	Stats: unlike the non-file path, this should bump freed_page_clock (it’s an eviction).
+    */
+    pub(crate) fn free_block_truncated(
+        &mut self,
+        inner: &mut BufPoolInner,
+        guard: &mut RwLockWriteGuard<BufBlock>,
+    ) {
+        // 1) unlink from LRU if needed
+        if guard.buf_block_get_page().is_in_lru_list() {
+            self.remove_block(guard.buf_block_get_page_mut());
+        }
+        // 2) remove from hash
+        let pid = guard.buf_block_get_page().get_page_id();
+        inner.page_hash_mut().remove(&pid);
+        {
+            let p = guard.buf_block_get_page_mut();
+            p.set_is_in_hash_map(false);
+            p.set_is_in_flush_list(false); // BufFlush should also unlink from its list
+            // mark “not in file” by zapping header fields
+            let mut frame = guard.get_page();
+            frame.page_set_space_id(0xFF);
+            frame.page_set_fil_offset(0xFF);
+        }
+
+        // 3) accounting
+        inner.set_freed_page_clock(inner.freed_page_clock().wrapping_add(1));
+        guard.buf_block_incr_clock();
+
+        // 4) publish to free list + state
+        self.add_to_free_list_front(guard.buf_block_get_page_mut());
+        guard.buf_block_set_state(BufPageState::BufBlockNotUsed);
     }
 
     /// Frees a non-file-backed page and returns it to the buffer‐pool’s free list.
@@ -1009,8 +1052,7 @@ impl BufLRU {
     /// Mirrors: 5 + 2 * read_ahead_area.
     pub(crate) fn get_free_search_len(&self, curr_size: usize) -> usize {
         // same read_ahead you use for free_block_margin:
-        let read_ahead =
-            std::cmp::min((curr_size / 32).next_power_of_two(), 64);
+        let read_ahead = min((curr_size / 32).next_power_of_two(), 64);
         5 + 2 * (read_ahead as usize)
     }
 }
