@@ -19,7 +19,11 @@ use crate::{
     mach::mach0data::{mach_write_to_4, mach_write_to_8},
     os::os0file::IORequest,
     srv::srv0srv::Config,
-    ut::{ut0dbg::ut_ad, ut0math::ut_align_down, ut0rnd::ut_fold_string},
+    ut::{
+        ut0byte::{align_down, align_up},
+        ut0dbg::ut_ad,
+        ut0rnd::ut_fold_string,
+    },
 };
 
 pub const LOG_SPACE_FIRST_ID: usize = 0xFFFFFFF0;
@@ -677,74 +681,79 @@ impl Log {
     ///
     pub fn write_up_to(
         &mut self,
-        lsn: Lsn,
-        log_wait: LogWaitMode,
+        target_lsn: Lsn,
+        wait: LogWaitMode,
         flush_to_disk: bool,
     ) {
-        let do_wait = || match log_wait {
-            LogWaitMode::LogWait => {
-                return;
-            }
-            LogWaitMode::LogNoWait => {
-                return;
-            }
-        };
-
-        loop {
-            // We are already past the lsn being checked.
-            if flush_to_disk && self.flushed_to_disk_lsn >= lsn {
-                return;
-            }
-
-            if self.n_pending_writes > 0 {
-                // A write(+ possibly flush) is running.
-
-                if flush_to_disk && self.current_flush_lsn >= lsn {
-                    do_wait();
-                    return;
-                }
-
-                if !flush_to_disk && self.write_lsn >= lsn {
-                    // The current write operation is enough. Wait for it to finish.
-                    do_wait();
-                    return;
-                }
-            }
-
-            if !flush_to_disk && self.buf_free == self.buf_next_to_write {
-                // Nothing to write, and no flush to disk requested.
-                return;
-            }
-
-            self.n_pending_writes += 1;
-
-            let start_offset = self.buf_free;
-            let end_offset = self.buf_next_to_write;
-
-            let area_start =
-                (start_offset / IB_FILE_BLOCK_SIZE) * IB_FILE_BLOCK_SIZE;
-            let area_end =
-                (end_offset / IB_FILE_BLOCK_SIZE) * (IB_FILE_BLOCK_SIZE + 1);
-
-            ut_ad!(area_start % IB_FILE_BLOCK_SIZE == 0);
-            ut_ad!(area_end - area_start > 0);
-
-            self.write_lsn = self.lsn;
-
-            if flush_to_disk {
-                self.current_flush_lsn = self.lsn;
-            }
-
-            self.buf_free += IB_FILE_BLOCK_SIZE;
-
-            self.group_write_buf(
-                area_start,
-                area_end,
-                ut_align_down(self.write_lsn, IB_FILE_BLOCK_SIZE as Lsn),
-            );
-
-            self.n_pending_writes -= 1;
+        if flush_to_disk && self.flushed_to_disk_lsn >= target_lsn {
+            return;
         }
+        if !flush_to_disk && self.write_lsn >= target_lsn {
+            return;
+        }
+
+        if self.n_pending_writes > 0 {
+            if flush_to_disk && self.current_flush_lsn >= target_lsn {
+                return; // would be os_event wait in C++
+            }
+            if !flush_to_disk && self.write_lsn >= target_lsn {
+                return; // ditto
+            }
+            // fallthrough: start our own write below if there’s pending redo
+        }
+
+        if self.buf_free <= self.buf_next_to_write {
+            return;
+        }
+
+        self.n_pending_writes += 1;
+
+        let start_offset = self.buf_next_to_write;
+        let end_offset = self.buf_free;
+
+        let area_start = align_down(start_offset, IB_FILE_BLOCK_SIZE);
+        let area_end = align_up(end_offset, IB_FILE_BLOCK_SIZE);
+
+        if area_end <= area_start {
+            // Nothing to write; bail cleanly (prevents asserts on empty span)
+            self.n_pending_writes -= 1;
+            return;
+        }
+
+        self.write_lsn = self.lsn;
+        if flush_to_disk {
+            self.current_flush_lsn = self.lsn;
+        }
+
+        // InnoDB also sets flush bits + checkpoint no in the log blocks and
+        // copies the last partial block upward. Those are optional here.
+        // TODO: block_set_flush_bit(..); block_set_checkpoint_no(..);
+        // TODO: copy last incomplete log block up one block if you maintain a raw log buffer.
+
+        self.buf_free = self.buf_free.saturating_add(IB_FILE_BLOCK_SIZE);
+        self.write_end_offset = self.buf_free as Lsn;
+
+        let lsn_aligned_down: Lsn =
+            (align_down(self.write_lsn as usize, IB_FILE_BLOCK_SIZE)) as Lsn;
+
+        self.group_write_buf(area_start, area_end, lsn_aligned_down);
+
+        // Advance the “written” frontier to the end we just flushed.
+        self.buf_next_to_write = area_end;
+
+        // If fsync requested, mark durable up to write_lsn.
+        if flush_to_disk {
+            // (C++ would call srv_fil->flush(...) here; your FS layer may do that elsewhere.)
+            self.flushed_to_disk_lsn = self.write_lsn;
+        }
+
+        // Done
+        self.n_pending_writes -= 1;
+
+        // Note: C++ then enters a section that checks group flush completion,
+        // updates counters, and signals events. In this single-threaded port,
+        // there’s nothing more to do here.
+        let _ = wait; // avoid unused param warning for now
     }
 
     /// Checks if a flush operation is completed and performs the necessary cleanup.

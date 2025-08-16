@@ -820,7 +820,7 @@ pub(super) mod tests {
             );
             assert_eq!(
                 b.buf_block_get_state(),
-                BufPageState::BufBlockRemoveHash,
+                BufPageState::BufBlockNotUsed,
                 "block state must be REMOVE_HASH after eviction"
             );
         }

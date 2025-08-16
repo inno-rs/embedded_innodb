@@ -753,4 +753,107 @@ impl Fil {
         // This is typically used for single-table spaces.
         format!("{}{}.ibd", self.srv_config.data_home, file_name)
     }
+
+    /// Look up the space size in pages, lazily opening the single-table
+    /// file to populate `size_in_pages` if needed.
+    /// Look up the space size in pages, lazily opening the single-table
+    /// file to populate `size_in_pages` if needed
+    pub fn space_get_size(&mut self, space_id: SpaceId) -> usize {
+        // 1) find the space container
+        let Some(space_arc) = self.space_get_by_id(space_id) else {
+            return 0;
+        };
+
+        // Take a write guard because we may update size_in_pages.
+        let mut space_guard = space_arc.write().unwrap();
+        let space_container: &mut FilSpaceContainer = &mut *space_guard;
+
+        // Borrow the FilSpace payload
+        let mut space = space_container.fil_space.borrow_mut();
+
+        // 2) Lazy open for single-table tablespaces if size not known yet
+        if space.size_in_pages == 0
+            && matches!(space.fil_type, FilType::FilTablespace)
+        {
+            // Not SYS and exactly one file node
+            ut_ad!(space_id != SYS_TABLESPACE as u32);
+            ut_ad!(space.chain.iter().count() == 1);
+
+            // --- Get an Rc<RefCell<FilNode>> without keeping the cursor alive ---
+            let fil_node_rc = {
+                let cur = space.chain.front(); // Cursor<...>
+                let Some(node_container) = cur.get() else {
+                    return 0; // no node in chain (shouldn't happen for single-table)
+                };
+                node_container.fil_node.clone() // clone the Rc
+            }; // cursor dropped here → borrow on chain ends
+
+            // Prepare for I/O (opens if closed; bumps pending)
+            {
+                let mut node = fil_node_rc.borrow_mut();
+                self.node_prepare_for_io(&mut node, &mut space);
+            }
+
+            // Recompute total size from the chain
+            let total_pages: usize = space
+                .chain
+                .iter()
+                .map(|nc| nc.fil_node.borrow().get_size_in_pages())
+                .sum();
+            space.size_in_pages = total_pages;
+
+            // Complete the synthetic SyncRead I/O (just decrement pending)
+            {
+                let mut node = fil_node_rc.borrow_mut();
+                self.node_complete_io_read(&mut node);
+            }
+        }
+
+        space.size_in_pages
+    }
+    /// (We split this because `space_get_size()` uses a read path.)
+    fn node_complete_io_read(&mut self, node: &mut FilNode) {
+        node.n_pending_decr();
+    }
+
+    /// Complete one I/O on a node.
+    /// - Always decrements the node's pending IO.
+    /// - If it's a **sync write**, bump modification counters and
+    ///   add the owning space to `unflushed_space_list` (once).
+    pub fn node_complete_io(
+        &mut self,
+        node: &mut FilNode,
+        space_container: &Arc<RwLock<FilSpaceContainer>>,
+        io_request: IORequest,
+    ) {
+        // mirror C++: ut_a(node->m_n_pending > 0)
+        ut_ad!(node.n_pending() > 0);
+        node.n_pending_decr();
+
+        // Only SyncWrite triggers unflushed-space bookkeeping.
+        let is_sync_write = io_request.is_sync() && !io_request.is_read();
+        if is_sync_write {
+            // global + per-node modification counters
+            self.modification_counter =
+                self.modification_counter.wrapping_add(1);
+
+            node.set_modification_counter(self.modification_counter);
+
+            // add space to the unflushed list if not present
+            // (we must take a write lock to flip the flag and to get a stable &mut for UnsafeRef)
+            let mut guard = space_container.write().unwrap();
+            if !guard.is_in_unflushed_spaces {
+                guard.is_in_unflushed_spaces = true;
+
+                // SAFETY: FilSpaceContainer is owned by an Arc and lives long-term;
+                // intrusive list stores a raw pointer. Convert the &mut to UnsafeRef.
+                let ptr: *mut FilSpaceContainer = &mut *guard;
+                unsafe {
+                    self.unflushed_space_list
+                        .push_front(UnsafeRef::from_raw(ptr));
+                }
+            }
+            // `guard` drops here
+        }
+    }
 }
