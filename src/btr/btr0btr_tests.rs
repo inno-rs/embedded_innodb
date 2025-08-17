@@ -52,7 +52,7 @@ mod tests {
     struct BTreeFixture {
         btree: Arc<BTree>,
         index: Arc<Index>,
-        buf_pool: Arc<Mutex<BufPool>>,
+        buf_pool: Arc<BufPool>,
         lock_sys: Arc<Mutex<LockSys>>,
         page_count: usize,
         free_page_count: usize,
@@ -86,12 +86,12 @@ mod tests {
             fil.clone(),
             redo_log.clone(),
         )));
-        let buf_pool = Arc::new(Mutex::new(BufPool::new(
+        let buf_pool = Arc::new(BufPool::new(
             fil.clone(),
             buf_lru.clone(),
             buf_rea,
             flusher.clone(),
-        )));
+        ));
 
         let lock_sys = Arc::new(Mutex::new(LockSys::new()));
         let index = Arc::new(Index::new(PageId { space_id: 0, page_no: 0 }));
@@ -144,7 +144,7 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+        let buf_block = fixture.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::XLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -181,7 +181,7 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+        let buf_block = fixture.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -237,7 +237,7 @@ mod tests {
         let buf_pool = fixture.buf_pool.clone();
         let lock_sys = fixture.lock_sys.clone();
 
-        let buf_block = buf_pool.lock().unwrap().get(Request {
+        let buf_block = buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -280,7 +280,7 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.set_mtr_state(MtrActive);
 
-        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+        let buf_block = fixture.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::XLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -368,13 +368,12 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let buf_block =
-            fixture_with_data.0.buf_pool.lock().unwrap().get(Request {
-                rw_latch: ReadWriteLatch::XLatch,
-                page_id: PageId { space_id: 0, page_no: 0 },
-                mode: BUF_GET_ALWAYS,
-                mtr: &mut mtr,
-            });
+        let buf_block = fixture_with_data.0.buf_pool.get(Request {
+            rw_latch: ReadWriteLatch::XLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
 
         ut_ad!(buf_block.is_some());
 
@@ -455,7 +454,7 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.set_mtr_state(MtrActive);
 
-        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+        let buf_block = fixture.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -529,7 +528,7 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.set_mtr_state(MtrActive);
 
-        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+        let buf_block = fixture.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -596,7 +595,7 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+        let buf_block = fixture.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -677,16 +676,15 @@ mod tests {
         let mut curr_page_no = positioned_page.page_get_fil_offset();
 
         while curr_page_no as u32 != FILL_NULL {
-            let current_block =
-                fixture.buf_pool.lock().unwrap().get(Request {
-                    rw_latch: ReadWriteLatch::NoLatch,
-                    page_id: PageId {
-                        space_id: positioned_page.page_get_space_id(),
-                        page_no: curr_page_no as u32,
-                    },
-                    mode: BUF_GET_ALWAYS,
-                    mtr: &mut mtr,
-                });
+            let current_block = fixture.buf_pool.get(Request {
+                rw_latch: ReadWriteLatch::NoLatch,
+                page_id: PageId {
+                    space_id: positioned_page.page_get_space_id(),
+                    page_no: curr_page_no as u32,
+                },
+                mode: BUF_GET_ALWAYS,
+                mtr: &mut mtr,
+            });
 
             let page =
                 some_or_panic!(current_block).read().unwrap().get_page();
@@ -732,7 +730,7 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+        let buf_block = fixture.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -818,7 +816,7 @@ mod tests {
 
             let next_page_no = BTree::page_get_next(&page);
             if next_page_no as u32 != FILL_NULL {
-                let next_block = buf_pool.lock().unwrap().get(Request {
+                let next_block = buf_pool.get(Request {
                     rw_latch: ReadWriteLatch::NoLatch,
                     page_id: PageId {
                         space_id: page.page_get_space_id(),
@@ -869,7 +867,7 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+        let buf_block = fixture.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -951,7 +949,7 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.set_mtr_state(MtrActive);
 
-        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+        let buf_block = fixture.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -1029,13 +1027,12 @@ mod tests {
             FixMode::Exclusive,
         ));
 
-        let buf_block =
-            fixture_with_data.0.buf_pool.lock().unwrap().get(Request {
-                rw_latch: ReadWriteLatch::NoLatch,
-                page_id: PageId { space_id: 0, page_no: 0 },
-                mode: BUF_GET_ALWAYS,
-                mtr: &mut mtr,
-            });
+        let buf_block = fixture_with_data.0.buf_pool.get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 0, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
 
         assert!(buf_block.is_some());
 
@@ -1064,7 +1061,7 @@ mod tests {
         let buf_pool = &fixture.buf_pool;
         let lock_sys = &fixture.lock_sys;
 
-        let buf_block = buf_pool.lock().unwrap().get(Request {
+        let buf_block = buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -1117,7 +1114,7 @@ mod tests {
         let buf_pool = &fixture.buf_pool;
         let lock_sys = &fixture.lock_sys;
 
-        /*  let buf_block = buf_pool.lock().unwrap().get(Request {
+        /*  let buf_block = buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -1125,7 +1122,7 @@ mod tests {
         });*/
 
         let buf_block = {
-            let pool = buf_pool.lock().unwrap();
+            let pool = buf_pool;
             pool.get(Request {
                 rw_latch: ReadWriteLatch::NoLatch,
                 page_id: PageId { space_id: 0, page_no: 0 },
@@ -1186,7 +1183,7 @@ mod tests {
         let buf_pool = &fixture.buf_pool;
         let lock_sys = &fixture.lock_sys;
 
-        let buf_block = buf_pool.lock().unwrap().get(Request {
+        let buf_block = buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -1236,7 +1233,7 @@ mod tests {
         mtr.start();
 
         for i in 0..19 {
-            let buf_block = buf_pool.lock().unwrap().get(Request {
+            let buf_block = buf_pool.get(Request {
                 rw_latch: ReadWriteLatch::NoLatch,
                 page_id: PageId { space_id: 0, page_no: i },
                 mode: BUF_GET_ALWAYS,
@@ -1268,7 +1265,7 @@ mod tests {
         mtr.start();
 
         for i in 0..20 {
-            let buf_block = buf_pool.lock().unwrap().get(Request {
+            let buf_block = buf_pool.get(Request {
                 rw_latch: ReadWriteLatch::NoLatch,
                 page_id: PageId { space_id: 0, page_no: i },
                 mode: BUF_GET_ALWAYS,
@@ -1303,7 +1300,7 @@ mod tests {
         let buf_pool = fixture_with_page.0.buf_pool;
         let lock_sys = fixture_with_page.0.lock_sys;
 
-        let buf_block = buf_pool.lock().unwrap().get(Request {
+        let buf_block = buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -1353,7 +1350,7 @@ mod tests {
         let buf_pool = &fixture.buf_pool;
         let lock_sys = &fixture.lock_sys;
 
-        let buf_block = buf_pool.lock().unwrap().get(Request {
+        let buf_block = buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -1412,7 +1409,7 @@ mod tests {
         );
         assert_eq!(child_page, 1);
 
-        let left_block = buf_pool.lock().unwrap().get(Request {
+        let left_block = buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 1 },
             mode: BUF_GET_ALWAYS,
@@ -1430,7 +1427,7 @@ mod tests {
         assert_eq!(left_page.page_get_n_recs(), 349);
         assert!(left_page_recs.is_sorted());
 
-        let right_block = buf_pool.lock().unwrap().get(Request {
+        let right_block = buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 2 },
             mode: BUF_GET_ALWAYS,
@@ -1472,7 +1469,7 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let buf_block = fixture.buf_pool.lock().unwrap().get(Request {
+        let buf_block = fixture.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -1521,7 +1518,7 @@ mod tests {
         let btree = &fixture.btree;
         let buf_pool = &fixture.buf_pool;
 
-        let buf_block = buf_pool.lock().unwrap().get(Request {
+        let buf_block = buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id: 0, page_no: 0 },
             mode: BUF_GET_ALWAYS,

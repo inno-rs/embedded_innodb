@@ -178,7 +178,7 @@ const FSP_SPACE_FLAGS_RANGE: Range<usize> = FSP_HEADER_OFFSET + FSP_SPACE_FLAGS
 /// including operations for allocating and deallocating pages and extents.
 pub struct Fsp {
     /// The buffer pool used for managing page buffers.
-    buf_pool: Arc<Mutex<BufPool>>,
+    buf_pool: Arc<BufPool>,
     /// Reference to fil.
     fil: Arc<Mutex<Fil>>,
     /// The page number of the next page to allocate.
@@ -189,7 +189,7 @@ impl Fsp {
     /// Creates a new file space manager instance.
     ///
     /// Returns an empty `Fsp` struct that can be used to manage tablespace operations.
-    pub fn new(buf_pool: Arc<Mutex<BufPool>>, fil: Arc<Mutex<Fil>>) -> Fsp {
+    pub fn new(buf_pool: Arc<BufPool>, fil: Arc<Mutex<Fil>>) -> Fsp {
         Fsp { buf_pool, fil, page_no: AtomicU32::new(1) }
     }
 
@@ -227,7 +227,7 @@ impl Fsp {
         space_id: SpaceId,
         mtr: &mut Mtr,
     ) -> Option<Arc<RwLock<BufBlock>>> {
-        let buf_block = self.buf_pool.lock().unwrap().get(Request {
+        let buf_block = self.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::XLatch,
             page_id: PageId { space_id, page_no: 0 },
             mode: BUF_GET_ALWAYS,
@@ -346,7 +346,7 @@ impl Fsp {
         let page_no =
             self.page_no.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-        if let Some(buf_block) = self.buf_pool.lock().unwrap().get(Request {
+        if let Some(buf_block) = self.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId { space_id, page_no },
             mode: BUF_GET_ALWAYS,
@@ -389,7 +389,7 @@ impl Fsp {
 
         let page_no = some_or_panic!(page_no);
 
-        let block = self.buf_pool.lock().unwrap().get(Request {
+        let block = self.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::XLatch,
             page_id: PageId { space_id, page_no },
             mode: BUF_GET_ALWAYS,
@@ -477,7 +477,7 @@ impl Fsp {
         } else {
             let last_page_no = last.page_no;
             let last_byte_off = last.byte_off;
-            let last_block = self.buf_pool.lock().unwrap().get(Request {
+            let last_block = self.buf_pool.get(Request {
                 rw_latch: ReadWriteLatch::NoLatch,
                 page_id: PageId { space_id, page_no: last_page_no },
                 mode: BUF_GET_ALWAYS,

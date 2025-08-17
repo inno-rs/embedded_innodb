@@ -2563,10 +2563,9 @@ mod tests {
         mtr.start();
         let mut lock_sys = LockSys::new();
         let buf_pool = &common_fixture.buf_pool;
-        let mut buf_pool_ref = buf_pool.lock().unwrap();
-        buf_pool_ref.open(10 * UNIV_PAGE_SIZE);
+        buf_pool.open(10 * UNIV_PAGE_SIZE);
 
-        let buf_block = some_or_panic!(buf_pool_ref.block_alloc());
+        let buf_block = some_or_panic!(buf_pool.block_alloc());
 
         let page = buf_block.read().unwrap().get_page();
         Page::page_create(
@@ -2623,10 +2622,9 @@ mod tests {
         mtr.start();
         let mut lock_sys = LockSys::new();
         let buf_pool = &common_fixture.buf_pool;
-        let mut buf_pool_ref = buf_pool.lock().unwrap();
-        buf_pool_ref.open(10 * UNIV_PAGE_SIZE);
+        buf_pool.open(10 * UNIV_PAGE_SIZE);
 
-        let buf_block = some_or_panic!(buf_pool_ref.block_alloc());
+        let buf_block = some_or_panic!(buf_pool.block_alloc());
 
         let page = buf_block.read().unwrap().get_page();
         Page::page_create(

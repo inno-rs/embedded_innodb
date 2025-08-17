@@ -783,7 +783,7 @@ impl BufPool {
     ///
     /// # Arguments
     /// * `buf_block` - The buffer block to free
-    pub fn block_free(&mut self, buf_block: Arc<RwLock<BufBlock>>) {
+    pub fn block_free(&self, buf_block: Arc<RwLock<BufBlock>>) {
         let mut inner = self.inner.lock().unwrap();
         let mut guard = buf_block.write().unwrap();
         let mut lru = self.buf_lru.lock().unwrap();
@@ -816,7 +816,7 @@ impl BufPool {
     /// * `None` - If no free block could be allocated from the buffer pool
     ///
     pub fn create(
-        &mut self,
+        &self,
         space_id: SpaceId,
         page_no: PageNo,
         mtr: &mut Mtr,
@@ -1020,7 +1020,7 @@ impl BufPool {
     ///
     /// # Panic
     /// Panics in debug mode if the memory size is not a multiple of the page size
-    fn chunk_init(&mut self, mem_size: usize) -> Arc<RwLock<BufChunk>> {
+    fn chunk_init(&self, mem_size: usize) -> Arc<RwLock<BufChunk>> {
         ut_ad!(mem_size % UNIV_PAGE_SIZE == 0);
 
         let layout =
@@ -1079,7 +1079,7 @@ impl BufPool {
     /// * `pool_size` - The size of the buffer pool to initialize (in bytes)
     ///   Allocate the initial chunk(s) and set the pool size.
     ///   After this call returns, `current_size()` will return `pool_size`.
-    pub fn open(&mut self, pool_size: usize) {
+    pub fn open(&self, pool_size: usize) {
         // 1) Create the chunk (this can still use &self to access `fil`, etc.)
         let chunk = self.chunk_init(pool_size);
 
