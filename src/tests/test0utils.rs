@@ -534,12 +534,10 @@ pub fn create_new_fields(n: usize) -> Vec<Field> {
 /// * `count` - The number of blocks to add to the buffer pool
 ///
 pub fn create_blocks_in_buf_pool(
-    buf_pool: Arc<Mutex<BufPool>>,
+    buf_pool: Arc<BufPool>,
     count: usize,
     free_page_count: usize,
 ) {
-    let mut buf_pool = buf_pool.lock().unwrap();
-
     let mut mtr = Mtr::new();
     mtr.start();
 
@@ -602,7 +600,7 @@ pub fn create_blocks_in_buf_pool(
 pub fn fill_block_with_uniform_data(
     btree: Arc<BTree>,
     buf_block: Arc<RwLock<BufBlock>>,
-    buf_pool: Arc<Mutex<BufPool>>,
+    buf_pool: Arc<BufPool>,
     lock_sys: Arc<Mutex<LockSys>>,
     seed: u64,
 ) {
@@ -668,7 +666,7 @@ pub fn fill_block_with_uniform_data(
 pub fn make_block_fragmented(
     btree: Arc<BTree>,
     buf_block: Arc<RwLock<BufBlock>>,
-    buf_pool: Arc<Mutex<BufPool>>,
+    buf_pool: Arc<BufPool>,
     lock_sys: Arc<Mutex<LockSys>>,
     seed: u64,
 ) {

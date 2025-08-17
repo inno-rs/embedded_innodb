@@ -46,7 +46,7 @@ use crate::{
 /// searches, sequential access, insertions, and deletions in logarithmic time.
 pub struct BTree {
     /// BufferPool manager for handling page caching and I/O operations.
-    buf_pool: Arc<Mutex<BufPool>>,
+    buf_pool: Arc<BufPool>,
     /// File segment manager for handling file space allocation.
     fsp: Arc<Mutex<Fsp>>,
     /// Lock Management system.
@@ -67,7 +67,7 @@ impl BTree {
     /// # Returns
     /// A new BTree instance initialized with the provided buffer pool and file space manager
     pub fn new(
-        buf_pool: Arc<Mutex<BufPool>>,
+        buf_pool: Arc<BufPool>,
         fsp: Arc<Mutex<Fsp>>,
         lock_sys: Arc<Mutex<LockSys>>,
         index: Arc<Index>,
@@ -128,8 +128,7 @@ impl BTree {
         let mut mtr = mtr.unwrap();
         if prev_page_no != FILL_NULL {
             // Fetch the page from buffer_pool
-            let pool = self.buf_pool.lock().unwrap();
-            let buf_block = pool.get(Request {
+            let buf_block = self.buf_pool.get(Request {
                 rw_latch: ReadWriteLatch::SLatch,
                 page_id: PageId {
                     space_id: page.page_get_space_id(),
@@ -205,8 +204,7 @@ impl BTree {
         let mut mtr = mtr.unwrap();
         if next_page_no != FILL_NULL {
             // Fetch the page from buffer_pool
-            let pool = self.buf_pool.lock().unwrap();
-            let buf_block = pool.get(Request {
+            let buf_block = self.buf_pool.get(Request {
                 rw_latch: ReadWriteLatch::SLatch,
                 page_id: PageId {
                     space_id: page.page_get_space_id(),
@@ -373,7 +371,7 @@ impl BTree {
             new_page_no
         );
 
-        let buf_block = self.buf_pool.lock().unwrap().get(Request {
+        let buf_block = self.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: PageId {
                 space_id: root_page.page_get_space_id(),
@@ -543,8 +541,7 @@ impl BTree {
     /// A reference-counted, thread-safe buffer block containing the root page
     pub fn root_get(&self, mtr: &mut Mtr) -> Arc<RwLock<BufBlock>> {
         let root_page_id = self.index.get_page_id();
-        let buf_pool = self.buf_pool.lock().unwrap();
-        let block = buf_pool.get(Request {
+        let block = self.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch, /*todo: use x latch*/
             page_id: root_page_id,
             mode: BUF_GET_ALWAYS,
@@ -631,7 +628,7 @@ impl BTree {
         let mtr_log_mode = mtr.set_log_mode(MtrLogMode::MtrLogNone);
 
         // 2. Get a temp block from buf_pool.
-        let temp_block = self.buf_pool.lock().unwrap().block_alloc();
+        let temp_block = self.buf_pool.block_alloc();
         let temp_buf_block = some_or_panic!(temp_block);
 
         // 3. Copy the contents of the old page to the new page.
@@ -673,7 +670,7 @@ impl BTree {
         }
 
         // Free the block.
-        self.buf_pool.lock().unwrap().block_free(temp_buf_block);
+        self.buf_pool.block_free(temp_buf_block);
 
         // Restore logging mode
         let old_log_mode = mtr.set_log_mode(mtr_log_mode);
@@ -745,8 +742,7 @@ impl BTree {
             let child_page_no =
                 self.inner_node_get_child_page_no(&current_rec);
 
-            let buf_pool = self.buf_pool.lock().unwrap();
-            let buf_block = buf_pool.get(Request {
+            let buf_block = self.buf_pool.get(Request {
                 rw_latch: ReadWriteLatch::NoLatch,
                 page_id: PageId {
                     space_id: root_page.page_get_space_id(),
@@ -903,8 +899,7 @@ impl BTree {
 
         while pages.is_empty() == false {
             let page_no = pages.pop_front().unwrap();
-            let buf_pool = self.buf_pool.lock().unwrap();
-            let buf_block = buf_pool.get(Request {
+            let buf_block = self.buf_pool.get(Request {
                 rw_latch: ReadWriteLatch::NoLatch,
                 page_id: PageId { space_id, page_no },
                 mode: BUF_GET_ALWAYS,

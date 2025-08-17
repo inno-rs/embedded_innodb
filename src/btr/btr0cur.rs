@@ -82,7 +82,7 @@ pub struct BTreeCursor<'a> {
     /// Reference to the index,
     index: Arc<Index>,
     /// Reference to the buffer pool.
-    buf_pool: Arc<Mutex<BufPool>>,
+    buf_pool: Arc<BufPool>,
     /// Reference to LockSys.
     lock_sys: Arc<Mutex<LockSys>>,
     /// Path vector to remember the path to the current page from root.
@@ -102,7 +102,7 @@ impl<'a> BTreeCursor<'a> {
     pub fn new(
         btree: &'a BTree,
         index: Arc<Index>,
-        buf_pool: Arc<Mutex<BufPool>>,
+        buf_pool: Arc<BufPool>,
         lock_sys: Arc<Mutex<LockSys>>,
     ) -> Self {
         BTreeCursor {
@@ -432,7 +432,7 @@ impl<'a> BTreeCursor<'a> {
         let mut found = false;
         while found == false {
             // Get the buffer block for the current page
-            let block = self.buf_pool.lock().unwrap().get(Request {
+            let block = self.buf_pool.get(Request {
                 rw_latch: ReadWriteLatch::NoLatch,
                 page_id: PageId { space_id, page_no },
                 mode: BUF_GET_ALWAYS,
@@ -850,16 +850,15 @@ impl<'a> BTreeCursor<'a> {
                 BTree::page_set_prev(&mut upper_page, lower_page_no, mtr);
 
                 if next_page_no != FILL_NULL {
-                    let next_block =
-                        self.buf_pool.lock().unwrap().get(Request {
-                            rw_latch: ReadWriteLatch::NoLatch,
-                            page_id: PageId {
-                                space_id: lower_page_id.space_id,
-                                page_no: next_page_no,
-                            },
-                            mode: BUF_GET_ALWAYS,
-                            mtr,
-                        });
+                    let next_block = self.buf_pool.get(Request {
+                        rw_latch: ReadWriteLatch::NoLatch,
+                        page_id: PageId {
+                            space_id: lower_page_id.space_id,
+                            page_no: next_page_no,
+                        },
+                        mode: BUF_GET_ALWAYS,
+                        mtr,
+                    });
                     if let Some(next_block) = next_block {
                         let mut next_page =
                             next_block.read().unwrap().get_page();
@@ -878,7 +877,7 @@ impl<'a> BTreeCursor<'a> {
     }
 
     fn position_on_root(&mut self, mtr: &mut Mtr) {
-        let root_block = self.buf_pool.lock().unwrap().get(Request {
+        let root_block = self.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
             page_id: self.index.get_page_id(),
             mode: BUF_GET_ALWAYS,
