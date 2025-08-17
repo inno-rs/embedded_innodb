@@ -1,76 +1,67 @@
 #![allow(dead_code)]
 
-use crate::ut::ut0dbg::ut_ad;
+use crate::ut::{ut0dbg::ut_ad, ut0math::UInt};
 
-/// Align `n` down to the nearest multiple of `align` (power-of-two).
+/// Returns the value of the _n-th bit_ (0-based) in the given integer `a`.
+///
+/// # Type Parameters
+/// - `T`: An unsigned integer type implementing the `UInt` trait.
+///
+/// # Arguments
+/// - `a`: The integer from which to extract the bit.
+/// - `n`: The 0-based bit index to read.
+///
+/// # Returns
+/// - `true` if the `n`-th bit is `1`, `false` if it is `0`.
+///
+/// # Panics
+/// This function panics in debug mode if `n >= T::BITS` via `ut_ad!`.
+///
+/// # Examples
+/// ```
+/// use innodb::ut::ut0byte::bit_get_nth;
+/// let x = 0b0000_1000u8;
+/// assert!(bit_get_nth(x, 3));
+/// assert!(!bit_get_nth(x, 2));
+/// ```
 #[inline]
-pub fn align_down(n: usize, align: usize) -> usize {
-    ut_ad!(align.is_power_of_two() && align > 0);
-    n & !(align - 1)
+pub fn bit_get_nth<T: UInt>(a: T, n: T) -> bool {
+    ut_ad!(n < T::from(T::BITS as u8));
+
+    ((a >> n) & T::from(1)) != T::from(0)
 }
 
-/// Align `n` up to the nearest multiple of `align` (power-of-two).
+/// Sets or clears the _n-th bit_ (0-based) of the given integer `a` depending on `val`,
+/// and returns the updated value.
+///
+/// # Type Parameters
+/// - `T`: An unsigned integer type implementing the `UInt` trait.
+///
+/// # Arguments
+/// - `a`: The input value to modify.
+/// - `n`: The 0-based bit index to modify.
+/// - `val`: If `true`, the bit is set to `1`. If `false`, it is cleared to `0`.
+///
+/// # Returns
+/// A new value with the `n`-th bit updated according to `val`.
+///
+/// # Panics
+/// This function panics in debug mode if `n >= T::BITS` via `ut_ad!`.
+///
+/// # Examples
+/// ```
+/// use innodb::ut::ut0byte::bit_set_nth;
+/// let x = 0b0000_0000u8;
+/// let x = bit_set_nth(x, 2, true);
+/// assert_eq!(x, 0b0000_0100u8);
+///
+/// let x = bit_set_nth(x, 2, false);
+/// assert_eq!(x, 0b0000_0000u8);
+/// ```
 #[inline]
-pub fn align_up(n: usize, align: usize) -> usize {
-    ut_ad!(align.is_power_of_two() && align > 0);
-    let mask = align - 1;
-    // Equivalent to (n + mask) & !mask; using branch avoids overflow concerns.
-    if (n & mask) == 0 { n } else { (n & !mask).saturating_add(align) }
-}
+pub fn bit_set_nth<T: UInt>(a: T, n: T, val: bool) -> T {
+    ut_ad!(n < T::from(T::BITS as u8));
 
-/// Align `n` (u64) down to the nearest multiple of `align` (power-of-two).
-#[inline]
-pub fn align_down_u64(n: u64, align: usize) -> u64 {
-    let a = align as u64;
-    ut_ad!(a.is_power_of_two() && a > 0);
-    n & !(a - 1)
-}
-
-/// Align `n` (u64) up to the nearest multiple of `align` (power-of-two).
-#[inline]
-pub fn align_up_u64(n: u64, align: usize) -> u64 {
-    let a = align as u64;
-    ut_ad!(a.is_power_of_two() && a > 0);
-    let mask = a - 1;
-    // InnoDB uses (n + mask) & ~mask; we can avoid overflow with saturating_add.
-    n.saturating_add(mask) & !mask
-}
-
-/// Return `ptr` rounded up to `align` (power-of-two).
-#[inline]
-pub fn align_ptr(ptr: *const u8, align: usize) -> *mut u8 {
-    ut_ad!(align.is_power_of_two() && align > 0);
-    let addr = ptr as usize;
-    let aligned = align_up(addr, align);
-    aligned as *mut u8
-}
-
-/// Return `ptr` rounded down to `align` (power-of-two).
-#[inline]
-pub fn align_ptr_down(ptr: *const u8, align: usize) -> *mut u8 {
-    ut_ad!(align.is_power_of_two() && align > 0);
-    let addr = ptr as usize;
-    let aligned = align_down(addr, align);
-    aligned as *mut u8
-}
-
-/// Offset of `ptr` from the previous `align` boundary (i.e., ptr % align).
-#[inline]
-pub fn align_offset(ptr: *const u8, align: usize) -> usize {
-    ut_ad!(align.is_power_of_two() && align > 0);
-    (ptr as usize) & (align - 1)
-}
-
-/// Get the n-th bit of `a` (0-based).
-#[inline]
-pub fn bit_get_nth(a: usize, n: usize) -> bool {
-    ut_ad!(n < usize::BITS as usize);
-    ((a >> n) & 1) != 0
-}
-
-/// Set/clear the n-th bit of `a` (0-based), returning the new value.
-#[inline]
-pub fn bit_set_nth(a: usize, n: usize, val: bool) -> usize {
-    ut_ad!(n < usize::BITS as usize);
-    if val { a | (1usize << n) } else { a & !(1usize << n) }
+    let mask = T::from(1) << n;
+    if val { a | mask } else { a & !mask }
 }

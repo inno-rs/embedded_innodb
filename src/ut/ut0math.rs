@@ -1,3 +1,8 @@
+use std::{
+    fmt::Debug,
+    ops::{BitOr, Shl, Shr},
+};
+
 use crate::ut::ut0dbg::ut_ad;
 
 /// Rounds up a number to the next power of 2.
@@ -64,24 +69,37 @@ macro_rules! ut_2_power_up {
 /// ```
 pub trait UInt:
     Copy
+    + Debug
     + PartialEq
     + PartialOrd
     + From<u8>
     + std::ops::BitAnd<Output = Self>
     + std::ops::Sub<Output = Self>
+    + std::ops::Add<Output = Self>
     + std::ops::Not<Output = Self>
+    + Shr<Self, Output = Self>
+    + Shl<Self, Output = Self>
+    + BitOr<Output = Self>
 {
+    const BITS: u32;
 }
 
-impl<T> UInt for T where
+impl<T> UInt for T
+where
     T: Copy
+        + Debug
         + PartialEq
         + PartialOrd
         + From<u8>
         + std::ops::BitAnd<Output = T>
         + std::ops::Sub<Output = T>
+        + std::ops::Add<Output = Self>
         + std::ops::Not<Output = T>
+        + Shr<Self, Output = Self>
+        + Shl<Self, Output = Self>
+        + BitOr<Output = Self>,
 {
+    const BITS: u32 = size_of::<T>() as u32 * 8;
 }
 
 /// Checks if the provided number is a power of 2.
@@ -154,4 +172,46 @@ pub fn ut_align_down<T: UInt>(n: T, align_no: T) -> T {
     ut_ad!(ut_is_2pow(align_no));
 
     n & !(align_no - T::from(1))
+}
+
+/// Aligns a number up to the nearest multiple of the given alignment.
+///
+/// This function rounds up a number to the nearest multiple of the alignment value.
+/// The alignment value must be a power of 2.
+/// The function works by masking out the
+/// lower bits of the number that represent the offset from the alignment boundary.
+///
+/// # Examples
+///
+/// ```
+/// use innodb::ut::ut0math::ut_align_up;
+///
+/// // Align to 512 (IB_FILE_BLOCK_SIZE)
+/// assert_eq!(ut_align_up(10, 512), 512);
+/// assert_eq!(ut_align_up(512, 512), 512);
+/// assert_eq!(ut_align_up(513, 512), 1024);
+/// assert_eq!(ut_align_up(1000, 512), 1024);
+/// assert_eq!(ut_align_up(1024, 512), 1024);
+/// assert_eq!(ut_align_up(1025, 512), 1536);
+///
+/// // Align to powers of 2
+/// assert_eq!(ut_align_up(15, 8), 16);
+/// assert_eq!(ut_align_up(16, 8), 16);
+/// assert_eq!(ut_align_up(17, 8), 24);
+/// ```
+///
+/// # Parameters
+/// * `n` - The number to align down
+/// * `align_no` - The alignment value (must be a power of 2)
+///
+/// # Returns
+/// * The largest multiple of `align_no` that is less than or equal to `n`
+///
+/// # Panics
+/// * In debug mode, panics if `align_no` is 0 or not a power of 2
+pub fn ut_align_up<T: UInt>(n: T, align_no: T) -> T {
+    ut_ad!(align_no > T::from(0));
+    ut_ad!(ut_is_2pow(align_no));
+
+    ut_align_down(n + align_no - T::from(1), align_no)
 }

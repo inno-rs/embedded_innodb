@@ -19,11 +19,7 @@ use crate::{
     mach::mach0data::{mach_write_to_4, mach_write_to_8},
     os::os0file::IORequest,
     srv::srv0srv::Config,
-    ut::{
-        ut0byte::{align_down, align_up},
-        ut0dbg::ut_ad,
-        ut0rnd::ut_fold_string,
-    },
+    ut::{ut0dbg::ut_ad, ut0math::ut_align_down, ut0rnd::ut_fold_string},
 };
 
 pub const LOG_SPACE_FIRST_ID: usize = 0xFFFFFFF0;
@@ -177,7 +173,7 @@ impl Log {
     pub fn group_calc_lsn_offset(&self) -> u64 {
         let gr_lsn = self.group.lsn;
         let gr_lsn_offset_size = self.group_calc_size_offset(gr_lsn);
-        let group_size = self.group_get_capacity() as u64;
+        let group_size = self.group_get_capacity();
 
         let difference = if self.lsn > gr_lsn {
             self.lsn - gr_lsn
@@ -711,8 +707,8 @@ impl Log {
         let start_offset = self.buf_next_to_write;
         let end_offset = self.buf_free;
 
-        let area_start = align_down(start_offset, IB_FILE_BLOCK_SIZE);
-        let area_end = align_up(end_offset, IB_FILE_BLOCK_SIZE);
+        let area_start = ut_align_down(start_offset, IB_FILE_BLOCK_SIZE);
+        let area_end = ut_align_down(end_offset, IB_FILE_BLOCK_SIZE);
 
         if area_end <= area_start {
             // Nothing to write; bail cleanly (prevents asserts on empty span)
@@ -734,7 +730,7 @@ impl Log {
         self.write_end_offset = self.buf_free as Lsn;
 
         let lsn_aligned_down: Lsn =
-            (align_down(self.write_lsn as usize, IB_FILE_BLOCK_SIZE)) as Lsn;
+            ut_align_down(self.write_lsn, IB_FILE_BLOCK_SIZE as Lsn);
 
         self.group_write_buf(area_start, area_end, lsn_aligned_down);
 

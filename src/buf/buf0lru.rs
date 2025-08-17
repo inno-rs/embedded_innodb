@@ -17,7 +17,7 @@ use crate::{
     },
     innodb::innodb0types::PageId,
     ut::ut0dbg::{ut_a, ut_ad},
-    ut_panic,
+    ut_2_power_up, ut_panic,
 };
 
 /// The denominator of lru_old_ratio.
@@ -73,7 +73,6 @@ pub struct BufLRU {
     lru_old_len: usize,
     /// List of free buffer blocks available for allocation
     free_list: LinkedList<FreeListAdapter>,
-
     /// Tracking the size of the free list
     free_list_size: usize,
     /// Tracking the lru size
@@ -1001,7 +1000,7 @@ impl BufLRU {
     ///
     pub(crate) fn recommendation(&self) -> usize {
         // 1) compute the two margins
-        let read_ahead = min((self.lru_size / 32).next_power_of_two(), 64);
+        let read_ahead = min(ut_2_power_up!(self.lru_size / 32), 64);
 
         let free_block_margin = 5 + read_ahead as usize;
         let extra_margin = free_block_margin / 4 + 100;
@@ -1052,7 +1051,7 @@ impl BufLRU {
     /// Mirrors: 5 + 2 * read_ahead_area.
     pub(crate) fn get_free_search_len(&self, curr_size: usize) -> usize {
         // same read_ahead you use for free_block_margin:
-        let read_ahead = min((curr_size / 32).next_power_of_two(), 64);
+        let read_ahead = min(ut_2_power_up!((curr_size / 32)), 64);
         5 + 2 * (read_ahead as usize)
     }
 }

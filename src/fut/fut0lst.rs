@@ -24,19 +24,13 @@ Append a new element to the tail of any list (flst_add_last),
 Remove an existing element from anywhere in the list (flst_remove),
 
 Traverse forward or backward through the chain.
-
-
-
 */
-use std::ops::Range;
+
+use std::{ops::Range, sync::Arc};
 
 use crate::{
-    innodb::innodb0types::Frame,
-    mach::mach0data::{
-        mach_read_from_2, mach_read_from_4, mach_write_to_2, mach_write_to_4,
-    },
-    some_or_panic,
-    ut::ut0dbg::ut_ad,
+    buf::buf0buf::BufPool, innodb::innodb0types::SpaceId, mtr::mtr0mtr::Mtr,
+    some_or_panic, ut::ut0dbg::ut_ad,
 };
 
 // On-disk list-node constants specific to this module
@@ -260,38 +254,50 @@ impl FilAddr {
     }
 }
 
-/// /// Initialize the base-node in `base` as an empty intrusive list:
-// ///  - LEN = 0
-// ///  - FIRST = NULL
-// ///  - LAST  = NULL
-pub fn flst_init(base: &mut [u8]) {
-    // 1) zero length
-    write_len(base, 0);
-    // 2) set FIRST = NULL
-    FilAddr::NULL.write_first(base);
-    // 3) set LAST  = NULL
-    FilAddr::NULL.write_last(base);
-}
-
 pub fn write_len(base: &mut [u8], len: usize) {
     let bytes = (len as u32).to_be_bytes();
     base[FLST_LEN..FLST_LEN + 4].copy_from_slice(&bytes);
+}
+
+pub trait PersistFLstOperation {
+    /// Persist the operation to the file system.
+    fn persist(
+        &self,
+        space_id: SpaceId,
+        buf_pool: Arc<BufPool>,
+        mtr: &mut Mtr,
+    ) -> Result<(), String>;
+}
+
+pub struct FLstOperation {
+    pub flst_base_node: FLstBaseNode,
+    pub nodes: Vec<FLstNode>,
 }
 
 const FLST_BASE_NODE_LEN: usize = 16;
 /// A base-node for an intrusive list, which contains the length and pointers to the first and last nodes.
 /// The base-node is used to anchor the list and provides a uniform way to access the list
 /// properties such as length, first, and last nodes.
-pub struct FLstBaseNode<'a> {
+#[derive(Debug, Clone, Copy)]
+pub struct FLstBaseNode {
     /// The fil address of the node.
     fil_addr: FilAddr,
-    /// The buffer of the node.
-    buf: Frame<'a, FLST_BASE_NODE_LEN>,
+    /// Length of the list.
+    len: usize,
+    /// Pointer to the first node in the list.
+    first: FilAddr,
+    /// Pointer to the last node in the list.
+    last: FilAddr,
 }
 
-impl<'a> FLstBaseNode<'a> {
-    pub fn new(fil_addr: FilAddr, buf: Frame<'a, FLST_BASE_NODE_LEN>) -> Self {
-        Self { fil_addr, buf }
+impl FLstBaseNode {
+    pub fn new(
+        fil_addr: FilAddr,
+        len: usize,
+        first: FilAddr,
+        last: FilAddr,
+    ) -> Self {
+        Self { fil_addr, len, first, last }
     }
 
     /// Check if the list is empty.
@@ -311,7 +317,7 @@ impl<'a> FLstBaseNode<'a> {
     /// `usize` specifying the length of the list.
     ///
     pub fn len(&self) -> usize {
-        mach_read_from_4(&self.buf.0[FLST_LEN..FLST_LEN + 4]) as usize
+        self.len
     }
 
     /// Set the length of the list.
@@ -320,8 +326,8 @@ impl<'a> FLstBaseNode<'a> {
     ///
     /// * `len` - Length of the list to set, as u32.
     ///
-    pub fn set_len(&mut self, len: u32) {
-        mach_write_to_4(&mut self.buf.0[FLST_LEN..FLST_LEN + 4], len);
+    pub fn set_len(&mut self, len: usize) {
+        self.len = len;
     }
 
     /// Get the fil address of the base node.
@@ -340,11 +346,8 @@ impl<'a> FLstBaseNode<'a> {
     ///
     /// `FilAddr` of the first node.
     ///
-    pub fn get_first(&self) -> FilAddr {
-        FilAddr {
-            page_no: mach_read_from_4(&self.buf.0[FLST_FIRST_PAGE_NO_RANGE]),
-            byte_off: mach_read_from_2(&self.buf.0[FLST_FIRST_BYTE_OFF_RANGE]),
-        }
+    pub fn get_first(&self) -> &FilAddr {
+        &self.first
     }
 
     /// Set the first node of the linked list.
@@ -353,18 +356,8 @@ impl<'a> FLstBaseNode<'a> {
     ///
     /// * `addr` - `FilAddr` of the first node.
     ///
-    pub fn set_first(&mut self, addr: FilAddr) {
-        // 1. write the 4-byte page_no in big-endian format.
-        mach_write_to_4(
-            &mut self.buf.0[FLST_FIRST_PAGE_NO_RANGE],
-            addr.page_no,
-        );
-
-        // 2. write the 2-byte byte_off in big-endian format.
-        mach_write_to_2(
-            &mut self.buf.0[FLST_FIRST_BYTE_OFF_RANGE],
-            addr.byte_off,
-        )
+    pub fn set_first(&mut self, addr: &FilAddr) {
+        self.first = *addr;
     }
 
     /// Get the fil address of the last node.
@@ -373,11 +366,8 @@ impl<'a> FLstBaseNode<'a> {
     ///
     /// `FilAddr` of the last node of the list.
     ///
-    pub fn get_last(&self) -> FilAddr {
-        FilAddr {
-            page_no: mach_read_from_4(&self.buf.0[FLST_LAST_PAGE_NO_RANGE]),
-            byte_off: mach_read_from_2(&self.buf.0[FLST_LAST_BYTE_OFF_RANGE]),
-        }
+    pub fn get_last(&self) -> &FilAddr {
+        &self.last
     }
 
     /// Set the last node of the linked list.
@@ -386,76 +376,42 @@ impl<'a> FLstBaseNode<'a> {
     ///
     /// * `addr` - `FilAddr` of the last node.
     ///
-    pub fn set_last(&mut self, addr: FilAddr) {
-        // 1. write the 4-byte page_no in big-endian format.
-        mach_write_to_4(
-            &mut self.buf.0[FLST_LAST_PAGE_NO_RANGE],
-            addr.page_no,
-        );
-
-        // 2. write the 2-byte byte_off in big-endian format.
-        mach_write_to_2(
-            &mut self.buf.0[FLST_LAST_BYTE_OFF_RANGE],
-            addr.byte_off,
-        )
+    pub fn set_last(&mut self, addr: &FilAddr) {
+        self.last = *addr;
     }
 }
 
 const FLST_NODE_LEN: usize = 12;
-pub struct FLstNode<'a> {
+#[derive(Debug, Clone, Copy)]
+pub struct FLstNode {
     fil_addr: FilAddr,
-    buf: Frame<'a, FLST_NODE_LEN>,
+    prev: FilAddr,
+    next: FilAddr,
 }
 
-impl<'a> FLstNode<'a> {
-    pub fn new(fil_addr: FilAddr, buf: Frame<'a, FLST_NODE_LEN>) -> Self {
-        Self { fil_addr, buf }
+impl FLstNode {
+    pub fn new(fil_addr: FilAddr) -> Self {
+        Self { fil_addr, prev: FilAddr::NULL, next: FilAddr::NULL }
     }
 
-    pub fn get_fil_addr(&self) -> FilAddr {
-        self.fil_addr
+    pub fn get_fil_addr(&self) -> &FilAddr {
+        &self.fil_addr
     }
 
-    pub fn get_prev(&self) -> FilAddr {
-        FilAddr {
-            page_no: mach_read_from_4(&self.buf.0[FLST_PREV_PAGE_NO_RANGE]),
-            byte_off: mach_read_from_2(&self.buf.0[FLST_PREV_BYTE_OFF_RANGE]),
-        }
+    pub fn get_prev(&self) -> &FilAddr {
+        &self.prev
     }
 
-    pub fn set_prev(&mut self, addr: FilAddr) {
-        // 1) write the 4-byte page_no in big-endian format.
-        mach_write_to_4(
-            &mut self.buf.0[FLST_PREV_PAGE_NO_RANGE],
-            addr.page_no,
-        );
-
-        // 2) write the 2-byte byte_off in big-endian format.
-        mach_write_to_2(
-            &mut self.buf.0[FLST_PREV_BYTE_OFF_RANGE],
-            addr.byte_off,
-        );
+    pub fn set_prev(&mut self, addr: &FilAddr) {
+        self.prev = *addr;
     }
 
-    pub fn get_next(&self) -> FilAddr {
-        FilAddr {
-            page_no: mach_read_from_4(&self.buf.0[FLST_NEXT_PAGE_NO_RANGE]),
-            byte_off: mach_read_from_2(&self.buf.0[FLST_NEXT_BYTE_OFF_RANGE]),
-        }
+    pub fn get_next(&self) -> &FilAddr {
+        &self.next
     }
 
-    pub fn set_next(&mut self, addr: FilAddr) {
-        // 1) write the 4-byte page_no in big-endian format.
-        mach_write_to_4(
-            &mut self.buf.0[FLST_NEXT_PAGE_NO_RANGE],
-            addr.page_no,
-        );
-
-        // 2) write the 2-byte byte_off in big-endian format.
-        mach_write_to_2(
-            &mut self.buf.0[FLST_NEXT_BYTE_OFF_RANGE],
-            addr.byte_off,
-        );
+    pub fn set_next(&mut self, addr: &FilAddr) {
+        self.next = *addr;
     }
 }
 
@@ -463,13 +419,24 @@ impl<'a> FLstNode<'a> {
 /// This structure provides methods to manipulate the list, such as adding nodes to the end,
 /// removing nodes, and accessing the first and last nodes.
 /// It uses `FLstBaseNode` to anchor the list and `FLstNode` to represent each node in the list.
-pub struct FLst<'a> {
-    base: FLstBaseNode<'a>,
+#[derive(Debug, Clone, Copy)]
+pub struct FLst {
+    base: FLstBaseNode,
 }
 
-impl<'a> FLst<'a> {
-    pub fn new(base: FLstBaseNode<'a>) -> Self {
+impl FLst {
+    pub fn new(base: FLstBaseNode) -> Self {
         Self { base }
+    }
+
+    /// Get the base node of the flst.
+    ///
+    /// # Returns
+    ///
+    /// `FLstBaseNode` a reference to the base node.
+    ///
+    pub fn get_base(&self) -> &FLstBaseNode {
+        &self.base
     }
 
     /// Add a node at the end of the linked list.
@@ -481,32 +448,48 @@ impl<'a> FLst<'a> {
     ///
     pub fn add_last(
         &mut self,
-        node: &mut FLstNode<'a>,
-        last: Option<FLstNode<'a>>,
-    ) {
+        node: &mut FLstNode,
+        last: Option<FLstNode>,
+    ) -> FLstOperation {
         // Get the current length of the list
         let len = self.base.len();
 
         // If the list is empty, set the first and last pointers to the new node
         if len == 0 {
+            ut_ad!(last.is_none());
+
             self.base.set_first(node.get_fil_addr());
             self.base.set_last(node.get_fil_addr());
+
+            node.set_prev(&FilAddr::NULL);
+            node.set_next(&FilAddr::NULL);
         } else {
             // If the list is not empty, the caller should provide the previous last node.
             let mut prev = some_or_panic!(last);
             // Otherwise, we need to update the last node's next pointer
             let last_addr = self.base.get_last();
-            ut_ad!(last_addr != prev.get_fil_addr());
+            ut_ad!(last_addr == prev.get_fil_addr());
 
             prev.set_next(node.get_fil_addr());
-            node.set_next(FilAddr::NULL);
+            node.set_next(&FilAddr::NULL);
             node.set_prev(last_addr);
 
             self.base.set_last(node.get_fil_addr());
         }
 
         // Increment the length of the list
-        self.base.set_len((len + 1) as u32);
+        self.base.set_len(len + 1);
+
+        let mut ret = FLstOperation {
+            flst_base_node: self.base.clone(),
+            nodes: vec![node.clone()],
+        };
+
+        if let Some(last) = last {
+            ret.nodes.push(last);
+        }
+
+        ret
     }
 
     /// Remove *this* node from the intrusive list in `base`.
@@ -559,7 +542,7 @@ impl<'a> FLst<'a> {
         }
 
         // 4) decrement the stored length
-        self.base.set_len((len - 1) as u32);
+        self.base.set_len(len - 1);
     }
 
     /// Get the last element of the linked list.
@@ -568,7 +551,7 @@ impl<'a> FLst<'a> {
     ///
     /// `FillAddr` of the last element in the list.
     ///
-    pub fn get_last(&self) -> FilAddr {
+    pub fn get_last(&self) -> &FilAddr {
         self.base.get_last()
     }
 
@@ -578,7 +561,7 @@ impl<'a> FLst<'a> {
     ///
     /// `FillAddr` of the first element in the list.
     ///
-    pub fn get_first(&self) -> FilAddr {
+    pub fn get_first(&self) -> &FilAddr {
         self.base.get_first()
     }
 
@@ -609,7 +592,7 @@ impl<'a> FLst<'a> {
     /// * `addr` - `FilAddr` of the first element to be added.
     ///
     pub fn set_first(&mut self, addr: FilAddr) {
-        self.base.set_first(addr);
+        self.base.set_first(&addr);
     }
 
     /// Set the first element of the linked list.
@@ -617,17 +600,17 @@ impl<'a> FLst<'a> {
     /// * `addr` - `FilAddr` of the last element to be added.
     ///
     pub fn set_last(&mut self, addr: FilAddr) {
-        self.base.set_last(addr);
+        self.base.set_last(&addr);
     }
 
     /// Increase the length of the linked list by 1.
     pub fn incr_length(&mut self) {
-        self.base.set_len((self.base.len() + 1) as u32);
+        self.base.set_len(self.base.len() + 1);
     }
 
     /// Decrease the length of the linked list by 1.
     pub fn decr_length(&mut self) {
-        self.base.set_len((self.base.len() - 1) as u32);
+        self.base.set_len(self.base.len() - 1);
     }
 
     // ****** End Low-level list operations ******

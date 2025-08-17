@@ -1,20 +1,19 @@
-use crate::buf::buf0buf::BufPoolInner;
-use intrusive_collections::LinkedList;
-use std::sync::RwLockWriteGuard;
 use std::{
     cmp::PartialEq,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLockWriteGuard},
 };
+
+use intrusive_collections::LinkedList;
 use tracing::error;
 
-use crate::buf::buf0lru::BufLRU;
-use crate::buf::buf0types::BufPage;
 use crate::{
     buf::{
+        buf0buf::BufPoolInner,
         buf0dblwr::DoubleWriteBuffer,
         buf0flu::BufFlushType::{BufFlushList, BufFlushLru, BufFlushNTypes},
+        buf0lru::BufLRU,
         buf0types::{
-            BUF_NO_CHECKSUM_MAGIC, BufBlock, BufIoFix, BufPageState,
+            BUF_NO_CHECKSUM_MAGIC, BufBlock, BufIoFix, BufPage, BufPageState,
             FlushListAdapter,
         },
     },

@@ -1125,7 +1125,7 @@ mod tests {
         });*/
 
         let buf_block = {
-            let mut pool = buf_pool.lock().unwrap();
+            let pool = buf_pool.lock().unwrap();
             pool.get(Request {
                 rw_latch: ReadWriteLatch::NoLatch,
                 page_id: PageId { space_id: 0, page_no: 0 },

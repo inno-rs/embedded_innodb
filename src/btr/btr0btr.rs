@@ -128,7 +128,7 @@ impl BTree {
         let mut mtr = mtr.unwrap();
         if prev_page_no != FILL_NULL {
             // Fetch the page from buffer_pool
-            let mut pool = self.buf_pool.lock().unwrap();
+            let pool = self.buf_pool.lock().unwrap();
             let buf_block = pool.get(Request {
                 rw_latch: ReadWriteLatch::SLatch,
                 page_id: PageId {
@@ -205,7 +205,7 @@ impl BTree {
         let mut mtr = mtr.unwrap();
         if next_page_no != FILL_NULL {
             // Fetch the page from buffer_pool
-            let mut pool = self.buf_pool.lock().unwrap();
+            let pool = self.buf_pool.lock().unwrap();
             let buf_block = pool.get(Request {
                 rw_latch: ReadWriteLatch::SLatch,
                 page_id: PageId {
@@ -543,7 +543,7 @@ impl BTree {
     /// A reference-counted, thread-safe buffer block containing the root page
     pub fn root_get(&self, mtr: &mut Mtr) -> Arc<RwLock<BufBlock>> {
         let root_page_id = self.index.get_page_id();
-        let mut buf_pool = self.buf_pool.lock().unwrap();
+        let buf_pool = self.buf_pool.lock().unwrap();
         let block = buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch, /*todo: use x latch*/
             page_id: root_page_id,
@@ -745,7 +745,7 @@ impl BTree {
             let child_page_no =
                 self.inner_node_get_child_page_no(&current_rec);
 
-            let mut buf_pool = self.buf_pool.lock().unwrap();
+            let buf_pool = self.buf_pool.lock().unwrap();
             let buf_block = buf_pool.get(Request {
                 rw_latch: ReadWriteLatch::NoLatch,
                 page_id: PageId {
@@ -903,7 +903,7 @@ impl BTree {
 
         while pages.is_empty() == false {
             let page_no = pages.pop_front().unwrap();
-            let mut buf_pool = self.buf_pool.lock().unwrap();
+            let buf_pool = self.buf_pool.lock().unwrap();
             let buf_block = buf_pool.get(Request {
                 rw_latch: ReadWriteLatch::NoLatch,
                 page_id: PageId { space_id, page_no },

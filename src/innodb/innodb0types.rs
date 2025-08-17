@@ -75,6 +75,8 @@ impl Hash for TrxId {
     }
 }
 
+pub struct ReadOnlyFrame<'a, const N: usize>(pub &'a [u8; N]);
+
 pub struct Frame<'a, const N: usize>(pub &'a mut [u8; N]);
 
 /// A wrapper around a mutable byte array representing a database page in memory.
