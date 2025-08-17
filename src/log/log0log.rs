@@ -841,7 +841,7 @@ impl Log {
         // 2. Write the checkpoint lsn.
         mach_write_to_8(
             &mut log_group.checkpoint_buf.0[LOG_CHECKPOINT_LSN_RANGE],
-            self.next_checkpoint_lsn as u64,
+            self.next_checkpoint_lsn,
         );
 
         // 3. Write the checkpoint offset.

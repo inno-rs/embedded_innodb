@@ -3,11 +3,14 @@
 [![Rust](https://github.com/username/embedded_innodb/actions/workflows/rust.yml/badge.svg)](https://github.com/username/embedded_innodb/actions/workflows/rust.yml)
 [![codecov](https://codecov.io/gh/username/embedded_innodb/branch/main/graph/badge.svg)](https://codecov.io/gh/username/embedded_innodb)
 
-A Rust implementation of the InnoDB storage engine, designed to be embedded in other applications. This project aims to provide a reliable, high-performance storage engine with ACID compliance, similar to the original InnoDB but with the safety and concurrency benefits of Rust.
+A Rust implementation of the InnoDB storage engine, designed to be embedded in other applications.
+This project aims to provide a reliable, high-performance storage engine with ACID compliance,
+similar to the original InnoDB but with the safety and concurrency benefits of Rust.
 
 ## Project Status
 
-This project is currently in early development. The following components are being actively developed:
+This project is currently in early development. The following components are being actively
+developed:
 
 - **Buffer Pool Management** (buf): Implementation of the buffer pool for caching pages in memory
 - **B-tree Operations** (btr): Implementation of B-tree data structures for indexing
@@ -50,7 +53,8 @@ fn main() {
 
 ## Code Coverage
 
-This project uses [cargo-tarpaulin](https://github.com/xd009642/tarpaulin) for code coverage and [Codecov](https://codecov.io/) to display the results.
+This project uses [cargo-tarpaulin](https://github.com/xd009642/tarpaulin) for code coverage
+and [Codecov](https://codecov.io/) to display the results.
 
 ## Development
 
@@ -80,7 +84,8 @@ cargo tarpaulin --verbose
 
 ### Logging
 
-The project uses the `tracing` crate for logging. You can control the log level using the `RUST_LOG` environment variable:
+The project uses the `tracing` crate for logging. You can control the log level using the `RUST_LOG`
+environment variable:
 
 ```bash
 RUST_LOG=info cargo run

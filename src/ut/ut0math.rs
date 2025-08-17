@@ -215,3 +215,23 @@ pub fn ut_align_up<T: UInt>(n: T, align_no: T) -> T {
 
     ut_align_down(n + align_no - T::from(1), align_no)
 }
+
+/// Calculates a fast remainder of n/m when m is power of two.
+///
+/// This function uses a bitwise AND operation to compute the remainder,
+/// which is more efficient than the standard modulus operation.
+///
+/// # Arguments
+///
+/// * `n` - The dividend.
+/// * `m` - The divisor, which must be a power of two.
+///
+/// # Returns
+///
+/// * The remainder of n divided by m.
+pub fn ut_2pow_remainder<T: UInt>(n: T, m: T) -> T {
+    ut_ad!(m > T::from(0));
+    ut_ad!(ut_is_2pow(m));
+
+    n & (m - T::from(1))
+}

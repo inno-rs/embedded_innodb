@@ -264,7 +264,7 @@ pub trait PersistFLstOperation {
     fn persist(
         &self,
         space_id: SpaceId,
-        buf_pool: Arc<BufPool>,
+        buf_pool: &Arc<BufPool>,
         mtr: &mut Mtr,
     ) -> Result<(), String>;
 }
@@ -390,8 +390,16 @@ pub struct FLstNode {
 }
 
 impl FLstNode {
-    pub fn new(fil_addr: FilAddr) -> Self {
-        Self { fil_addr, prev: FilAddr::NULL, next: FilAddr::NULL }
+    pub fn new(
+        fil_addr: FilAddr,
+        prev: Option<FilAddr>,
+        next: Option<FilAddr>,
+    ) -> Self {
+        Self {
+            fil_addr,
+            prev: prev.unwrap_or(FilAddr::NULL),
+            next: next.unwrap_or(FilAddr::NULL),
+        }
     }
 
     pub fn get_fil_addr(&self) -> &FilAddr {
@@ -468,7 +476,9 @@ impl FLst {
             let mut prev = some_or_panic!(last);
             // Otherwise, we need to update the last node's next pointer
             let last_addr = self.base.get_last();
+
             ut_ad!(last_addr == prev.get_fil_addr());
+            ut_ad!(prev.get_next() == &FilAddr::NULL);
 
             prev.set_next(node.get_fil_addr());
             node.set_next(&FilAddr::NULL);
@@ -509,7 +519,7 @@ impl FLst {
         node: FLstNode,
         prev_node: Option<FLstNode>,
         next_node: Option<FLstNode>,
-    ) {
+    ) -> FLstOperation {
         // 1) load list state
         let len = self.base.len();
 
@@ -543,6 +553,21 @@ impl FLst {
 
         // 4) decrement the stored length
         self.base.set_len(len - 1);
+
+        let mut ret = FLstOperation {
+            flst_base_node: self.base.clone(),
+            nodes: vec![node],
+        };
+
+        if let Some(prev_node) = prev_node {
+            ret.nodes.push(prev_node);
+        }
+
+        if let Some(next_node) = next_node {
+            ret.nodes.push(next_node);
+        }
+
+        ret
     }
 
     /// Get the last element of the linked list.

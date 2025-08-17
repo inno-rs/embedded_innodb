@@ -33,7 +33,7 @@ mod tests {
 
         // Create a node to add
         let node_addr = FilAddr { page_no: 200, byte_off: 300 };
-        let mut node = FLstNode::new(node_addr);
+        let mut node = FLstNode::new(node_addr, None, None);
 
         // Add the node to the empty list
         let operation = flst.add_last(&mut node, None);
@@ -75,9 +75,7 @@ mod tests {
         let flst = FLst::new(base);
 
         // Create the node to remove
-        let mut node = FLstNode::new(node_addr);
-        node.set_prev(&FilAddr::NULL);
-        node.set_next(&FilAddr::NULL);
+        let node = FLstNode::new(node_addr, None, None);
 
         // Instead of checking the FLst state after removal (which we can't do because remove consumes self),
         // we'll verify that the node's prev and next pointers are set correctly before removal

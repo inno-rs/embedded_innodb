@@ -84,7 +84,7 @@ mod tests {
         assert!(flush_result.is_ok());
 
         // retrieve the data from file again.
-        let system_table_space = {
+        {
             let mut resp_data = Box::new([0u8; UNIV_PAGE_SIZE]);
             let space_id = 0;
             let mut fil = fil.lock().unwrap();
@@ -135,7 +135,7 @@ mod tests {
 
         for i in 0..10 {
             // retrieve the data from file again.
-            let system_table_space = {
+            {
                 let mut resp_data = Box::new([0u8; UNIV_PAGE_SIZE]);
                 let space_id = 0;
                 let mut fil = fil.lock().unwrap();
@@ -150,35 +150,28 @@ mod tests {
                 );
 
                 assert!(result.is_ok());
-                assert_eq!(
-                    resp_data.as_slice(),
-                    (&pages[i as usize]).as_slice()
-                );
+                assert_eq!(resp_data.as_slice(), pages[i as usize].as_slice());
             };
         }
     }
 
     fn fil_space_create(fil: &Arc<Mutex<Fil>>) -> bool {
         // create the SystemTableSpace file.
-        let system_table_space = {
-            let space_id = 0;
-            let mut fil = fil.lock().unwrap();
-            if fil.space_create(
-                &"test".to_string(),
-                space_id,
-                0,
-                FilType::FilTablespace,
-            ) == false
-            {
-                false;
-            }
+        let space_id = 0;
+        let mut fil = fil.lock().unwrap();
+        if !fil.space_create(
+            &"test".to_string(),
+            space_id,
+            0,
+            FilType::FilTablespace,
+        ) {
+            return false;
+        }
 
-            if fil.node_create("test", 10, space_id, false) == false {
-                false;
-            }
+        if !fil.node_create("test", 10, space_id, false) {
+            return false;
+        }
 
-            fil.space_get_by_id(space_id).is_some()
-        };
-        system_table_space
+        fil.space_get_by_id(space_id).is_some()
     }
 }
