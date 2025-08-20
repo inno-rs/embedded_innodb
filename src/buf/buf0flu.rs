@@ -204,6 +204,7 @@ impl BufFlush {
                 let total = self.get_flush_list_size();
                 let budget = total.min(min_n.saturating_mul(8)).max(min_n);
 
+                // TODO make it constant time.
                 let mut candidates = Vec::with_capacity(budget);
                 {
                     for r in self.flush_list.iter().rev().take(budget) {
@@ -231,8 +232,8 @@ impl BufFlush {
                 // Collect anchor PageIds from the cold end of the LRU, then for each anchor,
                 // flush its neighborhood via `try_neighbors`, until we reach `min_n`.
                 let curr = pool.curr_size().max(1);
-                let read_ahead_area = pool.get_read_ahead_area(); // your port of ut_2_power_up(m_curr_size/32).min(64)
-                let scan_len = 5 + 2 * read_ahead_area; // same formula as C++
+                let read_ahead_area = pool.get_read_ahead_area();
+                let scan_len = 5 + 2 * read_ahead_area;
 
                 // Snapshot anchor PageIds so we don’t hold a borrow while flushing
                 let anchors: Vec<_> = {
