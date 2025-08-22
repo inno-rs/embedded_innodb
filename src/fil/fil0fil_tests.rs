@@ -14,7 +14,12 @@ mod tests {
             DbErr::DbTablespaceDeleted, IB_FILE_BLOCK_SIZE, PageFrame,
             UNIV_PAGE_SIZE,
         },
-        os::{os0file::IORequest, os0io::OsIo, os0runtime::create_runtime},
+        os::{
+            os0file::{IORequest, os_file_get_size},
+            os0io::OsIo,
+            os0runtime::create_runtime,
+        },
+        some_or_panic,
     };
 
     #[fixture]
@@ -308,5 +313,34 @@ mod tests {
         // Test with a valid file name
         let result = fil.make_ibd_filename(file_name);
         assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    fn test_extend_space_to_desired_size(mut fil: Fil) {
+        // prep
+        let file_name = format!("{}_{}", "test", Uuid::new_v4());
+        let space_id = 20;
+        fil.create_new_single_table_space(
+            space_id,
+            &file_name,
+            0,
+            FIL_IBD_FILE_INITIAL_SIZE,
+        )
+        .expect("Failed to create new single table space");
+
+        // call and assert
+        assert!(fil.extend_space_to_desired_size(0, space_id, 10));
+
+        let result = some_or_panic!(fil.space_get_by_id(space_id));
+        let fil_space = result.read().unwrap().fil_space.clone();
+        let fil_space_borrow = fil_space.borrow();
+        let last_fil_node_container =
+            some_or_panic!(fil_space_borrow.chain.back().get());
+        let fil_node = last_fil_node_container.fil_node.clone();
+        let fil_node_borrow = fil_node.borrow();
+        let os_file = some_or_panic!(&fil_node_borrow.f_handle);
+
+        let new_size = (UNIV_PAGE_SIZE * 10) as i64;
+        assert_eq!(new_size, os_file_get_size(os_file))
     }
 }
