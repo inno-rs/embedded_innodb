@@ -318,10 +318,10 @@ impl Fil {
     /// * `Some(i64)` with the tablespace version if the space exists, `None` otherwise.
     ///
     pub fn space_get_version(&self, space_id: SpaceId) -> Option<i64> {
-        self.space_get_by_id(space_id).and_then(|space| {
+        self.space_get_by_id(space_id).map(|space| {
             let space = space.read().unwrap();
             Some(space.fil_space.borrow().tablespace_version)
-        })
+        })?
     }
 
     /// Retrieves the type of a space by its ID.
@@ -335,10 +335,10 @@ impl Fil {
     /// * `Some(FilType)` with the space type if the space exists, `None` otherwise.
     ///
     pub fn space_get_type(&self, space_id: SpaceId) -> Option<FilType> {
-        self.space_get_by_id(space_id).and_then(|space| {
+        self.space_get_by_id(space_id).map(|space| {
             let space = space.read().unwrap();
             Some(space.fil_space.borrow().fil_type.clone())
-        })
+        })?
     }
 
     /// Opens a file for a node and updates the file handle in the node.
@@ -359,7 +359,7 @@ impl Fil {
         fil_type: FilType,
         startup: bool,
     ) {
-        ut_ad!(file_node.is_open() == false);
+        ut_ad!(!file_node.is_open());
         ut_ad!(file_node.n_pending() == 0);
 
         if file_node.get_size_in_pages() == 0 {
@@ -529,7 +529,7 @@ impl Fil {
             );
         }
 
-        if node.is_open() == false {
+        if !node.is_open() {
             ut_ad!(node.n_pending() == 0);
 
             self.node_open_file(node, space.fil_type.clone(), false);
@@ -643,14 +643,14 @@ impl Fil {
     pub fn create_new_single_table_space(
         &mut self,
         space_id: SpaceId,
-        table_name: &String,
+        table_name: &str,
         flags: usize,
         size: usize,
     ) -> Result<(), DbErr> {
         ut_a!(flags == 0);
         ut_a!(size >= FIL_IBD_FILE_INITIAL_SIZE);
 
-        let path = self.make_ibd_filename(&table_name);
+        let path = self.make_ibd_filename(table_name);
         let os_file = os_file_create(&path, OsFileCreate);
 
         // TODO(Rahul): Handle the other errors.
@@ -766,7 +766,7 @@ impl Fil {
 
         // Take a write guard because we may update size_in_pages.
         let mut space_guard = space_arc.write().unwrap();
-        let space_container: &mut FilSpaceContainer = &mut *space_guard;
+        let space_container: &mut FilSpaceContainer = &mut space_guard;
 
         // Borrow the FilSpace payload
         let mut space = space_container.fil_space.borrow_mut();

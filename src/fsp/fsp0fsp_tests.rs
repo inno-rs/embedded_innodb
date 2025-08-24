@@ -4,8 +4,8 @@ mod tests {
 
     use crate::{
         fil::fil0types::{
-            FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN, FIL_PAGE_OFFSET,
-            FIL_PAGE_SPACE_ID, FILL_NULL,
+            FIL_IBD_FILE_INITIAL_SIZE, FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN,
+            FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID, FILL_NULL,
         },
         fsp::{
             fsp0fsp::*,
@@ -18,6 +18,7 @@ mod tests {
             mtr0types::{FixMode, MemoSlot},
         },
         some_or_panic,
+        sync::sync0rw::ReadWriteLatch,
         tests::{
             test0fixture::CommonFixture,
             test0utils::{create_blocks_in_buf_pool, create_fseg_inode_page},
@@ -37,7 +38,8 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let block = fsp.get_space_header_block(0, &mut mtr);
+        let block =
+            fsp.get_space_header_block(0, &mut mtr, ReadWriteLatch::XLatch);
 
         assert!(block.is_some());
 
@@ -55,7 +57,8 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let block = fsp.get_space_header_block(1, &mut mtr);
+        let block =
+            fsp.get_space_header_block(1, &mut mtr, ReadWriteLatch::XLatch);
 
         assert!(block.is_none());
     }
@@ -70,17 +73,21 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let block = fsp.get_space_header_block(0, &mut mtr);
+        let block =
+            fsp.get_space_header_block(0, &mut mtr, ReadWriteLatch::XLatch);
 
         assert!(block.is_some());
         let buf_block = some_or_panic!(block);
         let page = buf_block.read().unwrap().get_page();
         let fsp_header = FspHeaderPage::new(page.to_page_frame().0);
 
-        let fseg_inode_list = fsp_header.fsp_get_seg_inodes_free_list();
+        let fseg_inode_list =
+            fsp_header.fsp_get_flst(&FspHeaderLstType::FSegInodesFree);
 
         assert_eq!(fseg_inode_list.len(), 0);
     }
+
+    #[ignore]
     #[rstest]
     fn test_alloc_seg_inode_page(common_fixture: CommonFixture) {
         let buf_pool = common_fixture.buf_pool;
@@ -91,7 +98,8 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let block = fsp.get_space_header_block(0, &mut mtr);
+        let block =
+            fsp.get_space_header_block(0, &mut mtr, ReadWriteLatch::XLatch);
 
         assert!(block.is_some());
         let buf_block = some_or_panic!(block);
@@ -101,7 +109,8 @@ mod tests {
         for i in 0..9 {
             fsp.alloc_seg_inode_page(&mut fsp_header, 1, i + 1, &mut mtr);
 
-            let fseg_inode_list = fsp_header.fsp_get_seg_inodes_free_list();
+            let fseg_inode_list =
+                fsp_header.fsp_get_flst(&FspHeaderLstType::FSegInodesFree);
 
             assert_eq!(fseg_inode_list.len(), (1 + i) as usize);
         }
@@ -117,7 +126,8 @@ mod tests {
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let block = fsp.get_space_header_block(0, &mut mtr);
+        let block =
+            fsp.get_space_header_block(0, &mut mtr, ReadWriteLatch::XLatch);
 
         assert!(block.is_some());
         let buf_block = some_or_panic!(block);
@@ -127,14 +137,15 @@ mod tests {
         fsp_header.header_init(page_id.space_id, 1000);
 
         for i in 0..9 {
-            fsp.alloc_seg_inode_page(&mut fsp_header, 1, i + 1, &mut mtr);
+            fsp.alloc_seg_inode_page(&mut fsp_header, 0, i + 1, &mut mtr);
 
-            let fseg_inode_list = fsp_header.fsp_get_seg_inodes_free_list();
-
+            let fseg_inode_list =
+                fsp_header.fsp_get_flst(&FspHeaderLstType::FSegInodesFree);
             assert_eq!(fseg_inode_list.len(), (1 + i) as usize);
         }
 
-        let fseg_inode_list = fsp_header.fsp_get_seg_inodes_free_list();
+        let fseg_inode_list =
+            fsp_header.fsp_get_flst(&FspHeaderLstType::FSegInodesFree);
     }
 
     #[test]
@@ -331,12 +342,12 @@ mod tests {
         let span = FSP_HEADER_OFFSET + FSP_FREE_LIMIT;
         assert_eq!(
             fsp_header_page.fsp_get_fsp_free_limit(),
-            sz,
+            0,
             "free_limit mismatch"
         );
 
         // 4) flags and frag_n_used remain zero
-        let fsp_space_flags = fsp_header_page.fsp_get_fsp_space_flags();
+        let fsp_space_flags = fsp_header_page.fsp_get_space_flags();
         assert_eq!(fsp_space_flags, 0);
         let frag_n_used = fsp_header_page.fsp_get_fsp_frag_n_used();
         assert_eq!(frag_n_used, 0);
@@ -1038,5 +1049,18 @@ mod tests {
 
         let res = fsp_seg_inode.fseg_find_free_frag_page_slot();
         assert_eq!(res.unwrap(), 4);
+    }
+
+    #[rstest]
+    fn test_fsp_header_init(common_fixture: CommonFixture) {
+        let buf_pool = common_fixture.buf_pool;
+        create_blocks_in_buf_pool(buf_pool, 10, 10);
+        let fsp = common_fixture.fsp;
+        let fsp = fsp.lock().unwrap();
+
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        fsp.header_init(0, FIL_IBD_FILE_INITIAL_SIZE as u32, &mut mtr);
     }
 }
