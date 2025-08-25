@@ -16,6 +16,7 @@
  ************************************************************************/
 use std::{
     cell::RefCell,
+    cmp,
     collections::HashMap,
     ops::DerefMut,
     rc::Rc,
@@ -855,5 +856,79 @@ impl Fil {
             }
             // `guard` drops here
         }
+    }
+
+    /// Extend the file space to the desired size in pages.
+    ///
+    /// # Arguments
+    ///
+    /// * `actual_size` - The actual size of the file space in pages
+    /// * `space_id` - Tablespace for which the size has to be extended
+    /// * `size_after_extend` - The expected new page size
+    ///
+    /// # Returns
+    ///
+    /// * `Boolean` - If the size was extended successfully
+    ///
+    pub fn extend_space_to_desired_size(
+        &mut self,
+        actual_size: usize,
+        space_id: SpaceId,
+        size_after_extend: usize,
+    ) -> bool {
+        let space = self.space_get_by_id(space_id);
+        // Extend at most 64 pages at a time
+        if let Some(space) = space {
+            let fil_space = space.write().unwrap().fil_space.clone();
+
+            if fil_space.borrow().size_in_pages >= size_after_extend {
+                return true;
+            }
+
+            let page_size = UNIV_PAGE_SIZE;
+            let mut fil_space_mut = fil_space.borrow_mut();
+            let mut start_page = fil_space_mut.size_in_pages;
+            let buf_size =
+                cmp::min(64, size_after_extend - start_page) * page_size;
+            let last_fil_node_container =
+                some_or_panic!(fil_space_mut.chain.back().get());
+            let fil_node = last_fil_node_container.fil_node.clone();
+            let mut fil_node_mut = fil_node.borrow_mut();
+            self.node_prepare_for_io(
+                fil_node_mut.deref_mut(),
+                fil_space_mut.deref_mut(),
+            );
+
+            while start_page < size_after_extend {
+                let n_pages = cmp::min(
+                    buf_size / page_size,
+                    size_after_extend - start_page,
+                );
+                fil_node_mut.size_in_pages += n_pages;
+                fil_space_mut.size_in_pages += n_pages;
+
+                let os_file = some_or_panic!(&mut fil_node_mut.f_handle);
+
+                // Set the size of the file to the specified size in pages.
+                // This expands the file to the required size, and fills it with zeros in the new space.
+                let result = os_file_set_size(
+                    os_file,
+                    (size_after_extend * UNIV_PAGE_SIZE) as u64,
+                );
+                match result {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!(
+                            "Failed to set size for file: {}. Error: {}",
+                            fil_node_mut.name, e
+                        );
+                        return false;
+                    }
+                }
+                start_page += n_pages;
+            }
+            return true;
+        }
+        false
     }
 }
