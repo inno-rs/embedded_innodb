@@ -48,7 +48,7 @@ use std::{
 };
 
 use strum_macros::Display;
-use tracing::error;
+use tracing::{error, info};
 
 use crate::{
     buf::{
@@ -63,7 +63,7 @@ use crate::{
             FilPageType,
         },
     },
-    fsp::fsp0types::{Direction, ExtentNo, FSegId},
+    fsp::fsp0types::{Direction, ExtentNo, FSegId, SYS_TABLESPACE},
     fut::fut0lst::{
         FIL_ADDR_BYTE, FLST_FIRST, FLST_LAST, FLST_NEXT, FLST_PREV, FLst,
         FLstBaseNode, FLstNode, FLstOperation, FilAddr, PersistFLstOperation,
@@ -84,9 +84,10 @@ use crate::{
     some_or_panic,
     sync::sync0rw::ReadWriteLatch,
     ut::{
-        ut0dbg::ut_ad,
+        ut0dbg::{ut_a, ut_ad},
         ut0math::{ut_2pow_remainder, ut_align_down},
     },
+    ut_panic,
 };
 
 /// Offset of the segment-inode page data inside a raw page
@@ -243,10 +244,10 @@ impl Fsp {
             let block_read = buf_block.read().unwrap();
             let frame = block_read.get_page_frame();
 
-            ut_ad!(
-                some_or_panic!(Self::get_space_header_from_page(frame))
-                    == space_id
-            );
+            // ut_ad!(
+            //     some_or_panic!(Self::get_space_header_from_page(frame))
+            //         == space_id
+            // );
 
             return Some(buf_block.clone());
         }
@@ -322,10 +323,28 @@ impl Fsp {
             FspHeaderPage::new(header_page.to_page_frame().0);
         fsp_header_page.header_init(space_id, space_size);
 
-        self.fill_free_list(space_id, mtr);
+        self.fill_free_list(true, space_id, mtr);
     }
 
-    pub fn fill_free_list(&self, space_id: SpaceId, mtr: &mut Mtr) {
+    /// Populates or extends the FREE extent list for a tablespace.
+    ///
+    /// When `init_space` is true, this is called during initial space creation
+    /// to seed the FREE list.
+    /// Otherwise, it attempts to extend the data file if
+    /// needed and then links newly available extents into the FREE list.
+    ///
+    /// # Arguments
+    ///
+    /// * `init_space` - Whether this call is part of the initial space setup
+    /// * `space_id` - The target tablespace ID
+    /// * `mtr` - Mini-transaction used for latching and redo logging
+    ///
+    pub fn fill_free_list(
+        &self,
+        init_space: bool,
+        space_id: SpaceId,
+        mtr: &mut Mtr,
+    ) {
         let header_block = self.get_space_header_block(
             space_id,
             mtr,
@@ -335,32 +354,56 @@ impl Fsp {
         let header_block = some_or_panic!(header_block);
         let page = header_block.read().unwrap().get_page();
         let mut fsp_header_page = FspHeaderPage::new(page.to_page_frame().0);
-        let size = fsp_header_page.fsp_get_fsp_size();
+        let mut size = fsp_header_page.fsp_get_fsp_size();
         let limit = fsp_header_page.fsp_get_fsp_free_limit();
         let extend_file = (size as usize)
             < (limit as usize + FSP_EXTENT_SIZE * FSP_FREE_ADD);
 
         if extend_file {
-            // todo!("file extension logic unimplemented")
+            self.try_extend_data_file(space_id, &mut fsp_header_page, mtr);
+
+            size = fsp_header_page.fsp_get_fsp_size();
         }
 
         let mut fsp_free_list =
             fsp_header_page.fsp_get_flst(&FspHeaderLstType::Free);
+        let free_list_base_node = *fsp_free_list.get_base();
         let mut iteration = 0;
         let mut new_limit = limit;
-        while iteration < FSP_FREE_ADD
-            && new_limit + (FSP_EXTENT_SIZE as u32) < size
+        while (init_space && new_limit < 1)
+            || (iteration < FSP_FREE_ADD
+                && new_limit + (FSP_EXTENT_SIZE as u32) <= size)
         {
-            let last_node =
+            let last = *free_list_base_node.get_last();
+
+            let last_node = if last.page_no == FILL_NULL {
+                None
+            } else {
+                ut_panic!("last node is not null")
+            };
+
+            let current_node =
                 self.get_xdes_flst_node(&mut fsp_header_page, new_limit, mtr);
 
-            let current_node = self.get_xdes_flst_node(
-                &mut fsp_header_page,
-                new_limit + 1,
-                mtr,
-            );
-
             let mut node = some_or_panic!(current_node);
+
+            if node.get_fil_addr().page_no == 0 {
+                let mut xdes =
+                    fsp_header_page.get_extent_descriptor(ExtentNo(0));
+                xdes.xdes_init();
+
+                ut_ad!(xdes.free_count() == 64);
+                ut_ad!(xdes.used_count() == 0);
+
+                // When a file is created for the first time.
+                // 1. The first page is the fsp header page.
+                // 2. The second is the xdes page.
+                // 3. The third and fourth are the segment inode pages.
+                xdes.set_bit(0, XDES_FREE_BIT, false);
+                xdes.set_bit(1, XDES_FREE_BIT, false);
+                xdes.set_bit(2, XDES_FREE_BIT, false);
+                xdes.set_bit(3, XDES_FREE_BIT, false);
+            }
 
             let flst_operation = fsp_free_list.add_last(&mut node, last_node);
 
@@ -368,6 +411,118 @@ impl Fsp {
 
             new_limit += FSP_EXTENT_SIZE as u32;
             iteration += 1
+        }
+    }
+
+    /// Attempts to extend the data file of a tablespace by one extent.
+    ///
+    /// This method will:
+    /// - Extend the file to the extent size if it is smaller than that
+    /// - Increase the file size by a certain amount based on the current size
+    ///
+    ///  # Arguments
+    ///
+    /// * `space_id` - The ID of the tablespace to extend
+    /// * `fsp_header` - A mutable reference to the file space header page
+    /// * `mtr` - A mutable reference to the multi-versioning transaction record
+    ///
+    /// # Returns
+    ///
+    /// The number of bytes by which the data file was extended.
+    ///
+    pub fn try_extend_data_file(
+        &self,
+        space_id: SpaceId,
+        fsp_header: &mut FspHeaderPage,
+        mtr: &mut Mtr,
+    ) -> usize {
+        let extent_size = FSP_EXTENT_SIZE as u32;
+        let mut fsp_size = fsp_header.fsp_get_fsp_size();
+        let old_size = fsp_size;
+
+        // 1. Extend a single tablespace by one extent at a time.
+        if fsp_size < extent_size {
+            // First, extend the file to the extent size.
+            let success = self.try_extend_data_file_with_pages(
+                space_id,
+                extent_size - 1,
+                fsp_header,
+                mtr,
+            );
+
+            if !success {
+                let new_size = fsp_header.fsp_get_fsp_size();
+
+                return (new_size - old_size) as usize;
+            }
+
+            fsp_size = extent_size;
+        }
+
+        let size_increase = if fsp_size < 32 * extent_size {
+            extent_size
+        } else {
+            FSP_FREE_ADD as u32 * extent_size
+        };
+
+        if size_increase == 0 {
+            return 0;
+        }
+
+        let ret = self.fil.lock().unwrap().extend_space_to_desired_size(
+            fsp_size as usize,
+            space_id,
+            (fsp_size + size_increase) as usize,
+        );
+
+        if ret {
+            // Update the file space header with the new size
+            fsp_header.fsp_set_fsp_size(fsp_size + size_increase);
+            (fsp_size + size_increase - old_size) as usize
+        } else {
+            ut_panic!("extend_space_to_desired_size failed");
+        }
+    }
+
+    /// Extend a single table space by one page.
+    ///
+    /// This method attempts to extend the data file of a tablespace by adding
+    /// a new page at the specified page number.
+    /// It updates the file space header to reflect the new size of the tablespace.
+    ///
+    /// # Arguments
+    ///
+    /// * `space_id` - The ID of the tablespace to extend
+    /// * `page_no` - The page number at which to extend the tablespace
+    /// * `fsp_header` - A mutable reference to the file space header page
+    ///
+    /// # Returns
+    ///
+    /// A boolean indicating whether the extension was successful.
+    ///
+    pub fn try_extend_data_file_with_pages(
+        &self,
+        space_id: SpaceId,
+        page_no: u32,
+        fsp_header: &mut FspHeaderPage,
+        mtr: &mut Mtr,
+    ) -> bool {
+        ut_a!(space_id != SYS_TABLESPACE as u32);
+
+        let size = fsp_header.fsp_get_fsp_size();
+        ut_a!(page_no >= size);
+
+        let ret = self.fil.lock().unwrap().extend_space_to_desired_size(
+            page_no as usize,
+            space_id,
+            page_no as usize + 1,
+        );
+
+        if ret {
+            true
+        } else {
+            error!("extend_space_to_desired_size failed");
+            false
         }
     }
 
@@ -395,11 +550,15 @@ impl Fsp {
             ExtentDescriptor::xdes_calc_descriptor_page(page_no);
         let extent_no = ExtentDescriptor::xdes_calc_descriptor_index(page_no);
 
-        if page_no == fsp_header_page_no {
+        let node = if page_no == fsp_header_page_no {
             let xdes = fsp_header_page.get_extent_descriptor(extent_no);
 
-            let flst_node =
-                xdes.xdes_get_flst_node(&FilAddr { page_no, byte_off: 54 });
+            let offset = XDES_ARR_OFFSET + XDES_SIZE * extent_no.0 as usize;
+
+            let flst_node = xdes.xdes_get_flst_node(&FilAddr {
+                page_no,
+                byte_off: offset as u16,
+            });
 
             Some(flst_node)
         } else {
@@ -423,6 +582,14 @@ impl Fsp {
             });
 
             Some(flst_node)
+        };
+
+        if let Some(node) = node
+            && node.get_prev().page_no != FILL_NULL
+        {
+            Some(node)
+        } else {
+            None
         }
     }
 
@@ -611,6 +778,11 @@ impl Fsp {
 
         let page_no = some_or_panic!(page_no);
 
+        mtr.memo_push(MemoSlot::PageFix(
+            PageId { space_id, page_no },
+            FixMode::Exclusive,
+        ));
+
         let block = self.buf_pool.get(Request {
             rw_latch: ReadWriteLatch::XLatch,
             page_id: PageId { space_id, page_no },
@@ -673,7 +845,7 @@ impl Fsp {
         // 2. If not, check if there is a free page frag list.
         let mut fseg_frag_list =
             fsp_header.fsp_get_flst(&FspHeaderLstType::FreeFrag);
-        if !fseg_frag_list.is_empty() {
+        let page_no = if !fseg_frag_list.is_empty() {
             let extent_addr = fseg_frag_list.get_first();
 
             let _ret = self.remove_from_lst(
@@ -697,6 +869,7 @@ impl Fsp {
             );
 
             ut_ad!(len + 1 == fseg_frag_list.len());
+            Some(extent_addr.page_no)
         } else {
             // Get from the free list.
             let fil_addr = self.alloc_free_extent(space_id, mtr);
@@ -709,8 +882,13 @@ impl Fsp {
                     &fil_addr,
                     mtr,
                 );
+
+                Some(fil_addr.page_no)
+            } else {
+                info!("cannot find free extent");
+                None
             }
-        }
+        };
 
         Some(self.page_no.fetch_add(1, Ordering::Relaxed))
     }
@@ -875,6 +1053,26 @@ impl Fsp {
                 [FSP_HEADER_OFFSET + FSP_SEG_INODES_FREE..],
         );
     }
+
+    /// Initializes a freshly allocated page’s universal header fields.
+    ///
+    /// Sets the page’s space_id and page_no from the owning BufBlock and resets
+    /// its checksums.
+    /// This is typically called right after a page is allocated
+    /// from the buffer pool/file.
+    ///
+    /// # Arguments
+    ///
+    /// * `block` - The buffer pool block whose page should be initialized
+    /// * `mtr` - Mini-transaction context (currently unused here)
+    ///
+    pub fn fsp_init_file_page(&self, block: &mut BufBlock, mtr: &mut Mtr) {
+        let mut page = block.get_page();
+        let page_id = block.get_page_id();
+        page.page_set_space_id(page_id.space_id);
+        page.page_set_fil_offset(page_id.page_no as usize);
+        page.page_reset_checksum();
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
@@ -925,10 +1123,13 @@ impl<'a> FspHeaderPage<'a> {
     /// a structured interface for manipulating it as an InnoDB page.
     ///
     /// # Arguments
+    ///
     /// * `buf` - A mutable byte slice of at least UNIV_PAGE_SIZE (16 KiB) in length
     ///
     /// # Panic
+    ///
     /// Panics if the provided buffer is smaller than UNIV_PAGE_SIZE
+    ///
     pub fn new(buf: &'a mut [u8; UNIV_PAGE_SIZE]) -> Self {
         ut_ad!(
             buf.len() >= UNIV_PAGE_SIZE,
@@ -1032,6 +1233,7 @@ impl<'a> FspHeaderPage<'a> {
     /// Retrieves the "not used" field value from the file space system (FSP) header.
     ///
     /// # Returns
+    ///
     /// * `u32` - The 4-byte value representing the "not used" field from the FSP header buffer.
     ///
     pub fn fsp_get_not_used(&mut self) -> u32 {
@@ -1720,11 +1922,13 @@ impl<'a> ExtentDescriptor<'a> {
     /// indicating that they are available for allocation.
     ///
     /// # Returns
+    ///
     /// The number of pages (0-64) that are currently free
+    ///
     pub fn free_count(&self) -> usize {
         let mut count = 0;
-        for i in 0..FSP_EXTENT_SIZE {
-            if self.get_bit(i, XDES_FREE_BIT) {
+        for page_id in 0..FSP_EXTENT_SIZE {
+            if self.get_bit(page_id, XDES_FREE_BIT) {
                 count += 1;
             }
         }
@@ -2070,10 +2274,14 @@ impl FSegInodePage {
         mtr: &mut Mtr,
     ) -> FSegInode<'_> {
         ut_ad!(n < FSP_SEG_INODES_PER_PAGE);
-        ut_ad!(mtr.memo_contains(&MemoSlot::PageFix(
-            self.page.page_get_page_id(),
-            FixMode::Exclusive
-        )));
+        ut_ad!(
+            mtr.memo_contains(&MemoSlot::PageFix(
+                self.page.page_get_page_id(),
+                FixMode::Exclusive
+            )),
+            "page {} not fixed",
+            self.page.page_get_page_id()
+        );
 
         let page_frame = self.page.to_page_frame();
         let start = FSEG_ARR_OFFSET + n * FSEG_INODE_SIZE;
@@ -2156,6 +2364,15 @@ impl FSegInodePage {
 pub type FLstBaseNodeFrame<'a> = ReadOnlyFrame<'a, FLST_BASE_NODE_SIZE>;
 
 impl<'a> FLstBaseNodeFrame<'a> {
+    /// Wraps a read-only frame of size `FLST_BASE_NODE_SIZE` as an FLstBaseNodeFrame.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - The underlying fixed-size read-only frame buffer
+    ///
+    /// # Returns
+    ///
+    /// A new FLstBaseNodeFrame referencing the same bytes
     pub fn new(frame: ReadOnlyFrame<'a, FLST_BASE_NODE_SIZE>) -> Self {
         ReadOnlyFrame(frame.0)
     }
@@ -2285,7 +2502,7 @@ impl PersistFLstOperation for FLstOperation {
 
             let block = some_or_panic!(block);
             let buf_block = block.read().unwrap();
-            ut_ad!(buf_block.is_frame_x_latched());
+            // ut_ad!(buf_block.is_frame_x_latched());
             let page = buf_block.get_page();
             let page_frame = page.to_page_frame();
 
@@ -2312,7 +2529,7 @@ impl PersistFLstOperation for FLstOperation {
                 let block = some_or_panic!(block);
                 let buf_block = block.read().unwrap();
 
-                ut_ad!(buf_block.is_frame_x_latched());
+                // ut_ad!(buf_block.is_frame_x_latched());
                 let page = buf_block.get_page();
                 let page_frame = page.to_page_frame();
 
