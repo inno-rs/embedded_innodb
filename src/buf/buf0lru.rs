@@ -232,10 +232,17 @@ impl BufLRU {
             let page = unsafe { UnsafeRef::from_raw(buf_page) };
             self.lru_list.push_front(page);
         } else {
-            // insert after the “old” head
-            let mut cursor =
-                unsafe { self.lru_list.cursor_mut_from_ptr(buf_page) };
-            cursor.insert_after(unsafe { UnsafeRef::from_raw(buf_page) });
+            let old_head = self
+                .lru_old_head
+                .as_ref()
+                .expect("old-head must exist once length >= OLD_MIN_LENGTH");
+
+            // position at old-head and insert after it
+            let mut cursor = unsafe {
+                self.lru_list
+                    .cursor_mut_from_ptr(old_head.as_ref() as *const BufPage)
+            };
+            unsafe { cursor.insert_after(UnsafeRef::from_raw(buf_page)) };
         }
 
         // **Always** mark it as in the list:
@@ -572,7 +579,7 @@ impl BufLRU {
             frame.page_set_space_id(0xFF);
             frame.page_set_fil_offset(0xFF);
 
-            block.buf_block_set_state(BufPageState::BufBlockNotUsed);
+            block.buf_block_set_state(BufBlockNotUsed);
 
             let bp = block.buf_block_get_page_mut();
             self.add_to_free_list_front(bp);
@@ -768,7 +775,6 @@ impl BufLRU {
         for page_ref in self.lru_list.iter().rev().take(budget) {
             candidates.push(page_ref.clone()); // just an UnsafeRef<BufPage> pointer
         }
-        // Now we've dropped the borrow of self.lru_list
 
         // PHASE 2: attempt eviction on each candidate in turn
         for buf_page in candidates {
@@ -824,6 +830,13 @@ impl BufLRU {
     /// Assumes the caller holds both the pool-wide lock (so `pool` is stable)
     /// and the LRU lock (so `self` is stable).
     ///
+    /// // IMPORTANT READ:  Eviction vs flushing:
+    /// Eviction reclaims frames but only from pages that are clean & unpinned.
+    /// Flushing writes dirty pages to disk to *create* more clean candidates.
+    /// Flow: need frame -> try free list -> try evict from LRU tail -> if tail is dirty/pinned,
+    /// trigger a flush batch (LRU or flush-list) -> when batch ends, retry eviction.
+    /// lru_flush_ended is a small hysteresis counter to avoid ping-pong: successful evictions
+    /// count down; a no-progress eviction resets it to 0 so another flush can be requested.
     pub(crate) fn search_and_free_block(
         &mut self,
         pool: &mut BufPoolInner,

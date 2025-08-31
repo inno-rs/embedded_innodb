@@ -545,7 +545,7 @@ pub fn create_blocks_in_buf_pool(
     let total_pages = count + free_page_count;
     buf_pool.open((total_pages) * UNIV_PAGE_SIZE);
     ut_ad!(buf_pool.get_free_list_size() == total_pages);
-    ut_ad!(buf_pool.get_curr_size() == total_pages * UNIV_PAGE_SIZE);
+    ut_ad!(buf_pool.get_curr_size() == total_pages);
 
     for i in 0..count as PageNo {
         let resp = buf_pool.create(0, i, &mut mtr);

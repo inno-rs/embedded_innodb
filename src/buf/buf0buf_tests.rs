@@ -101,7 +101,7 @@ pub(super) mod tests {
         buf_pool.open(10 * UNIV_PAGE_SIZE);
 
         assert_eq!(buf_pool.get_free_list_size(), 10);
-        assert_eq!(buf_pool.get_curr_size(), 10 * UNIV_PAGE_SIZE);
+        assert_eq!(buf_pool.get_curr_size(), 10);
     }
 
     #[rstest]
@@ -119,7 +119,7 @@ pub(super) mod tests {
         // Add some pages, and then retry creating.
         buf_pool.open(10 * UNIV_PAGE_SIZE);
         assert_eq!(buf_pool.get_free_list_size(), 10);
-        assert_eq!(buf_pool.get_curr_size(), 10 * UNIV_PAGE_SIZE);
+        assert_eq!(buf_pool.get_curr_size(), 10);
 
         let resp = buf_pool.create(0, 0, &mut mtr);
         assert!(resp.is_some());
@@ -145,7 +145,7 @@ pub(super) mod tests {
         // Initialize a chunk to have some pages.
         buf_pool.open(10 * UNIV_PAGE_SIZE);
         assert_eq!(buf_pool.get_free_list_size(), 10);
-        assert_eq!(buf_pool.get_curr_size(), 10 * UNIV_PAGE_SIZE);
+        assert_eq!(buf_pool.get_curr_size(), 10);
 
         let resp = buf_pool.create(0, 0, &mut mtr);
         assert!(resp.is_some());
@@ -170,7 +170,7 @@ pub(super) mod tests {
         // Add some pages, and then retry creating.
         buf_pool.open(10 * UNIV_PAGE_SIZE);
         assert_eq!(buf_pool.get_free_list_size(), 10);
-        assert_eq!(buf_pool.get_curr_size(), 10 * UNIV_PAGE_SIZE);
+        assert_eq!(buf_pool.get_curr_size(), 10);
 
         for i in 0..10 {
             let resp = buf_pool.create(0, i, &mut mtr);
@@ -203,7 +203,7 @@ pub(super) mod tests {
         // Initialize a chunk to have some pages.
         buf_pool.open(10 * UNIV_PAGE_SIZE);
         assert_eq!(buf_pool.get_free_list_size(), 10);
-        assert_eq!(buf_pool.get_curr_size(), 10 * UNIV_PAGE_SIZE);
+        assert_eq!(buf_pool.get_curr_size(), 10);
 
         // Get a page from the pool with S latch
         {
@@ -254,7 +254,7 @@ pub(super) mod tests {
         // Initialize a chunk to have some pages.
         buf_pool.open(10 * UNIV_PAGE_SIZE);
         assert_eq!(buf_pool.get_free_list_size(), 10);
-        assert_eq!(buf_pool.get_curr_size(), 10 * UNIV_PAGE_SIZE);
+        assert_eq!(buf_pool.get_curr_size(), 10);
 
         // Get a page from the pool with S latch
 

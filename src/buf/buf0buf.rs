@@ -10,7 +10,7 @@ use tracing::{error, info};
 
 use crate::{
     buf::{
-        buf0flu::{BufFlush, BufFlushType},
+        buf0flu::BufFlush,
         buf0lru::BufLRU,
         buf0rea::BufRea,
         buf0types::{
@@ -400,10 +400,16 @@ impl BufPool {
                 }
             }
             Some(block) => {
+                // Take a *temporary* read, copy the PageId, then drop the guard.
+                let got_pid = {
+                    let g = block.read().unwrap();
+                    g.get_page_id()
+                }; // <-- read guard dropped here
+
                 ut_ad!(
-                    block.read().unwrap().get_page_id() == request.page_id,
+                    got_pid == request.page_id,
                     "Block page_id={} does not match request page_id={}",
-                    block.read().unwrap().get_page_id(),
+                    got_pid,
                     request.page_id
                 );
             }
@@ -822,68 +828,63 @@ impl BufPool {
         mtr: &mut Mtr,
     ) -> Option<Arc<RwLock<BufBlock>>> {
         ut_ad!(mtr.get_mtr_state() == MtrState::MtrActive);
+        let now = ut_time_ms();
+        let pid = PageId { space_id, page_no };
 
-        // 1) grab a free block
+        // 1) grab a free frame
         let block = {
             let mut lru = self.buf_lru.lock().unwrap();
             lru.get_free_block()
         }?;
 
-        // 2) if already present, evict the new one and re‐get
-        if {
+        // 2) if already cached, return that and free the temp frame
+        if let Some(found) = {
             let inner = self.inner.lock().unwrap();
-            inner.page_hash.contains_key(&PageId { space_id, page_no })
+            inner.page_hash.get(&pid).cloned()
         } {
-            // clear the "was_freed" flag while holding the write lock,
-            // then drop it before calling block_free()
             {
-                let mut guard = block.write().unwrap();
-                guard.buf_block_get_page_mut().set_file_page_was_freed(false);
+                let mut g = found.write().unwrap();
+                g.buf_block_get_page_mut().set_file_page_was_freed(false);
             }
-            self.block_free(block.clone()); // safe to grab block lock again
+
+            self.block_free(block.clone());
             return self.get(Request {
                 rw_latch: ReadWriteLatch::NoLatch,
-                page_id: PageId { space_id, page_no },
+                page_id: pid,
                 mode: BUF_GET_NO_LATCH,
                 mtr,
             });
         }
 
-        // 3) initialize as file‐page + hash insert
-        self.page_init(space_id, page_no, block.clone());
-
-        // 4) LRU insert as young
+        // 3–6) init as file page, add to LRU (young), mark accessed, pin
         {
-            let mut guard = block.write().unwrap();
-            let buf_page = guard.buf_block_get_page_mut();
-            self.add_block(buf_page, false);
+            self.page_init(space_id, page_no, block.clone());
+
+            let mut g = block.write().unwrap();
+            let bp = g.buf_block_get_page_mut();
+            self.add_block(bp, false); // young
+            // If you have an explicit buf-fix counter, bump it here:
+            // g.buf_block_buf_fix_inc();
+
+            self.stat.n_pages_created.fetch_add(1, Relaxed);
+            self.set_accessed_make_young(bp, now);
         }
 
-        // 5) bump create‐stat
-        self.stat.n_pages_created.fetch_add(1, Relaxed);
+        // 7) MTR memo pins (ensure this increments your pin count)
+        mtr.memo_push(MemoSlot::PageFix(pid, FixMode::NoLatch));
 
-        // 6) timestamp & possible read‐ahead
-        let now = ut_time_ms();
+        // 8) maintain free margin (no block guards held)
         {
-            let mut guard = block.write().unwrap();
-            let buf_page = guard.buf_block_get_page_mut();
-            self.set_accessed_make_young(buf_page, now);
+            let mut inner = self.inner.lock().unwrap();
+            let mut lru = self.buf_lru.lock().unwrap();
+            let mut fl = self.flusher.lock().unwrap();
+            fl.free_margin(&mut lru, &mut inner);
         }
 
-        // 7) pin in MTR
-        mtr.memo_push(MemoSlot::PageFix(
-            PageId { space_id, page_no },
-            FixMode::NoLatch,
-        ));
-
-        // 8) flush‐margin
-        // let mut fl = self.flusher.lock().unwrap();
-        // fl.free_margin();
-
-        // 9) init on-disk header bytes
+        // 9) initialize FIL header
         {
-            let guard = block.write().unwrap();
-            let page = guard.get_page();
+            let g = block.write().unwrap();
+            let page = g.get_page();
             let frame = page.to_page_frame();
             mach_write_to_4(
                 &mut frame.0[FIL_PAGE_PREV..FIL_PAGE_PREV + 4],
@@ -905,13 +906,7 @@ impl BufPool {
         }
 
         // 10) sanity
-        ut_ad!(
-            self.inner
-                .lock()
-                .unwrap()
-                .page_hash
-                .contains_key(&PageId { space_id, page_no })
-        );
+        ut_ad!(self.inner.lock().unwrap().page_hash.contains_key(&pid));
 
         Some(block)
     }
@@ -919,39 +914,38 @@ impl BufPool {
     /// Invalidates the entire buffer pool.
     ///
     /// This method performs a complete reset of the buffer pool by:
-    /// 1) Waiting for any in-flight flush batches to finish
+    /// 1) Waiting for any in-flight flush batches to finish // Single threaded yet, so might not be relevant now
     /// 2) Draining out all buffer frames via LRU eviction
     /// 3) Resetting all LRU and pool state
     ///
     /// It's typically called during shutdown or when a major reconfiguration
     /// of the database is needed.
     pub fn invalidate(&mut self) {
-        // ─── Phase 1: wait for any outstanding flushes ───
+        // Skipping this part till we implement concurrency in the flusher.
+        /*     // B) For each flush type from LRU .. N_TYPES
+                for i in (BufFlushType::BufFlushLru as usize)
+                    ..(BufFlushType::BufFlushNTypes as usize)
+                {
+                    // 1) At startup/recovery, no new write batches are initializing
+                    ut_ad!(
+                        !self.init_flush()[i],
+                        "invalidate(): init_flush[{}] must be false",
+                        i
+                    );
 
-        // B) For each flush type from LRU .. N_TYPES
-        for i in (BufFlushType::BufFlushLru as usize)
-            ..(BufFlushType::BufFlushNTypes as usize)
-        {
-            // 1) At startup/recovery, no new write batches are initializing
-            ut_ad!(
-                !self.init_flush()[i],
-                "invalidate(): init_flush[{}] must be false",
-                i
-            );
+                    // 2) But we may have an in-flight batch we posted earlier
+                    if self.n_flush()[i] > 0 {
+                        // drop the lock before waiting
 
-            // 2) But we may have an in-flight batch we posted earlier
-            if self.n_flush()[i] > 0 {
-                // drop the lock before waiting
+                        // wait for that batch to finish
+                        // TODO implement flusher
 
-                // wait for that batch to finish
-                // TODO implement flusher
-                //self.flusher.wait_batch_end(BufFlushType::from(i));
-            }
-        }
-
+                    }
+                }
+        */
         // ─── Phase 2: ensure everything’s freed ───
 
-        // TODO implement all_freed()
+        // TODO implement all_freed(). This is for debugging only
         /* ut_ad!(
             self.all_freed(),
             "invalidate(): buffer pool must be empty before LRU eviction"
@@ -992,7 +986,6 @@ impl BufPool {
 
         // Zero‐out stats
         self.stat = Arc::from(BufPoolStats::new());
-        //   self.refresh_io_stats();
     }
 
     /// Returns the number of blocks in the free list.
@@ -1080,13 +1073,16 @@ impl BufPool {
     ///   Allocate the initial chunk(s) and set the pool size.
     ///   After this call returns, `current_size()` will return `pool_size`.
     pub fn open(&self, pool_size: usize) {
-        // 1) Create the chunk (this can still use &self to access `fil`, etc.)
-        let chunk = self.chunk_init(pool_size);
+        ut_ad!(pool_size >= UNIV_PAGE_SIZE);
+        ut_ad!(self.chunks().is_empty());
+        // 1) Create the chunk (this can still use &self to access `fil`, etc.)=
+        let pool_bytes = pool_size / UNIV_PAGE_SIZE * UNIV_PAGE_SIZE; // round down
+        let chunk = self.chunk_init(pool_bytes);
 
         // 2) Lock the inner state and update both fields in one critical section
         let mut inner = self.inner.lock().unwrap();
+        inner.curr_size = chunk.read().unwrap().size;
         inner.chunks.push(chunk);
-        inner.curr_size = pool_size;
     }
 
     // ——————————————————————————————————————————————————
