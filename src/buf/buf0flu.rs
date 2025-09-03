@@ -88,6 +88,15 @@ impl BufFlush {
         }
     }
 
+    /// Creates a new BufFlush instance with its dependencies.
+    ///
+    /// # Arguments
+    /// * `dblwr` - Shared handle to the double write buffer
+    /// * `fil` - Shared handle to the file I/O layer
+    /// * `redo_log` - Shared handle to the redo log
+    ///
+    /// # Returns
+    /// A BufFlush with an empty flush list and no in-flight batches
     pub fn new(
         dblwr: Arc<Mutex<DoubleWriteBuffer>>,
         fil: Arc<Mutex<Fil>>,
@@ -374,8 +383,10 @@ impl BufFlush {
     /// Currently, this is a placeholder for future implementation.
     ///
     /// # Arguments
+    ///
     /// * `buf_block` - The buffer block to initialize
     /// * `new_lsn` - The newest log sequence number (LSN) for this block
+    ///
     pub fn init_for_writing(page_frame: &mut PageFrame, new_lsn: Lsn) {
         // Write the newest modification LSN to the page header and trailer.
         page_frame.0[FIL_PAGE_LSN_RANGE]

@@ -11,8 +11,9 @@ use crate::{
     data::data0types::{DATA_ENGLISH, DATA_NOT_NULL, DATA_VARCHAR, DTuple},
     dict::dict0types::Index,
     fil::fil0types::{
-        FIL_PAGE_DATA, FIL_PAGE_DATA_END, FIL_PAGE_NEXT, FIL_PAGE_OFFSET,
-        FIL_PAGE_PREV, FIL_PAGE_SPACE_ID, FSEG_PAGE_DATA,
+        FIL_PAGE_DATA, FIL_PAGE_DATA_END, FIL_PAGE_END_LSN_CHKSUM_RANGE,
+        FIL_PAGE_NEXT, FIL_PAGE_OFFSET, FIL_PAGE_PREV, FIL_PAGE_SPACE_ID,
+        FSEG_PAGE_DATA,
     },
     innodb::innodb0types::{
         PageFrame, PageId, PageNo, SpaceId, TrxId, UNIV_PAGE_SIZE,
@@ -528,7 +529,7 @@ impl Page {
         let mut i: usize = 0;
         let mut count: usize = 0;
         loop {
-            let n_owned = self.page_dir_get_n_owned(i) as usize;
+            let n_owned = self.page_dir_get_n_owned(i);
 
             if (count + n_owned) > middle {
                 break;
@@ -783,6 +784,18 @@ impl Page {
         self.page_header_set_field(PAGE_N_HEAP, n_recs | (0x8000 & prev_val));
     }
 
+    /// Get the checksum of the page.
+    pub fn page_get_checksum(&self) -> u32 {
+        let page = self.to_page_frame();
+        mach_read_from_4(&page.0[FIL_PAGE_END_LSN_CHKSUM_RANGE])
+    }
+
+    /// Reset the checksum of the page to zero.
+    pub fn page_reset_checksum(&mut self) {
+        let page = self.to_page_frame();
+        mach_write_to_4(&mut page.0[FIL_PAGE_END_LSN_CHKSUM_RANGE], 0);
+    }
+
     /// Calculates the space reserved for directory slots of a given number of records.
     /// The exact value is a fraction number (n * PAGE_DIR_SLOT_SIZE) / PAGE_DIR_SLOT_MIN_N_OWNED,
     /// and it rounded upwards to an integer.
@@ -796,8 +809,7 @@ impl Page {
     /// * The amount of space reserved for directory slots in bytes.
     #[inline(always)]
     pub fn page_dir_calc_reserved_space(n_recs: usize) -> usize {
-        (PAGE_DIR_SLOT_SIZE * n_recs + PAGE_DIR_SLOT_MIN_N_OWNED - 1)
-            / PAGE_DIR_SLOT_MIN_N_OWNED
+        (PAGE_DIR_SLOT_SIZE * n_recs).div_ceil(PAGE_DIR_SLOT_MIN_N_OWNED)
     }
 
     /// Create a B-tree index page.
@@ -836,8 +848,8 @@ impl Page {
             "page needs to be aligned to UNIV_PAGE_SIZE"
         );
 
-        if !mtr.is_none() {
-            page.page_create_write_log(buf, mtr.unwrap());
+        if let Some(mtr) = mtr {
+            page.page_create_write_log(buf, mtr);
         }
 
         /* CREATE THE INFIMUM AND SUPREMUM RECORDS */
@@ -1092,7 +1104,7 @@ impl Page {
 
         let free_space = Self::page_get_free_space_of_empty();
 
-        if occupied > free_space { 0 } else { free_space - occupied }
+        free_space.saturating_sub(occupied)
     }
 
     /// Sets the pointer to the next record on the page.
@@ -1103,7 +1115,7 @@ impl Page {
     ///
     /// # Arguments
     /// * `rec` - The record whose next pointer will be updated
-    /// * `next_rec` - The record that should be set as the next record, or None to indicate end of list
+    /// * `next_rec` - The record that should be set as the next record, or None to indicate the end of the list
     ///
     /// # Returns
     /// * None
@@ -1115,8 +1127,7 @@ impl Page {
         ut_ad!(!self.page_rec_is_supremum(rec));
         ut_ad!(next_rec.is_none() || rec != next_rec.unwrap());
         ut_ad!(
-            next_rec.is_none()
-                || self.page_rec_is_infimum(next_rec.unwrap()) == false
+            next_rec.is_none() || !self.page_rec_is_infimum(next_rec.unwrap())
         );
         ut_ad!(
             next_rec.is_none()
@@ -1684,7 +1695,7 @@ impl Page {
         // page_copy_rec_list_to_created_page_write_log
 
         let mut dest_page_cur = PageCur::new(None, buf_block);
-        while self.page_rec_is_supremum(rec) == false {
+        while !self.page_rec_is_supremum(rec) {
             dest_page_cur.page_cur_insert_rec_low(rec, mtr);
             dest_page_cur.page_cur_move_to_next();
 
@@ -1736,7 +1747,7 @@ impl Page {
 
         let free_space = Self::page_get_free_space_of_empty();
 
-        if occupied > free_space { 0 } else { free_space - occupied }
+        free_space.saturating_sub(occupied)
     }
 
     /// Validates the integrity of a page.

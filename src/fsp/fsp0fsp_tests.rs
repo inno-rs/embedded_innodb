@@ -3,6 +3,7 @@ mod tests {
     use rstest::{fixture, rstest};
 
     use crate::{
+        buf::buf0types::{BUF_GET_ALWAYS, Request},
         fil::fil0types::{
             FIL_IBD_FILE_INITIAL_SIZE, FIL_PAGE_END_LSN_CHKSUM, FIL_PAGE_LSN,
             FIL_PAGE_OFFSET, FIL_PAGE_SPACE_ID, FILL_NULL,
@@ -12,7 +13,7 @@ mod tests {
             fsp0types::{ExtentNo, FSegId},
         },
         fut::fut0lst::*,
-        innodb::innodb0types::{RawPage, UNIV_PAGE_SIZE},
+        innodb::innodb0types::{PageId, RawPage, UNIV_PAGE_SIZE},
         mtr::{
             mtr0mtr::Mtr,
             mtr0types::{FixMode, MemoSlot},
@@ -33,7 +34,7 @@ mod tests {
     #[rstest]
     fn test_get_space_header_block(common_fixture: CommonFixture) {
         let buf_pool = common_fixture.buf_pool;
-        create_blocks_in_buf_pool(buf_pool, 1, 1);
+        create_blocks_in_buf_pool(0, buf_pool, 1, 1);
         let fsp = common_fixture.fsp.lock().unwrap();
         let mut mtr = Mtr::new();
         mtr.start();
@@ -52,7 +53,7 @@ mod tests {
         common_fixture: CommonFixture,
     ) {
         let buf_pool = common_fixture.buf_pool;
-        create_blocks_in_buf_pool(buf_pool, 1, 1);
+        create_blocks_in_buf_pool(0, buf_pool, 1, 1);
         let fsp = common_fixture.fsp.lock().unwrap();
         let mut mtr = Mtr::new();
         mtr.start();
@@ -66,7 +67,7 @@ mod tests {
     #[rstest]
     fn test_alloc_seg_inode_page_empty(common_fixture: CommonFixture) {
         let buf_pool = common_fixture.buf_pool;
-        create_blocks_in_buf_pool(buf_pool, 10, 10);
+        create_blocks_in_buf_pool(0, buf_pool, 10, 10);
         let fsp = common_fixture.fsp;
         let fsp = fsp.lock().unwrap();
 
@@ -91,15 +92,26 @@ mod tests {
     #[rstest]
     fn test_alloc_seg_inode_page(common_fixture: CommonFixture) {
         let buf_pool = common_fixture.buf_pool;
-        create_blocks_in_buf_pool(buf_pool, 10, 10);
+        let space_id = 1;
+        create_blocks_in_buf_pool(space_id, buf_pool, 10, 10);
         let fsp = common_fixture.fsp;
         let fsp = fsp.lock().unwrap();
 
         let mut mtr = Mtr::new();
         mtr.start();
 
-        let block =
-            fsp.get_space_header_block(0, &mut mtr, ReadWriteLatch::XLatch);
+        fsp.header_init(space_id, FIL_IBD_FILE_INITIAL_SIZE as u32, &mut mtr);
+
+        mtr.memo_push(MemoSlot::PageFix(
+            PageId { space_id, page_no: 0 },
+            FixMode::Exclusive,
+        ));
+
+        let block = fsp.get_space_header_block(
+            space_id,
+            &mut mtr,
+            ReadWriteLatch::XLatch,
+        );
 
         assert!(block.is_some());
         let buf_block = some_or_panic!(block);
@@ -119,7 +131,7 @@ mod tests {
     #[rstest]
     fn test_seg_inode_verify_free_list(common_fixture: CommonFixture) {
         let buf_pool = common_fixture.buf_pool;
-        create_blocks_in_buf_pool(buf_pool, 10, 10);
+        create_blocks_in_buf_pool(0, buf_pool, 10, 10);
         let fsp = common_fixture.fsp;
         let fsp = fsp.lock().unwrap();
 
@@ -1054,13 +1066,28 @@ mod tests {
     #[rstest]
     fn test_fsp_header_init(common_fixture: CommonFixture) {
         let buf_pool = common_fixture.buf_pool;
-        create_blocks_in_buf_pool(buf_pool, 10, 10);
+        create_blocks_in_buf_pool(1, buf_pool.clone(), 10, 10);
         let fsp = common_fixture.fsp;
         let fsp = fsp.lock().unwrap();
 
         let mut mtr = Mtr::new();
         mtr.start();
 
-        fsp.header_init(0, FIL_IBD_FILE_INITIAL_SIZE as u32, &mut mtr);
+        fsp.header_init(1, FIL_IBD_FILE_INITIAL_SIZE as u32, &mut mtr);
+
+        // make sure only the first 4 pages are marked as used in the xdes entry.
+        let buf_block = buf_pool.get(Request {
+            rw_latch: ReadWriteLatch::NoLatch,
+            page_id: PageId { space_id: 1, page_no: 0 },
+            mode: BUF_GET_ALWAYS,
+            mtr: &mut mtr,
+        });
+
+        let page = some_or_panic!(buf_block).read().unwrap().get_page();
+        let mut fsp_header_page = FspHeaderPage::new(page.to_page_frame().0);
+
+        let extent = fsp_header_page.get_extent_descriptor(ExtentNo(0));
+
+        assert_eq!(extent.used_count(), 4)
     }
 }

@@ -123,6 +123,7 @@ mod tests {
         index.set_n_uniq(1);
 
         create_blocks_in_buf_pool(
+            0,
             buf_pool.clone(),
             page_count,
             free_page_count,

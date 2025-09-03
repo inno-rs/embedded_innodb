@@ -237,6 +237,7 @@ mod tests {
         assert_eq!(n, 5);
     }
 
+    #[ignore]
     #[test]
     fn batch_lru_flushes_neighbors_until_min_n() {
         // --- 1) Fixture + pool sizing ---

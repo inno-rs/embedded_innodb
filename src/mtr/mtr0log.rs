@@ -75,7 +75,7 @@ impl MLog {
                 mach_write_to_2(&mut frame.0[offset..offset + 2], val as u16);
             }
             MlogType::MLog4Bytes => {
-                mach_write_to_4(&mut frame.0[offset..offset + 4], val as u32);
+                mach_write_to_4(&mut frame.0[offset..offset + 4], val);
             }
             _ => ut_panic!("Invalid mlog type for u32 write: {:?}", mlog_type),
         }
@@ -324,8 +324,7 @@ impl MLog {
         // --- 3) COMPRESS & WRITE page_no ---
 
         let page_no = page.page_get_space_id();
-        let n_page =
-            mach_write_compressed(&mut self.buf[log_pos..], page_no as u32);
+        let n_page = mach_write_compressed(&mut self.buf[log_pos..], page_no);
         log_pos += n_page;
 
         // Return where the caller can append payload
@@ -385,7 +384,7 @@ impl MLog {
     ///   offset+length, plus the payload).
     /// * `page` - is an optional mutable page buffer; if `Some`, we write the payload
     ///   into `page[offset..offset+len]`.
-    /// In plain terms: by making page an Option,
+    ///   In plain terms: by making page an Option,
     ///
     /// # Returns
     ///
@@ -433,11 +432,11 @@ impl MLog {
     ///
     ///
     /// Imagine you’re inserting a new secondary‐index entry for customer ID 123:
-    ///1.	Compute your payload: maybe it’s the 16-byte B-tree entry holding the key + record pointer.
-    /// 2.	Call mlog_open_and_write_index(mtr, ptr, MLOG_INDEX_INSERT, 16).
-    /// 	If logging is off, it returns nullptr and you skip all this.
-    ///	Otherwise it grows the log buffer by 11 + 16 bytes, writes the 1-byte type and reserves room for the varints.
-    /// 3.	Fill in the 16-byte payload at the returned pointer.
+    /// 1. Compute your payload: maybe it’s the 16-byte B-tree entry holding the key + record pointer.
+    /// 2. Call mlog_open_and_write_index(mtr, ptr, MLOG_INDEX_INSERT, 16).
+    ///    If logging is off, it returns nullptr, and you skip all this.
+    ///    Otherwise, it grows the log buffer by 11 + 16 bytes, writes the 1-byte type, and reserves room for the varints.
+    /// 3. Fill in the 16-byte payload at the returned pointer.
     ///
     ///
     /// Reserves log space for an index write operation and prepares a buffer for the payload.

@@ -131,7 +131,7 @@ impl Mtr {
                 || self.mtr_state == MtrState::MtrCommitting
         );
 
-        self.memo.iter().any(|&x| x == *slot)
+        self.memo.contains(slot)
     }
 
     /// Releases a specific resource from the mini-transaction's memo list.
@@ -376,8 +376,6 @@ impl Mtr {
     /// # Returns
     /// The unsigned 64-bit integer value read from the buffer
     ///
-    /// # Panics
-    /// Panics if the buffer is less than 8 bytes
     pub fn read_uint64(&self, buf: &[u8]) -> u64 {
         ut_ad!(self.is_active(), "read_uint64 only in ACTIVE state");
         // ut_ad!(self.memo_contains_page(ptr, PAGE_S_FIX) || self.memo_contains_page(ptr, PAGE_X_FIX));

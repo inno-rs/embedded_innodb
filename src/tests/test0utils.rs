@@ -18,7 +18,9 @@ use crate::{
     },
     dict::dict0types::{Column, Field, Index},
     fil::fil0types::FIL_PAGE_DATA,
-    innodb::innodb0types::{PageId, PageNo, UNIV_PAGE_SIZE, UNIV_SQL_NULL},
+    innodb::innodb0types::{
+        PageId, PageNo, SpaceId, UNIV_PAGE_SIZE, UNIV_SQL_NULL,
+    },
     lock::lock0lock::LockSys,
     mach::mach0data::mach_write_to_4,
     mtr::{
@@ -530,10 +532,13 @@ pub fn create_new_fields(n: usize) -> Vec<Field> {
 ///
 /// # Arguments
 ///
+/// `space_id` - The space ID to use for creating pages
 /// * `buf_pool` - The buffer pool to add blocks to
 /// * `count` - The number of blocks to add to the buffer pool
+/// * `free_page_count` - The number of free pages
 ///
 pub fn create_blocks_in_buf_pool(
+    space_id: SpaceId,
     buf_pool: Arc<BufPool>,
     count: usize,
     free_page_count: usize,
@@ -548,7 +553,7 @@ pub fn create_blocks_in_buf_pool(
     ut_ad!(buf_pool.get_curr_size() == total_pages);
 
     for i in 0..count as PageNo {
-        let resp = buf_pool.create(0, i, &mut mtr);
+        let resp = buf_pool.create(space_id, i, &mut mtr);
         ut_ad!(resp.is_some());
     }
 
@@ -558,7 +563,7 @@ pub fn create_blocks_in_buf_pool(
     for i in 0..count as PageNo {
         let buf_block = buf_pool.get(Request {
             rw_latch: ReadWriteLatch::NoLatch,
-            page_id: PageId { space_id: 0, page_no: i },
+            page_id: PageId { space_id, page_no: i },
             mode: BUF_GET_ALWAYS,
             mtr: &mut mtr,
         });

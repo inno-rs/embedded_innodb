@@ -325,7 +325,7 @@ impl Fil {
         })?
     }
 
-    /// Retrieves the type of a space by its ID.
+    /// Retrieves the type of space by its ID.
     ///
     /// # Arguments
     ///
