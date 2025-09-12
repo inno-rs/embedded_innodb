@@ -19,11 +19,12 @@ mod tests {
             buf0types::{BufBlock, BufIoFix, BufPageState},
         },
         fil::fil0fil::Fil,
-        innodb::innodb0types::{PageNo, SpaceId, UNIV_PAGE_SIZE},
+        innodb::innodb0types::UNIV_PAGE_SIZE,
         log::log0log::Log,
         os::{os0io::OsIo, os0runtime::create_runtime},
         tests::test0utils,
     };
+    use crate::innodb::innodb0types::{PageNo, SpaceId};
 
     struct BufFluFixture {
         buf_flu: BufFlush,
@@ -236,86 +237,84 @@ mod tests {
         let n = flusher.batch(&mut pool, &mut lru, BufFlushList, 5, 0, 0);
         assert_eq!(n, 5);
     }
+    
+        #[test]
+        fn batch_lru_flushes_neighbors_until_min_n() {
+            // --- 1) Fixture + pool sizing ---
+            let mut fixture = BufFluFixture::new();
+            let flusher = &mut fixture.buf_flu;
 
-    #[ignore]
-    #[test]
-    fn batch_lru_flushes_neighbors_until_min_n() {
-        // --- 1) Fixture + pool sizing ---
-        let mut fixture = BufFluFixture::new();
-        let flusher = &mut fixture.buf_flu;
+            let mut pool = BufPoolInner::new();
+            // ensure a non-trivial read_ahead_area / scan_len
+            pool.set_curr_size(1024);
 
-        let mut pool = BufPoolInner::new();
-        // ensure a non-trivial read_ahead_area / scan_len
-        pool.set_curr_size(1024);
-
-        // --- 2) Create a real tablespace with a UNIQUE filename ---
-        let space_id: SpaceId = 123;
-        let table = format!(
-            "t_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-
-        {
-            let mut fil = fixture.fil.lock().unwrap();
-            fil.create_new_single_table_space(space_id, &table, 0, 10_000)
-                .expect("failed to create test tablespace");
-        }
-
-        // --- 3) Seed LRU tail with dirty, relocatable pages; index in page-hash ---
-        let mut lru = BufLRU::new();
-        let want = 3usize; // we expect to flush at least this many
-        let total = 12usize; // number of pages we seed at the cold end
-
-        for i in 0..total {
-            let owning = test0utils::create_raw_page();
-            let blk: Arc<RwLock<crate::buf::buf0types::BufBlock>> =
-                owning.buf_block.clone();
+            // --- 2) Create a real tablespace with a UNIQUE filename ---
+            let space_id: SpaceId = 123;
+            let table = format!(
+                "t_{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
 
             {
-                // configure page: in-file, (space_id, page_no), dirty, relocatable, "old"
-                let mut g = blk.write().unwrap();
-                g.buf_block_set_state(BufPageState::BufBlockFilePage);
-                let pg = g.buf_block_get_page_mut();
-
-                pg.set_in_file();
-                pg.set_space_id(space_id);
-                pg.set_page_no(i as PageNo);
-
-                // mark dirty
-                pg.set_oldest_modification(100);
-                pg.set_newest_modification(200);
-
-                // relocatable (not in I/O and no fixers)
-                pg.buf_page_set_io_fix(BufIoFix::BufIoNone);
-                pg.set_buf_page_io_fix_count(0);
-
-                // treat as "old" so neighbors are eligible under LRU rules
-                pg.set_old(true);
-
-                // put at cold tail
-                lru.add_block_to_end_low(pg);
+                let mut fil = fixture.fil.lock().unwrap();
+                fil.create_new_single_table_space(space_id, &table, 0, 10_000)
+                    .expect("failed to create test tablespace");
             }
 
-            // index into the page-hash (what try_neighbors() looks up)
-            {
-                let g = blk.read().unwrap();
-                let pid = g.buf_block_get_page().get_page_id();
-                pool.page_hash_mut().insert(pid, blk.clone());
+            // --- 3) Seed LRU tail with dirty, relocatable pages; index in page-hash ---
+            let mut lru = BufLRU::new();
+            let want = 3usize; // we expect to flush at least this many
+            let total = 12usize; // number of pages we seed at the cold end
+
+            for i in 0..total {
+                let owning = test0utils::create_raw_page();
+                let blk: Arc<RwLock<crate::buf::buf0types::BufBlock>> =
+                    owning.buf_block.clone();
+
+                {
+                    // configure page: in-file, (space_id, page_no), dirty, relocatable, "old"
+                    let mut g = blk.write().unwrap();
+                    g.buf_block_set_state(BufPageState::BufBlockFilePage);
+                    let pg = g.buf_block_get_page_mut();
+
+                    pg.set_in_file();
+                    pg.set_space_id(space_id);
+                    pg.set_page_no(i as PageNo);
+
+                    // mark dirty
+                    pg.set_oldest_modification(100);
+                    pg.set_newest_modification(200);
+
+                    // relocatable (not in I/O and no fixers)
+                    pg.buf_page_set_io_fix(BufIoFix::BufIoNone);
+                    pg.set_buf_page_io_fix_count(0);
+
+                    // treat as "old" so neighbors are eligible under LRU rules
+                    pg.set_old(true);
+
+                    // put at cold tail
+                    lru.add_block_to_end_low(pg);
+                }
+
+                // index into the page-hash (what try_neighbors() looks up)
+                {
+                    let g = blk.read().unwrap();
+                    let pid = g.buf_block_get_page().get_page_id();
+                    pool.page_hash_mut().insert(pid, blk.clone());
+                }
             }
+
+            // --- 4) Run LRU batch flush; must reach min_n across neighborhoods ---
+            let n = flusher.batch(&mut pool, &mut lru, BufFlushLru, want, 0, 0);
+            assert_eq!(
+                n, want,
+                "LRU branch should flush up to min_n across neighborhoods"
+            );
         }
-
-        // --- 4) Run LRU batch flush; must reach min_n across neighborhoods ---
-        let n = flusher.batch(&mut pool, &mut lru, BufFlushLru, want, 0, 0);
-        assert_eq!(
-            n, want,
-            "LRU branch should flush up to min_n across neighborhoods"
-        );
-    }
-
     #[test]
     fn batch_flush_list_does_not_flush_clean_pages() {
         let mut fixture = BufFluFixture::new();

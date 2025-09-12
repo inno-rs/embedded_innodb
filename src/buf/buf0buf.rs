@@ -1,11 +1,10 @@
+use intrusive_collections::{LinkedList, UnsafeRef};
 use std::{
     alloc::{Layout, alloc_zeroed},
     collections::HashMap,
     ops::DerefMut,
     sync::{Arc, Mutex, RwLock, atomic::Ordering::Relaxed},
 };
-
-use intrusive_collections::{LinkedList, UnsafeRef};
 use tracing::{error, info};
 
 use crate::{
@@ -153,24 +152,6 @@ impl BufPoolInner {
         self.curr_size = curr_size;
     }
 
-    pub(crate) fn set_page_hash(
-        &mut self,
-        page_hash: HashMap<PageId, Arc<RwLock<BufBlock>>>,
-    ) {
-        self.page_hash = page_hash;
-    }
-
-    pub(crate) fn set_flush_list(
-        &mut self,
-        flush_list: LinkedList<FlushListAdapter>,
-    ) {
-        self.flush_list = flush_list;
-    }
-
-    pub(crate) fn set_chunks(&mut self, chunks: Vec<Arc<RwLock<BufChunk>>>) {
-        self.chunks = chunks;
-    }
-
     pub(crate) fn set_lru_flush_ended(&mut self, lru_flush_ended: usize) {
         self.lru_flush_ended = lru_flush_ended;
     }
@@ -232,11 +213,11 @@ impl BufPool {
     ///
     /// This method attempts to get an available buffer block from the free list
     /// for reuse. If successful, the block is removed from the free list.
-    ///
+    /// This method runs continuously till it gets free block
     /// # Returns
     /// * `Some(BufBlock)` - A free buffer block if available
     /// * `None` - If no free blocks are available
-    pub fn get_free_block(&self) -> Option<Arc<RwLock<BufBlock>>> {
+    pub fn get_free_block_blocking(&self) -> Option<Arc<RwLock<BufBlock>>> {
         let mut n_iterations = 1;
         // remember the monitor state if you re-implement that…
         // let mut started_monitor = false;
@@ -299,6 +280,48 @@ impl BufPool {
 
             n_iterations += 1;
         }
+    }
+
+    /// Retrieves a free block from the buffer pool's free list.
+    ///
+    /// This method attempts to get an available buffer block from the free list
+    /// for reuse. If successful, the block is removed from the free list.
+    /// This method is created to pass the unit tests. But get_free_block_waiting()
+    /// is the real C++ impl
+    ///
+    /// # Returns
+    /// * `Some(BufBlock)` - A free buffer block if available
+    /// * `None` - If no free blocks are available
+    pub fn get_free_block(&self) -> Option<Arc<RwLock<BufBlock>>> {
+        // Fast path: free list only
+        if let Some(b) = {
+            // Keep lock order consistent: inner -> lru
+            let _inner = self.inner.lock().unwrap();
+            let mut lru = self.buf_lru.lock().unwrap();
+            lru.get_free_only()
+        } {
+            return Some(b);
+        }
+
+        // Single bounded eviction attempt (non-blocking)
+        if self.search_and_free_block(1) {
+            let mut lru = self.buf_lru.lock().unwrap();
+            if let Some(b) = lru.get_free_only() {
+                return Some(b);
+            }
+        }
+
+        // Best-effort flush margin (still non-blocking)
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let mut lru = self.buf_lru.lock().unwrap();
+            self.flusher.lock().unwrap().free_margin(&mut lru, &mut inner);
+        }
+        self.try_free_flushed_blocks();
+
+        // Final check; if still nothing, we’re done
+        let mut lru = self.buf_lru.lock().unwrap();
+        lru.get_free_only()
     }
 
     /// Retrieves a buffer block for the requested page.
@@ -485,8 +508,7 @@ impl BufPool {
     /// `Arc<RwLock<BufBlock>>` if we are able to find a free block in the lru list.
     /// `None`, otherwise.
     pub fn block_alloc(&self) -> Option<Arc<RwLock<BufBlock>>> {
-        let mut lru = self.buf_lru.lock().unwrap();
-        let buf_block = lru.get_free_block();
+        let buf_block = self.get_free_block();
 
         if let Some(buf_block) = &buf_block {
             buf_block
@@ -730,6 +752,10 @@ impl BufPool {
     /// * `space_id` - The ID of the tablespace containing the page
     /// * `page_no` - The page number within the tablespace
     /// * `buf_block` - The buffer block to initialize
+    ///
+    /// Lifecycle: free list (unused, non-file) → page_init() sets (space_id,page_no) + in_file=true
+    /// → LRU (and maybe flush list if dirty)
+    /// → evict → clear identity + flags → back to free list (unused, non-file).
     pub fn page_init(
         &self,
         space_id: SpaceId,
@@ -758,6 +784,10 @@ impl BufPool {
         let result = inner
             .page_hash
             .insert(PageId { space_id, page_no }, buf_block.clone());
+        {
+            let mut blk = buf_block.write().unwrap();
+            blk.buf_block_get_page_mut().set_is_in_hash_map(true);
+        }
         ut_ad!(result.is_none(), "failed to insert page into hash map");
     }
 
@@ -831,11 +861,11 @@ impl BufPool {
         let now = ut_time_ms();
         let pid = PageId { space_id, page_no };
 
-        // 1) grab a free frame
-        let block = {
-            let mut lru = self.buf_lru.lock().unwrap();
-            lru.get_free_block()
-        }?;
+        // 1) grab a free block
+        let block = match self.get_free_block() {
+            Some(b) => b,
+            None => return None,
+        };
 
         // 2) if already cached, return that and free the temp frame
         if let Some(found) = {
@@ -1071,18 +1101,43 @@ impl BufPool {
     /// # Arguments
     /// * `pool_size` - The size of the buffer pool to initialize (in bytes)
     ///   Allocate the initial chunk(s) and set the pool size.
-    ///   After this call returns, `current_size()` will return `pool_size`.
+    ///   After this call returns, `current_size()` will return `pool_size`
     pub fn open(&self, pool_size: usize) {
         ut_ad!(pool_size >= UNIV_PAGE_SIZE);
-        ut_ad!(self.chunks().is_empty());
-        // 1) Create the chunk (this can still use &self to access `fil`, etc.)=
-        let pool_bytes = pool_size / UNIV_PAGE_SIZE * UNIV_PAGE_SIZE; // round down
-        let chunk = self.chunk_init(pool_bytes);
+        // reset global state
+        self.clear_page_hash();
+        self.set_freed_page_clock(0);
+        self.clear_chunks();
+        self.set_lru_flush_ended(0);
+        self.set_init_flush([false; BufFlush::N_TYPES]);
+        self.set_n_flush([0; BufFlush::N_TYPES]);
 
-        // 2) Lock the inner state and update both fields in one critical section
-        let mut inner = self.inner.lock().unwrap();
-        inner.curr_size = chunk.read().unwrap().size;
-        inner.chunks.push(chunk);
+        // reset LRU “old” markers and CLEAR the free list ONCE here
+        {
+            let mut lru = self.buf_lru.lock().unwrap();
+            lru.set_lru_old_head(None);
+            lru.set_lru_old_len(0);
+            lru.clear_free_list(); // <-- clear BEFORE chunk_init
+            ut_ad!(lru.lru_old_len() == 0);
+        }
+
+        // build new chunk; chunk_init must add all frames to free list
+        let pool_bytes = (pool_size / UNIV_PAGE_SIZE) * UNIV_PAGE_SIZE;
+        let chunk = self.chunk_init(pool_bytes);
+        let chunk_pages = { chunk.read().unwrap().size };
+
+        self.add_chunk_to_memory(chunk);
+        self.set_current_size(chunk_pages);
+
+        // stats
+        self.stat.reset();
+
+        // invariant
+        ut_ad!(
+            self.buf_lru.lock().unwrap().get_free_list_size()
+                == self.current_size(),
+            "every frame should start on the free list"
+        );
     }
 
     // ——————————————————————————————————————————————————
@@ -1405,5 +1460,21 @@ impl BufPool {
 
     pub(crate) fn stat(&self) -> Arc<BufPoolStats> {
         self.stat.clone()
+    }
+
+    // Clear the page hash map.
+    fn clear_page_hash(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.page_hash.clear();
+    }
+
+    fn clear_chunks(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.chunks.clear();
+    }
+
+    fn add_chunk_to_memory(&self, chunk: Arc<RwLock<BufChunk>>) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.chunks.push(chunk);
     }
 }

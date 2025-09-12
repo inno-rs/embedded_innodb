@@ -76,6 +76,17 @@ impl BufPoolStats {
             n_pages_not_made_young: AtomicU64::new(0),
         }
     }
+
+    pub fn reset(&self) {
+        self.n_pages_get.store(0, Ordering::Relaxed);
+        self.n_pages_read.store(0, Ordering::Relaxed);
+        self.n_pages_written.store(0, Ordering::Relaxed);
+        self.n_pages_created.store(0, Ordering::Relaxed);
+        self.n_ra_pages_read.store(0, Ordering::Relaxed);
+        self.n_ra_pages_evicted.store(0, Ordering::Relaxed);
+        self.n_pages_made_young.store(0, Ordering::Relaxed);
+        self.n_pages_not_made_young.store(0, Ordering::Relaxed);
+    }
 }
 
 /// Represents the I/O status of a buffer page.
