@@ -1,8 +1,9 @@
 #[cfg(test)]
 pub(super) mod tests {
-    use std::sync::{Arc, Mutex, atomic::Ordering::Relaxed};
-
+    use crate::buf::buf0types::BufBlock;
     use rstest::{fixture, rstest};
+    use std::sync::atomic::Ordering;
+    use std::sync::{Arc, Mutex, RwLock, atomic::Ordering::Relaxed};
 
     use crate::{
         buf::{
@@ -801,5 +802,75 @@ pub(super) mod tests {
 
         // and our readahead‐eviction counter (since page was “cold”) must have bumped
         assert_eq!(stats.n_ra_pages_evicted.load(Relaxed), 1);
+    }
+
+    #[rstest]
+    fn get_free_block_returns_exactly_n_blocks_after_open(
+        buf_pool_fixture: BufPoolFixture,
+    ) {
+        // Arrange: open a pool with 4 pages
+        let pool = buf_pool_fixture.buf_pool;
+
+        let n_pages = 4usize;
+        pool.open(n_pages * UNIV_PAGE_SIZE);
+
+        // Act: pull exactly n_pages blocks via the public API
+        let mut blocks: Vec<Arc<RwLock<BufBlock>>> =
+            Vec::with_capacity(n_pages);
+        for k in 0..n_pages {
+            let b = pool.get_free_block();
+            assert!(b.is_some(), "expected Some on call #{k}");
+            blocks.push(b.unwrap());
+        }
+
+        // Assert: all Arcs are distinct (sanity)
+        for i in 0..blocks.len() {
+            for j in (i + 1)..blocks.len() {
+                assert!(
+                    !Arc::ptr_eq(&blocks[i], &blocks[j]),
+                    "duplicate Arc returned from get_free_block()"
+                );
+            }
+        }
+        
+    }
+
+    #[rstest]
+    fn get_free_block_after_block_free_returns_again(
+        buf_pool_fixture: BufPoolFixture,
+    ) {
+        // Arrange: open a small pool, take two blocks
+        let pool = buf_pool_fixture.buf_pool;
+        pool.open(2 * UNIV_PAGE_SIZE);
+
+        let b1 = pool.get_free_block().expect("first block");
+        let _b2 = pool.get_free_block().expect("second block");
+
+        // Act: return one block to the free list via the *public* API
+        // (no direct LRU access)
+        pool.block_free(b1.clone());
+
+        // Now we should be able to get a block again
+        let b3 = pool.get_free_block().expect("block after free");
+        assert!(
+            Arc::ptr_eq(&b1, &b3),
+            "expected the freed block to be re-acquired (implementation detail)"
+        );
+    }
+
+    #[rstest]
+    fn open_resets_stats(buf_pool_fixture: BufPoolFixture) {
+        let pool = buf_pool_fixture.buf_pool;
+        pool.open(2 * UNIV_PAGE_SIZE);
+
+        // simulate activity
+        let _b = pool.get_free_block();
+        pool.stat().n_pages_get.fetch_add(1, Ordering::Relaxed);
+
+        assert!(pool.stat().n_pages_get.load(Ordering::Relaxed) > 0);
+
+        // re-open resets stats
+        pool.open(2 * UNIV_PAGE_SIZE);
+        assert_eq!(pool.stat().n_pages_get.load(Ordering::Relaxed), 0);
     }
 }

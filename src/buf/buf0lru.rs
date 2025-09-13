@@ -402,26 +402,6 @@ impl BufLRU {
         None
     }
 
-    /// Gets a free block from the buffer pool, potentially moving blocks from the LRU list.
-    ///
-    /// This method first tries to get a block from the free list. If the free list
-    /// is empty, it moves blocks from the end of the LRU list (least recently used)
-    /// to the free list, and then returns one of those blocks.
-    ///
-    /// # Returns
-    /// * `Some(BufBlock)` - A free buffer block
-    /// * `None` - If no blocks could be freed (should not happen in a properly sized buffer pool)
-    pub fn get_free_block(&mut self) -> Option<Arc<RwLock<BufBlock>>> {
-        // First, try to get a block from the free list
-        if let Some(block) = self.get_free_only() {
-            return Some(block);
-        }
-
-        // If the free list is empty, we should move blocks from LRU list
-        // This is a simplified implementation that just returns None for now
-        None
-    }
-
     /// Adds a buffer page to the free list.
     ///
     /// This method adds a buffer page to the free list, making it available for
@@ -997,6 +977,12 @@ impl BufLRU {
     ///
     pub fn set_free_list(&mut self, free_list: LinkedList<FreeListAdapter>) {
         self.free_list = free_list;
+    }
+
+    // Clear the free list. Possibly used when we open the new bufpool.
+    pub fn clear_free_list(&mut self) {
+        self.free_list.clear();
+        self.free_list_size = 0;
     }
 
     /// Compute how many pages to flush/evict so that we always have

@@ -28,6 +28,7 @@ pub struct CommonFixture {
     pub buf_rea: Arc<Mutex<BufRea>>,
     pub buf_lru: Arc<Mutex<BufLRU>>,
     pub buf_pool: Arc<BufPool>,
+    pub buf_pool_mut: Arc<Mutex<BufPool>>,
     pub fsp: Arc<Mutex<Fsp>>,
     pub dict: Arc<Dict>,
 }
@@ -66,13 +67,29 @@ impl CommonFixture {
             buf_rea.clone(),
             flusher.clone(),
         ));
+        let buf_pool_mut = Arc::new(Mutex::new(BufPool::new(
+            fil.clone(),
+            buf_lru.clone(),
+            buf_rea.clone(),
+            flusher.clone(),
+        )));
 
         let fsp =
             Arc::new(Mutex::new(Fsp::new(buf_pool.clone(), fil.clone())));
 
         let dict = Arc::new(Dict::new(fsp.clone()));
 
-        Self { runtime, os_io, fil, buf_rea, buf_lru, buf_pool, fsp, dict }
+        Self {
+            runtime,
+            os_io,
+            fil,
+            buf_rea,
+            buf_lru,
+            buf_pool,
+            buf_pool_mut,
+            fsp,
+            dict,
+        }
     }
 }
 
