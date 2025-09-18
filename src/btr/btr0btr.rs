@@ -8,7 +8,6 @@ use std::{
 use tracing::info;
 
 use crate::{
-    btr::btr0cur::BTreeCursor,
     buf::{
         buf0buf::BufPool,
         buf0types::{BUF_GET_ALWAYS, BufBlock, Request},
@@ -56,6 +55,9 @@ pub struct BTree {
     /// Fill factor for the B-tree. If a page is more than this percentage full, we will split it.
     fill_factor: usize,
 }
+
+unsafe impl Sync for BTree {}
+unsafe impl Send for BTree {}
 
 impl BTree {
     /// Creates a new BTree instance.
@@ -117,7 +119,7 @@ impl BTree {
             match prev_rec {
                 None => {}
                 Some(prev) => {
-                    if page.page_rec_is_infimum(prev) == false {
+                    if !page.page_rec_is_infimum(prev) {
                         return Some(prev);
                     }
                 }
@@ -153,21 +155,6 @@ impl BTree {
         None
     }
 
-    /// Utility function to create a new B-tree cursor for the current btree.
-    ///
-    /// # Returns
-    ///
-    /// A new instance of `BTreeCursor` initialized with the current B-tree
-    ///
-    pub fn create_btr_cursor(&self) -> BTreeCursor<'_> {
-        BTreeCursor::new(
-            self,
-            self.index.clone(),
-            self.buf_pool.clone(),
-            self.lock_sys.clone(),
-        )
-    }
-
     /// Retrieves the next user record in the B-tree.
     ///
     /// This method navigates to the next record in the B-tree, potentially
@@ -193,7 +180,7 @@ impl BTree {
             match next_rec {
                 None => {}
                 Some(prev) => {
-                    if page.page_rec_is_supremum(prev) == false {
+                    if !page.page_rec_is_supremum(prev) {
                         return Some(prev);
                     }
                 }
@@ -300,7 +287,7 @@ impl BTree {
         ut_ad!(level < 16);
 
         mtr.write_u32(
-            &page,
+            page,
             PAGE_HEADER + PAGE_LEVEL,
             level as u32,
             MlogType::MLog2Bytes,
@@ -411,7 +398,7 @@ impl BTree {
     /// * `next` - The page number to set as the next page
     /// * `mtr` - The mini-transaction that logs this operation
     pub fn page_set_next(page: &Page, next: PageNo, mtr: &mut Mtr) {
-        mtr.write_u32(page, FIL_PAGE_NEXT, next as u32, MlogType::MLog4Bytes);
+        mtr.write_u32(page, FIL_PAGE_NEXT, next, MlogType::MLog4Bytes);
     }
 
     /// Gets the next page pointer from the given page.
@@ -456,7 +443,7 @@ impl BTree {
     /// * `prev` - The page number to set as the previous page
     /// * `mtr` - The mini-transaction that logs this operation
     pub fn page_set_prev(page: &Page, prev: PageNo, mtr: &mut Mtr) {
-        mtr.write_u32(page, FIL_PAGE_PREV, prev as u32, MlogType::MLog4Bytes);
+        mtr.write_u32(page, FIL_PAGE_PREV, prev, MlogType::MLog4Bytes);
     }
 
     /// Creates and initializes a B-tree page.
@@ -492,8 +479,8 @@ impl BTree {
         BTree::page_set_level(&mut page, level, mtr);
         BTree::page_set_index_id(&mut page, self.index.get_index_id(), mtr);
 
-        BTree::page_set_next(&mut page, FILL_NULL, mtr);
-        BTree::page_set_prev(&mut page, FILL_NULL, mtr);
+        BTree::page_set_next(&page, FILL_NULL, mtr);
+        BTree::page_set_prev(&page, FILL_NULL, mtr);
     }
 
     /// Creates an empty page in a B-tree at the specified level.
@@ -524,8 +511,8 @@ impl BTree {
         };
 
         Self::page_set_level(&mut page, level, mtr);
-        BTree::page_set_next(&mut page, FILL_NULL, mtr);
-        BTree::page_set_prev(&mut page, FILL_NULL, mtr);
+        BTree::page_set_next(&page, FILL_NULL, mtr);
+        BTree::page_set_prev(&page, FILL_NULL, mtr);
     }
 
     /// Retrieves the root page of a B-tree index.
@@ -561,7 +548,7 @@ impl BTree {
 
         ut_ad!(
             mach_read_from_4(&page.to_page_frame().0[fseg_header_offset..])
-                == space_id as u32
+                == space_id
         );
 
         true
@@ -653,7 +640,7 @@ impl BTree {
             mtr,
         );
 
-        if self.index.is_clustered() == false && page.page_is_leaf() {
+        if !self.index.is_clustered() && page.page_is_leaf() {
             let max_trx_id = temp_page.page_get_max_trx_id();
             page.page_set_max_trx_id(max_trx_id, Some(mtr));
         }
@@ -790,33 +777,33 @@ impl BTree {
         buf_block: Arc<RwLock<BufBlock>>,
         f: &mut std::fmt::Formatter<'_>,
     ) -> Result<Vec<PageNo>, std::fmt::Error> {
-        write!(f, "{:-^80}\n", "Start Non-Leaf Page")?;
+        writeln!(f, "{:-^80}", "Start Non-Leaf Page")?;
 
         let mut child_page_nos = Vec::new();
         let buf_block = buf_block.read().unwrap();
         let page = buf_block.get_page();
-        write!(f, "BTree Page: {}\n", buf_block.get_page_id())?;
-        write!(f, "Level: {}\n", Self::page_get_level(&page))?;
-        write!(f, "Next Page: {}\n", page.get_next_page() as u64)?;
-        write!(f, "Previous Page: {}\n", page.get_prev_page() as u64)?;
+        writeln!(f, "BTree Page: {}", buf_block.get_page_id())?;
+        writeln!(f, "Level: {}", Self::page_get_level(&page))?;
+        writeln!(f, "Next Page: {}", page.get_next_page() as u64)?;
+        writeln!(f, "Previous Page: {}", page.get_prev_page() as u64)?;
 
-        write!(f, "{:-^80}\n", "Start Elements In Page")?;
+        writeln!(f, "{:-^80}", "Start Elements In Page")?;
         for rec in page.page_get_user_records() {
-            write!(f, "Record: \n")?;
-            write!(
+            writeln!(f, "Record: ")?;
+            writeln!(
                 f,
-                "Key: {}\n",
+                "Key: {}",
                 rec.rec_get_data(0).unwrap().data_or_panic()
             )?;
             let child_page_no = self.inner_node_get_child_page_no(&rec);
-            write!(f, "Child Page No(Value): {}\n", child_page_no)?;
+            writeln!(f, "Child Page No(Value): {}", child_page_no)?;
 
-            child_page_nos.push(child_page_no as u32);
+            child_page_nos.push(child_page_no);
         }
 
-        write!(f, "{:-^80}\n", "End Elements In The Page")?;
+        writeln!(f, "{:-^80}", "End Elements In The Page")?;
 
-        write!(f, "{:-^80}\n", "End Non-Leaf Page")?;
+        writeln!(f, "{:-^80}", "End Non-Leaf Page")?;
 
         Ok(child_page_nos)
     }
@@ -840,23 +827,23 @@ impl BTree {
         buf_block: Arc<RwLock<BufBlock>>,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
-        write!(f, "{:-^80}\n", "Start Leaf Page")?;
+        writeln!(f, "{:-^80}", "Start Leaf Page")?;
         let buf_block = buf_block.read().unwrap();
         let page = buf_block.get_page();
-        write!(f, "BTree Page: {}\n", buf_block.get_page_id())?;
-        write!(f, "Level: {}\n", Self::page_get_level(&page))?;
-        write!(f, "Next Page: {}\n", page.get_next_page() as u64)?;
-        write!(f, "Previous Page: {}\n", page.get_prev_page() as u64)?;
+        writeln!(f, "BTree Page: {}", buf_block.get_page_id())?;
+        writeln!(f, "Level: {}", Self::page_get_level(&page))?;
+        writeln!(f, "Next Page: {}", page.get_next_page() as u64)?;
+        writeln!(f, "Previous Page: {}", page.get_prev_page() as u64)?;
 
-        write!(f, "{:-^80}\n", "Start Elements In The Page")?;
+        writeln!(f, "{:-^80}", "Start Elements In The Page")?;
 
         for rec in page.page_get_user_records() {
-            write!(f, "Record >> {}\n", rec)?;
+            writeln!(f, "Record >> {}", rec)?;
         }
 
-        write!(f, "{:-^80}\n", "End Elements In The Page")?;
+        writeln!(f, "{:-^80}", "End Elements In The Page")?;
 
-        write!(f, "{:-^80}\n", "End Leaf Page")
+        writeln!(f, "{:-^80}", "End Leaf Page")
     }
 
     /// Formats and prints the entire B-tree index structure.
@@ -878,13 +865,13 @@ impl BTree {
     ) -> std::fmt::Result {
         write!(f, "\n{:-^80}\n", "Start Index")?;
 
-        write!(f, "Index ID: {}\n", self.index.get_index_id())?;
-        write!(
+        writeln!(f, "Index ID: {}", self.index.get_index_id())?;
+        writeln!(
             f,
-            "Number of Unique Fields in Tree: {}\n",
+            "Number of Unique Fields in Tree: {}",
             self.index.get_n_unique_in_tree()
         )?;
-        write!(f, "Fill Factor: {}\n", self.fill_factor)?;
+        writeln!(f, "Fill Factor: {}", self.fill_factor)?;
 
         let mut mtr = Mtr::new();
         mtr.start();
@@ -897,7 +884,7 @@ impl BTree {
             VecDeque::from(vec![self.index.get_root_page_no()]);
         let mut next_level_pages: Vec<PageNo> = vec![];
 
-        while pages.is_empty() == false {
+        while !pages.is_empty() {
             let page_no = pages.pop_front().unwrap();
             let buf_block = self.buf_pool.get(Request {
                 rw_latch: ReadWriteLatch::NoLatch,
@@ -918,13 +905,13 @@ impl BTree {
                 next_level_pages.extend(child_page_nos);
             }
 
-            if pages.is_empty() && next_level_pages.is_empty() == false {
+            if pages.is_empty() && !next_level_pages.is_empty() {
                 pages.extend(next_level_pages.clone());
                 next_level_pages.clear();
             }
         }
 
-        write!(f, "{:-^80}\n", "End Index")
+        writeln!(f, "{:-^80}", "End Index")
     }
 }
 

@@ -421,7 +421,7 @@ impl Fil {
                     "Trying to do i/o to a tablespace which does not exist. i/o type: {}, space_id: {}, page_no: {}, i/o length {} bytes. ",
                     io_request, space_id, page_no, len
                 );
-                return Err(DbErr::DbTablespaceDeleted);
+                return Err(DbErr::TablespaceDeleted);
             }
             Some(sp) => {
                 fil_space.replace(sp.clone());
@@ -504,7 +504,7 @@ impl Fil {
                     "Failed to perform I/O operation: {}. Error: {}",
                     io_request, err
                 );
-                Err(DbErr::DbIoError)
+                Err(DbErr::IoError)
             }
         }
     }
@@ -657,7 +657,7 @@ impl Fil {
         // TODO(Rahul): Handle the other errors.
         if os_file.is_none() {
             error!("Failed to create file for single-table space: {}", path);
-            return Err(DbErr::DbFail(format!(
+            return Err(DbErr::Fail(format!(
                 "Failed to create file for single-table space: {}",
                 path
             )));
@@ -679,7 +679,7 @@ impl Fil {
                     "Failed to set size for single-table space file: {}",
                     path
                 );
-                return Err(DbErr::DbOutOfFileSpace);
+                return Err(DbErr::OutOfFileSpace);
             }
         }
 
@@ -705,7 +705,7 @@ impl Fil {
                 path, e
             );
             error!(error_message);
-            return Err(DbErr::DbFail(error_message));
+            return Err(DbErr::Fail(error_message));
         }
 
         // Create a new single-table space with the specified name, ID, and flags.

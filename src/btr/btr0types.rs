@@ -12,19 +12,20 @@ pub const BTR_ESTIMATE: usize = 1024;
 /// or modifying B-tree nodes. Latches are used to ensure thread safety
 /// during concurrent operations on the B-tree structure.
 #[repr(usize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BtrLatchMode {
     /// Search the record on the leaf, and S-Latch it.
-    BtrSearchLeaf = SLatch as usize,
+    SearchLeaf = SLatch as usize,
     /// Modify the leaf record and X-Latch it.
-    BtrModifyLeaf = XLatch as usize,
+    ModifyLeaf = XLatch as usize,
     /// No latches.
-    BtrNoLatches = NoLatch as usize,
+    NoLatches = NoLatch as usize,
     /// Start modifying the entire btree.
-    BtrModifyTree = 33,
+    ModifyTree = 33,
     /// Continue modifying the entire btree.
-    BtrContModifyTree = 34,
+    ContModifyTree = 34,
     /// Search the previous record.
-    BtrSearchPrev = 35,
+    SearchPrev = 35,
     /// Modify the previous record.
-    BtrModifyPrev = 36,
+    ModifyPrev = 36,
 }

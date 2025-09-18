@@ -201,7 +201,7 @@ impl PageCur {
     /// * If no next record is found.
     pub fn page_cur_move_to_next(&mut self) {
         ut_ad!(
-            self.page_cur_is_after_last() == false,
+            !self.page_cur_is_after_last(),
             "Cursor is after the last record"
         );
 
@@ -224,7 +224,7 @@ impl PageCur {
     /// # Note
     ///
     /// * This method is not yet implemented.
-    fn page_cur_move_to_prev(&mut self) {
+    pub fn page_cur_move_to_prev(&mut self) {
         todo!("Implement move to previous record");
     }
 

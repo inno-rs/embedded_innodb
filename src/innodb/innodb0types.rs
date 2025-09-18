@@ -196,28 +196,28 @@ impl PageFrame<'_> {
 #[derive(Eq, PartialEq, Debug, Display)]
 pub enum DbErr {
     /// Internal error cannot proceed.
-    DbPanic,
+    Panic,
 
     /* Following are the error codes. */
     /// This is a generic error code.
     /// It is used to classify error conditions that can't be represented by other codes.
-    DbError,
+    Error,
     /// I/O error occurred.
-    DbIoError,
+    IoError,
     /// Tablespace does not exist or is being deleted right now.
-    DbTablespaceDeleted,
+    TablespaceDeleted,
     /// A record in an index would not fit on a compressed page,
     /// or it will become bigger than 1/2 free space in a compressed page frame.
-    DbTooBigRecord,
+    TooBigRecord,
     /// Partial Failure code.
-    DbFail(String),
+    Fail(String),
     /// The operating system returned a out of file space error.
-    DbOutOfFileSpace,
+    OutOfFileSpace,
     /// A lock request by a transaction resulted in a deadlock. The transaction was rolled back.
-    DbDeadlock,
+    Deadlock,
     /// A lock request by a transaction resulted in a lock wait.
     /// The thread is suspended internally, and it is put on the lock wait queue.
-    DbLockWait,
+    LockWait,
 }
 
 /// Defines the search modes used when positioning a cursor in the B-tree.

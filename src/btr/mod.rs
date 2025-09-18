@@ -3,4 +3,5 @@
 pub(crate) mod btr0btr;
 mod btr0btr_tests;
 pub(crate) mod btr0cur;
+mod btr0pcur;
 mod btr0types;

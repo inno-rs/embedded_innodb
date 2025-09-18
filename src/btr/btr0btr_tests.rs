@@ -1,9 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use std::{
-        ops::Deref,
-        sync::{Arc, Mutex},
-    };
+    use std::sync::{Arc, Mutex};
 
     use pretty_assertions::assert_eq;
     use rand::{Rng, SeedableRng, rngs::StdRng, seq::SliceRandom};
@@ -173,7 +170,7 @@ mod tests {
     ) -> (BTreeFixture, Page, Vec<DTuple>) {
         let btree = fixture.btree.clone();
         let mut btr_cur = BTreeCursor::new(
-            &fixture.btree,
+            fixture.btree.clone(),
             fixture.index.clone(),
             fixture.buf_pool.clone(),
             fixture.lock_sys.clone(),
@@ -272,7 +269,7 @@ mod tests {
     fn test_create_btr_page(fixture: BTreeFixture) {
         let btree = fixture.btree.clone();
         let mut btr_cur = BTreeCursor::new(
-            &fixture.btree,
+            fixture.btree.clone(),
             fixture.index.clone(),
             fixture.buf_pool.clone(),
             fixture.lock_sys.clone(),
@@ -342,7 +339,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(seed);
 
         let values: Vec<IndexId> =
-            (0..10).map(|_| rng.random::<u64>()).map(|v| IndexId(v)).collect();
+            (0..10).map(|_| rng.random::<u64>()).map(IndexId).collect();
         let mut mtr = Mtr::new();
         mtr.start();
 
@@ -358,7 +355,7 @@ mod tests {
         fixture_with_data: (BTreeFixture, Page, Vec<DTuple>),
     ) {
         let mut btr_cur = BTreeCursor::new(
-            &fixture_with_data.0.btree,
+            fixture_with_data.0.btree.clone(),
             fixture_with_data.0.index.clone(),
             fixture_with_data.0.buf_pool.clone(),
             fixture_with_data.0.lock_sys.clone(),
@@ -446,7 +443,7 @@ mod tests {
     ) {
         let btree = fixture.btree.clone();
         let mut btr_cur = BTreeCursor::new(
-            &fixture.btree,
+            fixture.btree.clone(),
             fixture.index.clone(),
             fixture.buf_pool.clone(),
             fixture.lock_sys.clone(),
@@ -520,7 +517,7 @@ mod tests {
     fn test_optimistic_insert_returns_none(fixture: BTreeFixture) {
         let btree = fixture.btree.clone();
         let mut btr_cur = BTreeCursor::new(
-            &fixture.btree,
+            fixture.btree.clone(),
             fixture.index.clone(),
             fixture.buf_pool.clone(),
             fixture.lock_sys.clone(),
@@ -580,14 +577,14 @@ mod tests {
         let fixture = fixture(1);
         let btree = fixture.btree.clone();
         let btr_cur = BTreeCursor::new(
-            &fixture.btree,
+            fixture.btree.clone(),
             fixture.index.clone(),
             fixture.buf_pool.clone(),
             fixture.lock_sys.clone(),
         );
         let btree = fixture.btree.clone();
         let mut btr_cur = BTreeCursor::new(
-            &fixture.btree,
+            fixture.btree.clone(),
             fixture.index.clone(),
             fixture.buf_pool.clone(),
             fixture.lock_sys.clone(),
@@ -692,7 +689,7 @@ mod tests {
 
             let recs = page.page_get_user_records();
             for r in recs.iter() {
-                records.push(r.clone());
+                records.push(*r);
             }
 
             curr_page_no = BTree::page_get_next(&page);
@@ -715,14 +712,14 @@ mod tests {
         let buf_pool = fixture.buf_pool.clone();
         let btree = fixture.btree.clone();
         let btr_cur = BTreeCursor::new(
-            &fixture.btree,
+            fixture.btree.clone(),
             fixture.index.clone(),
             fixture.buf_pool.clone(),
             fixture.lock_sys.clone(),
         );
         let btree = fixture.btree.clone();
         let mut btr_cur = BTreeCursor::new(
-            &fixture.btree,
+            fixture.btree.clone(),
             fixture.index.clone(),
             fixture.buf_pool.clone(),
             fixture.lock_sys.clone(),
@@ -812,16 +809,16 @@ mod tests {
         while let Some(page) = current_page {
             let recs = page.page_get_user_records();
             for r in recs.iter() {
-                records.push(r.clone());
+                records.push(*r);
             }
 
             let next_page_no = BTree::page_get_next(&page);
-            if next_page_no as u32 != FILL_NULL {
+            if next_page_no != FILL_NULL {
                 let next_block = buf_pool.get(Request {
                     rw_latch: ReadWriteLatch::NoLatch,
                     page_id: PageId {
                         space_id: page.page_get_space_id(),
-                        page_no: next_page_no as u32,
+                        page_no: next_page_no,
                     },
                     mode: BUF_GET_ALWAYS,
                     mtr: &mut mtr,
@@ -852,14 +849,14 @@ mod tests {
         let buf_pool = fixture.buf_pool.clone();
         let btree = fixture.btree.clone();
         let btr_cur = BTreeCursor::new(
-            &fixture.btree,
+            fixture.btree.clone(),
             fixture.index.clone(),
             fixture.buf_pool.clone(),
             fixture.lock_sys.clone(),
         );
         let btree = fixture.btree.clone();
         let mut btr_cur = BTreeCursor::new(
-            &fixture.btree,
+            fixture.btree.clone(),
             fixture.index.clone(),
             fixture.buf_pool.clone(),
             fixture.lock_sys.clone(),
@@ -941,7 +938,7 @@ mod tests {
         let fixture = fixture(100);
         let btree = fixture.btree.clone();
         let mut btr_cur = BTreeCursor::new(
-            &fixture.btree,
+            fixture.btree.clone(),
             fixture.index.clone(),
             fixture.buf_pool.clone(),
             fixture.lock_sys.clone(),
@@ -1075,7 +1072,7 @@ mod tests {
         assert_eq!(page.page_get_data_size(), 15818);
 
         let mut btr_cur = BTreeCursor::new(
-            btree.deref(),
+            btree.clone(),
             fixture.index.clone(),
             buf_pool.clone(),
             lock_sys.clone(),
@@ -1139,7 +1136,7 @@ mod tests {
         assert_eq!(page.page_get_data_size(), 15818);
 
         let mut btr_cur = BTreeCursor::new(
-            btree.deref(),
+            btree.clone(),
             fixture.index.clone(),
             buf_pool.clone(),
             lock_sys.clone(),
@@ -1197,7 +1194,7 @@ mod tests {
         assert_eq!(page.page_get_data_size(), 15818);
 
         let mut btr_cur = BTreeCursor::new(
-            btree.deref(),
+            btree.clone(),
             fixture.index.clone(),
             buf_pool.clone(),
             lock_sys.clone(),
@@ -1316,7 +1313,7 @@ mod tests {
         assert_eq!(page.page_get_n_recs(), 0);
 
         let mut btr_cur = BTreeCursor::new(
-            btree.deref(),
+            btree.clone(),
             fixture_with_page.0.index,
             buf_pool,
             lock_sys,
@@ -1373,7 +1370,7 @@ mod tests {
         assert!(root_recs.is_sorted());
 
         let mut btr_cur = BTreeCursor::new(
-            btree.deref(),
+            btree.clone(),
             fixture.index.clone(),
             buf_pool.clone(),
             lock_sys.clone(),

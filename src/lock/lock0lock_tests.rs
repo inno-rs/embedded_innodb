@@ -8,7 +8,7 @@ mod tests {
     use crate::{
         dict::{dict0table::Table, dict0types::Index},
         innodb::innodb0types::{
-            DbErr::DbLockWait, PageId, TrxId, UNIV_PAGE_SIZE,
+            DbErr::LockWait, PageId, TrxId, UNIV_PAGE_SIZE,
         },
         lock::{
             lock0lock::{
@@ -2704,7 +2704,7 @@ mod tests {
             index.clone(),
             trx1.clone(),
         );
-        assert_eq!(ret.err().unwrap(), DbLockWait);
+        assert_eq!(ret.err().unwrap(), LockWait);
 
         // Not trx2 should fail to insert
         let ret = lock_sys.rec_insert_check_and_lock(

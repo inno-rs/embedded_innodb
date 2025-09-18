@@ -104,7 +104,7 @@ impl BufRea {
 
         if space_id == TRX_SYS_SPACE as u32 {
             error!("trying to read the double write buffer page: {}", page_no);
-            return Err(DbErr::DbFail(format!(
+            return Err(DbErr::Fail(format!(
                 "trying to read the double write buffer page: {}",
                 page_no
             )));

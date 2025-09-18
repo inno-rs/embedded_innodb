@@ -65,7 +65,7 @@ pub struct BufLRU {
     //buf_pool: Weak<Mutex<BufPool>>,
     /// Reserve old_ratio/OLD_RATIO_DIV for old blocks.
     old_ratio: usize,
-    /// List of buffer blocks ordered by least recently used algorithm
+    /// List of buffer blocks ordered by the least recently used algorithm
     lru_list: LinkedList<LruAdapter>,
     /// Pointer to old_ratio/buf_lru_ratio_div. None if LRU length less than BUF_LRU_MIN_LEN.
     lru_old_head: Option<UnsafeRef<BufPage>>,

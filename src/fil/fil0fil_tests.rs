@@ -11,7 +11,7 @@ mod tests {
             fil0types::{FIL_IBD_FILE_INITIAL_SIZE, FilType},
         },
         innodb::innodb0types::{
-            DbErr::DbTablespaceDeleted, IB_FILE_BLOCK_SIZE, PageFrame,
+            DbErr::TablespaceDeleted, IB_FILE_BLOCK_SIZE, PageFrame,
             UNIV_PAGE_SIZE,
         },
         os::{
@@ -265,7 +265,7 @@ mod tests {
         );
 
         assert!(result.is_err());
-        assert_eq!(result.err().unwrap(), DbTablespaceDeleted);
+        assert_eq!(result.err().unwrap(), TablespaceDeleted);
     }
 
     #[rstest]

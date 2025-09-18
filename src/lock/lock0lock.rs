@@ -1623,12 +1623,12 @@ impl LockSys {
             lock_ref.reset();
             lock_ref.rec_reset_nth_bit(heap_no);
 
-            return Err(DbErr::DbDeadlock);
+            return Err(DbErr::Deadlock);
         } else if let Some(wait_lock) = trx.get_wait_lock() {
             trx.trx_set_que_state(TrxQueLockWait);
             ut_ad!(wait_lock == lock.borrow().id);
 
-            return Err(DbErr::DbLockWait);
+            return Err(DbErr::LockWait);
         }
 
         ut_ad!(trx.get_wait_lock().is_none());
