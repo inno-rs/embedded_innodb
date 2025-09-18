@@ -61,7 +61,7 @@ mod tests {
             pg.set_in_file();
             pg.buf_page_set_io_fix(BufIoFix::BufIoNone);
             pg.set_buf_page_io_fix_count(0);
-            lru.add_block_low(pg, false);
+            lru.add_block_low(pg, false, 0);
         }
 
         let mut _before_i = 0usize;

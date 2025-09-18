@@ -154,9 +154,11 @@ pub struct BufPage {
     file_page_was_freed: bool,
 
     /// Timestamp (ms) of the **first** time this page was accessed (0 = not yet set).
-    access_time: u32,
+    access_time: u64,
 
     buf_block: Weak<RwLock<BufBlock>>,
+    /// snapshot of pool->freed_page_clock
+    freed_page_clock: usize,  
 }
 
 // Adapter for intrusive collections to manage flush lists of buffer pages.
@@ -197,6 +199,7 @@ impl BufPage {
             buf_block: Default::default(),
             access_time: 0,
             file_page_was_freed: false,
+            freed_page_clock:0usize,
         }
     }
 
@@ -510,14 +513,14 @@ impl BufPage {
     }
 
     /// Returns the (first) access timestamp, or 0 if never accessed yet.
-    pub fn access_time(&self) -> u32 {
+    pub fn access_time(&self) -> u64 {
         self.access_time
     }
 
     /// Record the first access time (in ms). Subsequent calls do nothing.
     ///
     /// Panics if the page isn’t “in_file” (i.e. not on disk yet).
-    pub fn set_accessed(&mut self, time_ms: u32) {
+    pub fn set_accessed(&mut self, time_ms: u64) {
         // ut_a(bpage->in_file());
         assert!(
             self.in_file(),
@@ -530,13 +533,21 @@ impl BufPage {
         }
     }
 
-    pub fn buf_page_is_accessed(&self) -> u32 {
+    pub fn buf_page_is_accessed(&self) -> u64 {
         assert!(self.in_file(), "buf_page_is_accessed: page must be in_file");
         self.access_time
     }
 
     pub fn set_file_page_was_freed(&mut self, file_page_was_freed: bool) {
         self.file_page_was_freed = file_page_was_freed;
+    }
+
+    pub fn freed_page_clock(&self) -> usize {
+        self.freed_page_clock
+    }
+
+    pub fn set_freed_page_clock(&mut self, c: usize) {
+        self.freed_page_clock = c;
     }
 }
 
@@ -686,6 +697,7 @@ impl BufBlock {
         self.modify_clock.load(Ordering::Relaxed)
     }
 
+    
     /// Gets a Page object that provides methods for accessing the page data.
     ///
     /// # Returns

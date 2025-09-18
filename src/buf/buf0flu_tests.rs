@@ -261,7 +261,7 @@ mod tests {
 
             {
                 let mut fil = fixture.fil.lock().unwrap();
-                fil.create_new_single_table_space(space_id, &table, 0, 10_000)
+                fil.create_new_single_table_space(space_id, &table, 0, 10)
                     .expect("failed to create test tablespace");
             }
 

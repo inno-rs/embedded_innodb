@@ -41,6 +41,8 @@ const NON_MIN_LENGTH: usize = 5;
 /// candidates to “top up” our free‐list.
 const FREE_SEARCH_LEN: usize = 100;
 
+
+
 /// Represents the status of a buffer block after attempting to free it.
 ///
 /// This enum is used to indicate the result of an attempt to free a buffer block,
@@ -77,6 +79,8 @@ pub struct BufLRU {
     free_list_size: usize,
     /// Tracking the lru size
     lru_size: usize,
+    ///It’s the minimum time (in milliseconds) that a page in the old sublist must stay untouched before InnoDB allows it to be promoted (“made young”) when accessed.
+    old_threshold_ms: u64
 }
 
 impl BufLRU {
@@ -92,13 +96,14 @@ impl BufLRU {
     ///
     pub fn new() -> Self {
         BufLRU {
-            old_ratio: 0,
+            old_ratio: 37,  // default = 3.6% of LRU
             lru_list: Default::default(),
             lru_old_head: None,
             lru_old_len: 0,
             free_list: Default::default(),
             free_list_size: 0,
             lru_size: 0,
+            old_threshold_ms:1000,
         }
     }
 
@@ -131,11 +136,11 @@ impl BufLRU {
     ///
     /// Panics if the page is not in a file
     ///
-    pub fn make_young(&mut self, buf_page: &mut BufPage) {
+    pub fn make_young(&mut self, buf_page: &mut BufPage, freed_page_clock:usize) {
         ut_ad!(buf_page.in_file());
 
         self.remove_block(buf_page);
-        self.add_block_low(buf_page, false);
+        self.add_block_low(buf_page, false, freed_page_clock);
     }
 
     /// Moves a page to the end of the buffer pool LRU list.
@@ -225,12 +230,13 @@ impl BufLRU {
     /// * `buf_page` - The buffer page to add to the LRU list
     /// * `old` - Whether to add the page to the old section of the LRU list
     ///
-    pub(crate) fn add_block_low(&mut self, buf_page: &mut BufPage, old: bool) {
+    pub(crate) fn add_block_low(&mut self, buf_page: &mut BufPage, old: bool, freed_page_clock:usize) {
         let length = self.lru_size;
         if !old || length < OLD_MIN_LENGTH {
             // front‐insert
             let page = unsafe { UnsafeRef::from_raw(buf_page) };
             self.lru_list.push_front(page);
+            buf_page.set_freed_page_clock(freed_page_clock);
         } else {
             let old_head = self
                 .lru_old_head
@@ -498,6 +504,9 @@ impl BufLRU {
     pub fn get_lru_size(&self) -> usize {
         self.lru_size
     }
+    
+    
+    
 
     /// Attempts to free a buffer block from the LRU list.
     ///
@@ -849,6 +858,11 @@ impl BufLRU {
     pub fn old_ratio(&self) -> usize {
         self.old_ratio
     }
+
+    pub fn old_threshold_ms(&self) -> u64 {
+        self.old_threshold_ms
+    }
+
 
     /// Gets a reference to the LRU list.
     ///

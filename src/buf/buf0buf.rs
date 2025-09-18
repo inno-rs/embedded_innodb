@@ -40,6 +40,7 @@ use crate::{
     },
     ut_2_power_up, ut_panic,
 };
+use crate::buf::buf0lru::OLD_RATIO_DIV;
 
 /// Buffer Pool manages the caching of database pages in memory.
 ///
@@ -1151,11 +1152,18 @@ impl BufPool {
     /// # Arguments
     /// * `buf_page` - The buffer block to update
     /// * `access_time` - The current access time to compare against the page's last access time
-    pub fn set_accessed_make_young(
-        &self,
-        buf_page: &mut BufPage,
-        access_time: u64,
-    ) {
+    pub fn set_accessed_make_young(&self, buf_page: &mut BufPage, access_time: u64) {
+        ut_ad!(buf_page.in_file());
+
+        if self.peek_if_too_old(buf_page) {
+            // Move block to young end of LRU
+            let mut lru = self.buf_lru.lock().unwrap();
+            lru.make_young(buf_page, self.freed_page_clock());
+        } else if access_time == 0 {
+            // First access: set accessed time
+            let now = ut_time_ms();
+            buf_page.set_accessed(now);
+        }
     }
 
     /// Gets the last access time of a buffer page.
@@ -1169,7 +1177,7 @@ impl BufPool {
     /// # Returns
     /// * `u64` - The last access time of the buffer page
     pub fn buf_page_accessed_time(&self, buf_page: &BufPage) -> u64 {
-        0
+        buf_page.access_time()
     }
 
     /// Increments the freed page counter.
@@ -1201,6 +1209,50 @@ impl BufPool {
         let mut lru = self.buf_lru.lock().unwrap();
         // 3) Call the LRU’s private helper, passing the locked‐pool reference
         lru.search_and_free_block(&mut *inner, &self.stat, n_iterations)
+    }
+
+    pub fn peek_if_too_old(&self, buf_page: &BufPage) -> bool {
+        let inner = self.inner.lock().unwrap();
+
+        // 1. If eviction never started yet, nothing is old.
+        // freed_page_clock counts how many pages have been freed/evicted since startup.
+        if inner.freed_page_clock == 0 {
+            return false;
+        }
+
+        // 2. If the page is marked old, check age threshold.
+        if buf_page.is_old() {
+            let access_time = buf_page.access_time();
+            if access_time > 0 {
+                let elapsed = ut_time_ms().saturating_sub(access_time);
+                if elapsed >= self.buf_lru.lock().unwrap().old_threshold_ms() {
+                    return true;
+                }
+            }
+
+            self.stat
+                .n_pages_not_made_young
+                .fetch_add(1, Relaxed);
+            return false;
+        }
+
+        /*
+        	For young pages, InnoDB doesn’t want to promote them too aggressively.
+        •	So it uses a relative age heuristic:
+        •	Compare the pool’s current freed_page_clock vs. the snapshot when this page was last freed/inserted (page_freed).
+        •	If the pool has freed enough pages since then → the page is “too old”.
+        •	The cutoff is scaled by:
+        •	curr_size (buffer pool size in pages),
+        •	OLD_RATIO_DIV (1024),
+        •	old_ratio (default 37).
+        */
+        let freed = inner.freed_page_clock & ((1u64 << 31) - 1) as usize;
+        let page_freed = buf_page.freed_page_clock();
+
+        let curr_size = inner.curr_size;
+        let old_ratio = self.buf_lru.lock().unwrap().old_ratio();
+
+        freed > page_freed + (curr_size * (OLD_RATIO_DIV - old_ratio) / (OLD_RATIO_DIV * 4))
     }
 
     // ——————————————————————————————————————————————————
@@ -1399,7 +1451,7 @@ impl BufPool {
         let mut lru = self.buf_lru.lock().unwrap();
 
         // 3) Call the real insertion routine
-        lru.add_block_low(buf_page, old);
+        lru.add_block_low(buf_page, old, inner.freed_page_clock);
     }
 
     /// Change the percentage of pages treated as “old.”  If `adjust==true`,
