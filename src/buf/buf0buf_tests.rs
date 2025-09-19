@@ -1,6 +1,7 @@
 #[cfg(test)]
 pub(super) mod tests {
-    use crate::buf::buf0types::BufBlock;
+    use crate::buf::buf0types::{BufBlock, BufPage};
+    use crate::ut::ut0ut::ut_time_ms;
     use rstest::{fixture, rstest};
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, Mutex, RwLock, atomic::Ordering::Relaxed};
@@ -832,7 +833,6 @@ pub(super) mod tests {
                 );
             }
         }
-        
     }
 
     #[rstest]
@@ -872,5 +872,143 @@ pub(super) mod tests {
         // re-open resets stats
         pool.open(2 * UNIV_PAGE_SIZE);
         assert_eq!(pool.stat().n_pages_get.load(Ordering::Relaxed), 0);
+    }
+
+    #[rstest]
+    fn test_no_evictions_nothing_old(buf_pool_fixture: BufPoolFixture) {
+        let pool = buf_pool_fixture.buf_pool;
+        pool.open(2 * UNIV_PAGE_SIZE);
+        let page = make_page(false, 0, 0);
+
+        assert_eq!(pool.peek_if_too_old(&page), false);
+    }
+
+    #[rstest]
+    fn test_old_page_recently_accessed(buf_pool_fixture: BufPoolFixture) {
+        let pool = buf_pool_fixture.buf_pool;
+        pool.open(2 * UNIV_PAGE_SIZE);
+        pool.inner().lock().unwrap().set_freed_page_clock(10);
+
+        let mut page = make_page(true, 0, ut_time_ms());
+        page.set_accessed(ut_time_ms()); // just now
+        assert_eq!(pool.peek_if_too_old(&page), false);
+    }
+
+    #[rstest]
+    fn test_old_page_stale_access(buf_pool_fixture: BufPoolFixture) {
+        let pool = buf_pool_fixture.buf_pool;
+        pool.open(2 * UNIV_PAGE_SIZE);
+        pool.inner().lock().unwrap().set_freed_page_clock(10);
+
+        // simulate last access 2 seconds ago
+        let mut page = make_page(true, 0, ut_time_ms() - 2000);
+        page.set_accessed(ut_time_ms() - 2000);
+
+        assert_eq!(pool.peek_if_too_old(&page), true);
+    }
+
+    #[rstest]
+    fn test_young_page_not_enough_evictions(buf_pool_fixture: BufPoolFixture) {
+        let pool = buf_pool_fixture.buf_pool;
+        pool.open(2 * UNIV_PAGE_SIZE);
+        {
+            let mut inner = pool.inner().lock().unwrap();
+            inner.set_freed_page_clock(50);
+            inner.set_curr_size(128);
+        }
+
+        let page = make_page(false, 49, 0);
+        assert_eq!(pool.peek_if_too_old(&page), false);
+    }
+
+    #[rstest]
+    fn test_young_page_too_old_evictions(buf_pool_fixture: BufPoolFixture) {
+        let pool = buf_pool_fixture.buf_pool;
+        pool.open(2 * UNIV_PAGE_SIZE);
+        {
+            let mut inner = pool.inner().lock().unwrap();
+            inner.set_freed_page_clock(5000);
+            inner.set_curr_size(128);
+        }
+
+        let page = make_page(false, 1, 0);
+        assert_eq!(pool.peek_if_too_old(&page), true);
+    }
+    
+    #[rstest]
+    fn test_first_access_sets_accessed_timestamp(
+        buf_pool_fixture: BufPoolFixture,
+    ) {
+        let pool = buf_pool_fixture.buf_pool;
+        pool.open(2 * UNIV_PAGE_SIZE);
+
+        // Non-old page, first access (access_time == 0)
+        let mut page = make_page(false /* not old */, 0, 0);
+        assert_eq!(page.access_time(), 0);
+
+        pool.set_accessed_make_young(&mut page, 0);
+
+        // Should set accessed() to "now"
+        assert!(
+            page.access_time() > 0,
+            "first access should set accessed timestamp"
+        );
+    }
+
+    #[rstest]
+    fn test_non_old_non_first_access_noop(buf_pool_fixture: BufPoolFixture) {
+        let pool = buf_pool_fixture.buf_pool;
+        pool.open(2 * UNIV_PAGE_SIZE);
+
+        // Non-old page with an existing accessed timestamp and non-zero access_time
+        let t0 = 123_u64;
+        let mut page = make_page(false /* not old */, 0, t0);
+        page.set_accessed(t0);
+
+        pool.set_accessed_make_young(&mut page, t0);
+
+        // Should do nothing
+        assert_eq!(
+            page.access_time(),
+            t0,
+            "non-old, non-first access should be a no-op"
+        );
+    }
+
+    #[rstest]
+    fn test_old_page_with_zero_access_time_still_made_young(
+        buf_pool_fixture: BufPoolFixture,
+    ) {
+        let pool = buf_pool_fixture.buf_pool;
+        pool.open(2 * UNIV_PAGE_SIZE);
+        
+
+        // Make eviction look active/far along
+
+        let mut inner = pool.inner().lock().unwrap();
+        inner.set_freed_page_clock(10_000);
+        drop(inner);
+
+        // Make a page whose last access is long ago (non-zero)
+        let mut page = make_page(true /* old bit for visibility */, 0, 1);
+        page.set_accessed(1);
+        pool.add_block(&mut page, true);
+        
+        // access_time == 0, but 'old' branch should still win
+        pool.set_accessed_make_young(&mut page, 0);
+
+        assert!(
+            !page.is_old(),
+            "old page should be made young even when access_time == 0"
+        );
+    }
+
+    fn make_page(old: bool, freed_clock: usize, access_time: u64) -> BufPage {
+        let mut page = BufPage::new(0, 0);
+        page.set_old(old);
+        page.set_freed_page_clock(freed_clock);
+        page.set_in_file();
+        page.set_accessed(access_time);
+        page
     }
 }
