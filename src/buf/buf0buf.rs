@@ -1,16 +1,17 @@
-use intrusive_collections::{LinkedList, UnsafeRef};
 use std::{
     alloc::{Layout, alloc_zeroed},
     collections::HashMap,
     ops::DerefMut,
     sync::{Arc, Mutex, RwLock, atomic::Ordering::Relaxed},
 };
+
+use intrusive_collections::{LinkedList, UnsafeRef};
 use tracing::{error, info};
 
 use crate::{
     buf::{
         buf0flu::BufFlush,
-        buf0lru::BufLRU,
+        buf0lru::{BufLRU, OLD_RATIO_DIV},
         buf0rea::BufRea,
         buf0types::{
             BUF_GET_ALWAYS, BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH, BufBlock,
@@ -40,7 +41,6 @@ use crate::{
     },
     ut_2_power_up, ut_panic,
 };
-use crate::buf::buf0lru::OLD_RATIO_DIV;
 
 /// Buffer Pool manages the caching of database pages in memory.
 ///
@@ -1152,7 +1152,11 @@ impl BufPool {
     /// # Arguments
     /// * `buf_page` - The buffer block to update
     /// * `access_time` - The current access time to compare against the page's last access time
-    pub fn set_accessed_make_young(&self, buf_page: &mut BufPage, access_time: u64) {
+    pub fn set_accessed_make_young(
+        &self,
+        buf_page: &mut BufPage,
+        access_time: u64,
+    ) {
         ut_ad!(buf_page.in_file());
 
         if self.peek_if_too_old(buf_page) {
@@ -1230,14 +1234,12 @@ impl BufPool {
                 }
             }
 
-            self.stat
-                .n_pages_not_made_young
-                .fetch_add(1, Relaxed);
+            self.stat.n_pages_not_made_young.fetch_add(1, Relaxed);
             return false;
         }
 
         /*
-        	For young pages, InnoDB doesn’t want to promote them too aggressively.
+            For young pages, InnoDB doesn’t want to promote them too aggressively.
         •	So it uses a relative age heuristic:
         •	Compare the pool’s current freed_page_clock vs. the snapshot when this page was last freed/inserted (page_freed).
         •	If the pool has freed enough pages since then → the page is “too old”.
@@ -1252,7 +1254,10 @@ impl BufPool {
         let curr_size = inner.curr_size;
         let old_ratio = self.buf_lru.lock().unwrap().old_ratio();
 
-        freed > page_freed + (curr_size * (OLD_RATIO_DIV - old_ratio) / (OLD_RATIO_DIV * 4))
+        freed
+            > page_freed
+                + (curr_size * (OLD_RATIO_DIV - old_ratio)
+                    / (OLD_RATIO_DIV * 4))
     }
 
     // ——————————————————————————————————————————————————

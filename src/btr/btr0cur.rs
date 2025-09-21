@@ -961,4 +961,21 @@ impl<'a> BTreeCursor<'a> {
 
         ut_ad!(result.is_ok());
     }
+
+    /// Marks a clustered index record for deletion.
+    /// 1. Write the undo log record to Undo log for this delete marking.
+    /// 2. Write the trx id in the id field of the deleting transaction,
+    ///    and in the roll ptr field pointer to the undo log record.
+    ///
+    pub fn del_mark_set_cluster_rec(&self, flags: usize, mtr: &mut Mtr) {
+        let mut rec = some_or_panic!(self.get_rec());
+
+        ut_ad!(self.index.is_clustered());
+        ut_ad!(!rec.rec_get_deleted_flag());
+
+        // 1. Update lock_sys
+        // 2. Trx report undo operation
+
+        rec.rec_set_deleted_flag(true);
+    }
 }

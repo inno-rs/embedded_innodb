@@ -2,6 +2,7 @@
 #![allow(unused_variables)]
 #![deny(warnings)]
 
+pub mod api;
 pub mod btr;
 pub mod buf;
 pub mod data;

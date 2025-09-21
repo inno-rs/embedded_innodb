@@ -326,7 +326,7 @@ impl PageCur {
             OrphanRecord::new(vec![0; UNIV_PAGE_SIZE], dtuple.n_fields);
         let orphan_record = orphan_record.get_record();
 
-        let rec = orphan_record.rec_convert_dtuple_to_rec(&index, &dtuple, 0);
+        let rec = orphan_record.rec_convert_dtuple_to_rec(index, dtuple, 0);
 
         self.page_cur_insert_rec_low(rec, mtr)
     }

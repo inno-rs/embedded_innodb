@@ -89,13 +89,16 @@ mod tests {
     fn test_rec_set_info_bits() {
         let (rec, layout, ptr) = get_new_rec();
 
-        for info_bits_val in 0..0xF {
-            info!("previous info_bits: {}", rec.rec_get_info_bits());
+        let info_bits_val = rec.rec_get_info_bits() | REC_INFO_DELETED_FLAG;
+        info!(
+            "previous info_bits: {}, new info_bits: {}",
+            rec.rec_get_info_bits(),
+            info_bits_val
+        );
 
-            rec.rec_set_info_bits(info_bits_val);
-            let result = rec.rec_get_info_bits();
-            assert_eq!(info_bits_val, result);
-        }
+        rec.rec_set_info_bits(info_bits_val);
+        let result = rec.rec_get_info_bits();
+        assert_eq!(info_bits_val, result);
 
         // Clean up
         free_rec(layout, ptr);
@@ -188,7 +191,7 @@ mod tests {
 
         // Set values in the source record
         let n_fields_val = 0;
-        let info_bits_val = 3;
+        let info_bits_val = 32;
         let heap_no_val = 42;
         let n_owned_val = 7;
         let next_offs_val = 1234;
@@ -198,6 +201,8 @@ mod tests {
         source_rec.rec_set_heap_no(heap_no_val);
         source_rec.rec_set_n_owned(n_owned_val);
         source_rec.rec_set_next_offs(next_offs_val);
+
+        assert_eq!(source_rec.rec_get_info_bits(), info_bits_val);
 
         // Copy the source record to the destination record
         source_rec.rec_copy(&mut dest_rec);
@@ -769,5 +774,29 @@ mod tests {
         // Field metadata = 6 * 2
         // Total = 6 + 165 + 12 = 183
         assert_eq!(rec.rec_offs_size(), 183);
+    }
+
+    #[test]
+    fn test_rec_delete_mark() {
+        let owning_page = create_records(
+            1,
+            vec![
+                FieldType::String(Some("Hello World".to_string())),
+                FieldType::String(Some("Mario".to_string())),
+                FieldType::String(Some("Mushroom".to_string())),
+            ],
+        );
+
+        let mut rec = owning_page.page.page_get_user_records()[0];
+
+        assert_eq!(rec.rec_get_deleted_flag(), false);
+
+        // Mark the record as deleted
+        rec.rec_set_deleted_flag(true);
+        assert_eq!(rec.rec_get_deleted_flag(), true);
+
+        // Mark the record as not deleted
+        rec.rec_set_deleted_flag(false);
+        assert_eq!(rec.rec_get_deleted_flag(), false);
     }
 }

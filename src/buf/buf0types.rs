@@ -158,7 +158,7 @@ pub struct BufPage {
 
     buf_block: Weak<RwLock<BufBlock>>,
     /// snapshot of pool->freed_page_clock
-    freed_page_clock: usize,  
+    freed_page_clock: usize,
 }
 
 // Adapter for intrusive collections to manage flush lists of buffer pages.
@@ -199,7 +199,7 @@ impl BufPage {
             buf_block: Default::default(),
             access_time: 0,
             file_page_was_freed: false,
-            freed_page_clock:0usize,
+            freed_page_clock: 0usize,
         }
     }
 
@@ -697,7 +697,6 @@ impl BufBlock {
         self.modify_clock.load(Ordering::Relaxed)
     }
 
-    
     /// Gets a Page object that provides methods for accessing the page data.
     ///
     /// # Returns
