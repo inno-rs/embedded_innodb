@@ -1,10 +1,11 @@
 #[cfg(test)]
 pub(super) mod tests {
-    use crate::buf::buf0types::{BufBlock, BufPage};
-    use crate::ut::ut0ut::ut_time_ms;
+    use std::sync::{
+        Arc, Mutex, RwLock,
+        atomic::{Ordering, Ordering::Relaxed},
+    };
+
     use rstest::{fixture, rstest};
-    use std::sync::atomic::Ordering;
-    use std::sync::{Arc, Mutex, RwLock, atomic::Ordering::Relaxed};
 
     use crate::{
         buf::{
@@ -15,7 +16,10 @@ pub(super) mod tests {
             buf0flu::BufFlush,
             buf0lru::BufLRU,
             buf0rea::BufRea,
-            buf0types::{BUF_GET_IF_IN_POOL, BufIoFix, BufPageState, Request},
+            buf0types::{
+                BUF_GET_IF_IN_POOL, BufBlock, BufIoFix, BufPage, BufPageState,
+                Request,
+            },
         },
         fil::{
             fil0fil::Fil,
@@ -33,6 +37,7 @@ pub(super) mod tests {
         os::{os0io::OsIo, os0runtime::create_runtime},
         sync::sync0rw::ReadWriteLatch,
         tests::test0utils,
+        ut::ut0ut::ut_time_ms,
     };
 
     pub struct BufPoolFixture {
@@ -934,7 +939,7 @@ pub(super) mod tests {
         let page = make_page(false, 1, 0);
         assert_eq!(pool.peek_if_too_old(&page), true);
     }
-    
+
     #[rstest]
     fn test_first_access_sets_accessed_timestamp(
         buf_pool_fixture: BufPoolFixture,
@@ -981,7 +986,6 @@ pub(super) mod tests {
     ) {
         let pool = buf_pool_fixture.buf_pool;
         pool.open(2 * UNIV_PAGE_SIZE);
-        
 
         // Make eviction look active/far along
 
@@ -993,7 +997,7 @@ pub(super) mod tests {
         let mut page = make_page(true /* old bit for visibility */, 0, 1);
         page.set_accessed(1);
         pool.add_block(&mut page, true);
-        
+
         // access_time == 0, but 'old' branch should still win
         pool.set_accessed_make_young(&mut page, 0);
 

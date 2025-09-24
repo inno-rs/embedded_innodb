@@ -29,6 +29,9 @@ pub const REC_STATUS_NODE_PTR: usize = 1;
 pub const REC_STATUS_INFIMUM: usize = 2;
 pub const REC_STATUS_SUPREMUM: usize = 3;
 
+/// When the bit is set, the record has been marked as deleted.
+pub const REC_INFO_DELETED_FLAG: usize = 0x20;
+
 pub const REC_N_EXTRA_BYTES: usize = 6;
 
 /// Maximum length of the data in the physical record if the offsets are in 1-byte format.
@@ -87,7 +90,7 @@ pub const REC_HEAP_NO_SHIFT: usize = 3;
 
 pub const REC_INFO_BITS: usize = 6;
 pub const REC_INFO_BITS_MASK: usize = 0xF0;
-pub const REC_INFO_BITS_SHIFT: usize = 4;
+pub const REC_INFO_BITS_SHIFT: usize = 0;
 
 /// The following masks are used to filter the SQL null bit from the one byte and two byte offsets.
 pub const REC_1BYTE_SQL_NULL_MASK: usize = 0x80;
@@ -367,7 +370,7 @@ impl Record {
     pub fn rec_get_prev(&self) -> Option<Record> {
         let page = Page::new(self.page_align());
 
-        let slot_no = page.page_dir_find_owner_slot(self.clone());
+        let slot_no = page.page_dir_find_owner_slot(*self);
         let mut rec = page.page_dir_slot_get_rec(slot_no - 1);
 
         let mut prev_rec = rec;
@@ -1259,5 +1262,37 @@ impl Record {
         let buf = unsafe { slice::from_raw_parts(self.ptr.sub(offset), 2) };
         let val = mach_read_from_2(buf);
         (val as usize & mask) >> shift
+    }
+
+    /// Check if the record is marked as deleted.
+    ///
+    /// # Returns
+    ///
+    /// * True if the record is marked as deleted.
+    /// * False otherwise.
+    ///
+    pub fn rec_get_deleted_flag(&self) -> bool {
+        let val = self.rec_get_bit_field_1(
+            REC_INFO_BITS,
+            REC_INFO_DELETED_FLAG,
+            REC_INFO_BITS_SHIFT,
+        );
+
+        val != 0
+    }
+
+    /// Sets the deleted flag of the record.
+    ///
+    /// # Arguments
+    ///
+    /// * `deleted`: A boolean indicating whether to set or clear the deleted flag.
+    ///
+    pub fn rec_set_deleted_flag(&mut self, deleted: bool) {
+        let val = self.rec_get_info_bits();
+        if deleted {
+            self.rec_set_info_bits(val | REC_INFO_DELETED_FLAG);
+        } else {
+            self.rec_set_info_bits(val & !REC_INFO_DELETED_FLAG);
+        }
     }
 }
