@@ -614,9 +614,12 @@ pub fn fill_block_with_uniform_data(
 
     ut_ad!(page.page_validate());
 
-    let btree = btree.deref();
-    let mut btr_cur =
-        BTreeCursor::new(btree, btree.get_index().clone(), buf_pool, lock_sys);
+    let mut btr_cur = BTreeCursor::new(
+        btree.clone(),
+        btree.get_index().clone(),
+        buf_pool,
+        lock_sys,
+    );
     btr_cur.position(record, buf_block.clone());
 
     let low_limit = 0;
@@ -680,9 +683,8 @@ pub fn make_block_fragmented(
 
     ut_ad!(page.page_validate());
 
-    let btree = btree.deref();
     let mut btr_cur = BTreeCursor::new(
-        btree,
+        btree.clone(),
         btree.get_index().clone(),
         buf_pool.clone(),
         lock_sys,

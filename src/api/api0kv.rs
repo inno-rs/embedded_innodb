@@ -84,7 +84,7 @@ impl KeyValueStore {
         values: &mut HashMap<String, String>,
     ) -> Status {
         let mut btree_cursor = BTreeCursor::new(
-            self.btree.as_ref(),
+            self.btree.clone(),
             self.index.clone(),
             self.buf_pool.clone(),
             self.lock_sys.clone(),
@@ -169,7 +169,7 @@ impl KeyValueStore {
         values: HashMap<String, String>,
     ) -> Status {
         let mut btree_cursor = BTreeCursor::new(
-            self.btree.as_ref(),
+            self.btree.clone(),
             self.index.clone(),
             self.buf_pool.clone(),
             self.lock_sys.clone(),

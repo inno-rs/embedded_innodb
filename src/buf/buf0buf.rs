@@ -63,6 +63,9 @@ pub struct BufPool {
     flusher: Arc<Mutex<BufFlush>>,
 }
 
+unsafe impl Sync for BufPool {}
+unsafe impl Send for BufPool {}
+
 /// All the data that used to live *inside* the pool mutex
 /// (i.e., everything protected by that lock) goes here.
 pub struct BufPoolInner {

@@ -11,11 +11,11 @@ use crate::{
 
 pub enum IbInsertMode {
     /// INSERT INTO ... SELECT ...
-    InsSearched,
+    Searched,
     /// INSERT INTO ... VALUES ...
-    InsValues,
+    Values,
     /// Insert directly into a table.
-    InsDirect,
+    Direct,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
