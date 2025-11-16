@@ -1044,7 +1044,7 @@ impl BufLRU {
 
             if buf_page.in_file()
                 && buf_page.buf_page_get_io_fix() == BufIoFix::BufIoNone
-                && buf_page.buf_page_io_fix_count() == 0
+                && buf_page.buf_page_fix_count() == 0
                 && !buf_page.buf_page_modified()
             {
                 n_replaceable += 1;

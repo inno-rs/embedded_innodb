@@ -1,4 +1,5 @@
 use intrusive_collections::{LinkedList, UnsafeRef};
+use std::sync::atomic::Ordering;
 use std::{
     alloc::{Layout, alloc_zeroed},
     collections::HashMap,
@@ -7,6 +8,8 @@ use std::{
 };
 use tracing::{error, info};
 
+use crate::buf::buf0lru::OLD_RATIO_DIV;
+use crate::buf::buf0types::BufIoFix;
 use crate::{
     buf::{
         buf0flu::BufFlush,
@@ -14,8 +17,9 @@ use crate::{
         buf0rea::BufRea,
         buf0types::{
             BUF_GET_ALWAYS, BUF_GET_IF_IN_POOL, BUF_GET_NO_LATCH, BufBlock,
-            BufChunk, BufIoFix::BufIoRead, BufPage, BufPageState,
-            BufPoolStats, FlushListAdapter, Request,
+            BufChunk,
+            BufIoFix::{BufIoRead, BufIoWrite},
+            BufPage, BufPageState, BufPoolStats, FlushListAdapter, Request,
         },
     },
     fil::{
@@ -40,7 +44,6 @@ use crate::{
     },
     ut_2_power_up, ut_panic,
 };
-use crate::buf::buf0lru::OLD_RATIO_DIV;
 
 /// Buffer Pool manages the caching of database pages in memory.
 ///
@@ -355,81 +358,70 @@ impl BufPool {
         );
 
         self.stat.n_pages_get.fetch_add(1, Relaxed);
-        let mut _n_retries = 0u32;
+        let mut _n_retries = 0u32; // kept for future retry logic
 
-        // TODO(Rahul): Understand the logic of `guess`.
-
-        // TODO: Implement retry logic for getting a page for n number of times.
-
-        // 1. First, check if the page is already in the buffer pool:
-        let block_opt = {
-            // Lock the pool‐inner so we can safely inspect page_hash
+        // 1) Try to find the page in the hash
+        let mut block_opt = {
             let inner = self.inner.lock().unwrap();
             inner.page_hash.get(&request.page_id).cloned()
         };
 
-        match block_opt.clone() {
-            // 2. The page is not in the buffer pool, and the request mode is BUF_GET_NO_LATCH.
-            // Return None.
-            None => {
-                if request.mode == BUF_GET_IF_IN_POOL {
+        // 2) If not present, possibly read from disk
+        if block_opt.is_none() {
+            if request.mode == BUF_GET_IF_IN_POOL {
+                // Caller only wants it if already cached
+                return None;
+            }
+
+            // Initialize for read
+            let result = self.init_for_read(
+                request.page_id.space_id,
+                request.page_id.page_no,
+                -1,
+            );
+
+            let b = match result {
+                Ok(Some(block)) => {
+                    info!("page initialized for read: {}", request.page_id);
+                    Some(block)
+                }
+                Ok(None) => {
+                    info!("page not found for read: {}", request.page_id);
                     return None;
                 }
-
-                // 3. The page is not in the buffer pool, and try reading it.
-                let result = self.init_for_read(
-                    request.page_id.space_id,
-                    request.page_id.page_no,
-                    -1,
-                );
-
-                let b = match result {
-                    Ok(Some(block)) => {
-                        // Successfully initialized the page for read.
-                        info!(
-                            "page initialized for read: {}",
-                            request.page_id
-                        );
-                        Some(block)
-                    }
-                    Ok(None) => {
-                        info!("page not found for read: {}", request.page_id);
-                        return None;
-                    }
-                    Err(err) => {
-                        error!("Failed to initialize page for read: {}", err);
-                        ut_panic!(
-                            "Failed to initialize page for read: {}",
-                            err
-                        );
-                    }
-                };
-
-                let buf_block =
-                    some_or_panic!(b, "failed to initialize page for read");
-
-                let buf_rea = self.buf_rea.lock().unwrap();
-                if buf_rea.buf_read_page(
-                    IORequest::SyncRead,
-                    request.page_id.space_id,
-                    request.page_id.page_no,
-                    buf_block.clone(),
-                ) {
-                    // Successfully read the page.
-                    let mut buf_block = buf_block.write().unwrap();
-                    let buf_page_ref = buf_block.buf_block_get_page_mut();
-                    self.io_complete(buf_page_ref);
-
-                    _n_retries += 1;
+                Err(err) => {
+                    error!("Failed to initialize page for read: {}", err);
+                    ut_panic!("Failed to initialize page for read: {}", err);
                 }
+            };
+
+            let buf_block =
+                some_or_panic!(b, "failed to initialize page for read");
+
+            let buf_rea = self.buf_rea.lock().unwrap();
+            if buf_rea.buf_read_page(
+                IORequest::SyncRead,
+                request.page_id.space_id,
+                request.page_id.page_no,
+                buf_block.clone(),
+            ) {
+                // Successfully read the page
+                let mut buf_block_guard = buf_block.write().unwrap();
+                let buf_page_ref = buf_block_guard.buf_block_get_page_mut();
+                self.io_complete(buf_page_ref);
+
+                _n_retries += 1;
             }
-            Some(block) => {
-                // Take a *temporary* read, copy the PageId, then drop the guard.
+
+            // After init_for_read + buf_read_page the block is now in the hash.
+            block_opt = Some(buf_block);
+        } else {
+            // Sanity: check that the block we found matches the requested PageId
+            if let Some(block) = &block_opt {
                 let got_pid = {
                     let g = block.read().unwrap();
                     g.get_page_id()
-                }; // <-- read guard dropped here
-
+                };
                 ut_ad!(
                     got_pid == request.page_id,
                     "Block page_id={} does not match request page_id={}",
@@ -439,59 +431,62 @@ impl BufPool {
             }
         }
 
+        // 3) From here on we must have a block
         let block =
             some_or_panic!(block_opt, "failed to get block from page hash");
+
+        // If the page is currently being read, and caller only wants “if in pool”, bail
         {
             let block_ref = block.read().unwrap();
-            // The page is being read.
             let page_read_io =
                 block_ref.buf_block_get_page().buf_page_get_io_fix()
                     == BufIoRead;
 
             if page_read_io && request.mode == BUF_GET_IF_IN_POOL {
-                // If the page is being read, we cannot return it immediately.
-                // We need to wait for the read operation to complete.
                 return None;
             }
         }
 
+        // 4) Take write guard and check state
         let mut block_guard = block.write().unwrap();
         let block_ref = block_guard.deref_mut();
         let state = block_ref.buf_block_get_state();
+
         match &state {
             BufPageState::BufBlockFilePage => {}
-            _rest_of_the_types => {
-                ut_panic!(
-                    "Unexpected buffer block state: {:?}",
-                    _rest_of_the_types
-                );
+            other => {
+                ut_panic!("Unexpected buffer block state: {:?}", other);
             }
         }
 
         ut_ad!(state == BufPageState::BufBlockFilePage);
-        // Increment the buffix count for the page.
-        block_ref.buf_block_get_page().buf_page_io_fix_count();
-        let buf_page = block_ref.buf_block_get_page_mut();
-        let access_time = self.buf_page_accessed_time(buf_page);
 
-        self.set_accessed_make_young(buf_page, access_time);
+        // 5) Bump buf_fix, update access time & LRU, take latch
+        {
+            let page = block_ref.buf_block_get_page_mut();
+            page.inc_buf_fix();
 
-        match request.rw_latch {
-            ReadWriteLatch::SLatch => {
-                block_ref.frame_s_latch();
+            let access_time = self.buf_page_accessed_time(page);
+            self.set_accessed_make_young(page, access_time);
+
+            match request.rw_latch {
+                ReadWriteLatch::SLatch => {
+                    block_ref.frame_s_latch();
+                }
+                ReadWriteLatch::XLatch => {
+                    block_ref.frame_x_latch();
+                }
+                ReadWriteLatch::NoLatch => { /* no latch */ }
             }
-            ReadWriteLatch::XLatch => {
-                block_ref.frame_x_latch();
-            }
-            ReadWriteLatch::NoLatch => {
-                // The caller does not need any latch.
+
+            if access_time == 0 {
+                // TODO: read-ahead later
             }
         }
 
-        if access_time == 0 {
-            // TODO: Implement logic for read ahead.
-        }
+        drop(block_guard);
 
+        // 6) Record the fix in the MTR
         let fix_mode = match request.rw_latch {
             ReadWriteLatch::SLatch => FixMode::Shared,
             ReadWriteLatch::XLatch => FixMode::Exclusive,
@@ -655,16 +650,6 @@ impl BufPool {
         inner.page_hash.contains_key(&page_id)
     }
 
-    /// Handles the completion of an I/O operation on a buffer page.
-    ///
-    /// This method is called when an asynchronous I/O operation (read or write)
-    /// on a buffer page completes. It updates the page state and performs
-    /// any necessary post-processing.
-    ///
-    /// # Arguments
-    /// * `buf_page` - The buffer page for which I/O has completed
-    pub fn io_complete(&self, buf_page: &mut BufPage) {}
-
     /// Initializes a page for reading into the buffer pool.
     ///
     /// This method prepares a page read from the disk into the buffer pool.
@@ -709,16 +694,27 @@ impl BufPool {
             }
         }
 
-        /* 3. Allocate a new buffer block for the page. */
+        // 4. We must have a block now
         let block = some_or_panic!(block, "buf_block should be present");
+
+        // 5. Initialize as file page and put into LRU (as "old")
         {
-            let mut block_ref = block.write().unwrap();
+            // First: give the block an identity and insert into the hash
+            self.page_init(space_id, page_no, block.clone());
 
-            let buf_page_ref = block_ref.buf_block_get_page_mut();
-            self.add_block(buf_page_ref, false);
+            // Then: add to LRU list and mark IO in progress
+            let mut blk = block.write().unwrap();
+            let buf_page = blk.buf_block_get_page_mut();
+
+            // add as old => matches InnoDB which uses "true" here
+            self.add_block(buf_page, true);
+
+            // Mark that a read I/O is in progress on this page
+            buf_page.buf_page_set_io_fix(BufIoFix::BufIoRead);
+
+            // (Optional)  X-latch the frame for the duration of the I/O:
+            // blk.frame_x_latch();
         }
-
-        self.page_init(space_id, page_no, block.clone());
 
         let ret = Some(block.clone());
         Ok(ret)
@@ -810,6 +806,45 @@ impl BufPool {
 
         // sanity check
         ut_ad!(page.in_file());
+    }
+
+    pub fn release(
+        &self,
+        block: &Arc<RwLock<BufBlock>>,
+        latch_mode: ReadWriteLatch,
+    ) {
+        // 1) Decrement buf-fix count under the block write-lock
+        {
+            let mut guard = block.write().unwrap();
+            // Must be a file page, and must have been fixed at least once
+            ut_a!(
+                guard.buf_block_get_state() == BufPageState::BufBlockFilePage,
+                "release(): block is not a file page"
+            );
+
+            let page = guard.buf_block_get_page_mut();
+
+            ut_a!(
+                page.buf_page_fix_count() > 0,
+                "release(): buf_fix_count was already 0"
+            );
+
+            page.dec_buf_fix();
+        }
+
+        // 2) Release the latch (if any).
+        // We only need a read guard here just to call the unlatch methods.
+        match latch_mode {
+            ReadWriteLatch::SLatch => {
+                block.read().unwrap().frame_s_unlatch();
+            }
+            ReadWriteLatch::XLatch => {
+                block.read().unwrap().frame_x_unlatch();
+            }
+            ReadWriteLatch::NoLatch => {
+                // nothing to do
+            }
+        }
     }
 
     /// Frees a buffer block and returns it to the free list.
@@ -1152,7 +1187,11 @@ impl BufPool {
     /// # Arguments
     /// * `buf_page` - The buffer block to update
     /// * `access_time` - The current access time to compare against the page's last access time
-    pub fn set_accessed_make_young(&self, buf_page: &mut BufPage, access_time: u64) {
+    pub fn set_accessed_make_young(
+        &self,
+        buf_page: &mut BufPage,
+        access_time: u64,
+    ) {
         ut_ad!(buf_page.in_file());
 
         if self.peek_if_too_old(buf_page) {
@@ -1230,14 +1269,12 @@ impl BufPool {
                 }
             }
 
-            self.stat
-                .n_pages_not_made_young
-                .fetch_add(1, Relaxed);
+            self.stat.n_pages_not_made_young.fetch_add(1, Relaxed);
             return false;
         }
 
         /*
-        	For young pages, InnoDB doesn’t want to promote them too aggressively.
+            For young pages, InnoDB doesn’t want to promote them too aggressively.
         •	So it uses a relative age heuristic:
         •	Compare the pool’s current freed_page_clock vs. the snapshot when this page was last freed/inserted (page_freed).
         •	If the pool has freed enough pages since then → the page is “too old”.
@@ -1252,7 +1289,10 @@ impl BufPool {
         let curr_size = inner.curr_size;
         let old_ratio = self.buf_lru.lock().unwrap().old_ratio();
 
-        freed > page_freed + (curr_size * (OLD_RATIO_DIV - old_ratio) / (OLD_RATIO_DIV * 4))
+        freed
+            > page_freed
+                + (curr_size * (OLD_RATIO_DIV - old_ratio)
+                    / (OLD_RATIO_DIV * 4))
     }
 
     // ——————————————————————————————————————————————————
@@ -1499,6 +1539,55 @@ impl BufPool {
             // free exactly one block (this bumps freed_page_clock, advances modify_clock, etc.)
             // we ignore the boolean result here and just loop until the counter is zero
             let _ = self.search_and_free_block(1);
+        }
+    }
+
+    /// Handles the completion of an I/O operation on a buffer page.
+    ///
+    /// This method is called when an asynchronous I/O operation (read or write)
+    /// on a buffer page completes. It updates the page state and performs
+    /// any necessary post-processing.
+    ///
+    /// # Arguments
+    /// * `buf_page` - The buffer page for which I/O has completed
+
+    /// Handles the completion of an I/O operation on a buffer page.
+    ///
+    /// This is called once the (async or sync) I/O for this page is finished.
+    /// It clears the io_fix flag and, for writes, lets the flusher finalize
+    /// flush-list bookkeeping.
+    ///
+    /// TODO: This method is work in progress and it is super minimalistic version of io complete
+    ///
+    pub fn io_complete(&self, page: &mut BufPage) {
+        // 1. Must be a file page
+        ut_a!(page.in_file(), "io_complete: page not file-backed");
+
+        // 2. Determine io type
+        let io_type = page.buf_page_get_io_fix();
+        ut_a!(
+            io_type == BufIoFix::BufIoRead || io_type == BufIoFix::BufIoWrite,
+            "io_complete: unexpected io_fix: {:?}",
+            io_type
+        );
+
+        // 3. Clear io_fix (now the page is no longer I/O-pinned)
+        page.buf_page_set_io_fix(BufIoFix::BufIoNone);
+
+        // 4. Update stats
+        match io_type {
+            BufIoRead => {
+                self.stat.n_pages_read.fetch_add(1, Ordering::Relaxed);
+            }
+            BufIoWrite => {
+                self.stat.n_pages_written.fetch_add(1, Ordering::Relaxed);
+
+                // IMPORTANT:
+                // InnoDB calls flush->write_complete() here,
+                // but your architecture handles write completion
+                // inside doublewrite-buffer processing.
+            }
+            _ => unreachable!(),
         }
     }
 

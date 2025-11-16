@@ -22,6 +22,7 @@ use crate::{
     sync::sync0rw::ReadWriteLatch,
     ut::{ut0dbg::ut_ad, ut0math::ut_align_down},
 };
+use crate::ut::ut0dbg::ut_a;
 
 /// Magic number used to identify buffer pool pages that do not have a checksum.
 pub const BUF_NO_CHECKSUM_MAGIC: usize = 0xDEADBEEF;
@@ -449,13 +450,22 @@ impl BufPage {
     ///
     /// # Returns
     /// * `usize` - The current buffer fix count
-    pub fn buf_page_io_fix_count(&self) -> usize {
+    pub fn buf_page_fix_count(&self) -> usize {
         self.buf_fix_count
     }
 
     #[cfg(test)]
     pub fn set_buf_page_io_fix_count(&mut self, count: usize) {
         self.buf_fix_count = count
+    }
+
+    pub fn inc_buf_fix(&mut self) {
+        self.buf_fix_count += 1;
+    }
+
+    pub fn dec_buf_fix(&mut self) {
+        ut_a!(self.buf_fix_count > 0, "buf_fix_count underflow in dec_buf_fix");
+        self.buf_fix_count -= 1;
     }
 
     /// Gets the space ID of the tablespace containing this page.
@@ -618,6 +628,16 @@ impl BufBlock {
     /// S latch the page frame.
     pub fn frame_s_latch(&self) {
         unsafe { self.rw_lock.raw().lock_shared() };
+    }
+
+    /// Release an X-latch on the frame.
+    pub fn frame_x_unlatch(&self) {
+        unsafe { self.rw_lock.raw().unlock_exclusive() };
+    }
+
+    /// Release an S-latch on the frame.
+    pub fn frame_s_unlatch(&self) {
+        unsafe { self.rw_lock.raw().unlock_shared() };
     }
 
     /// Gets the frame pointer for this buffer block.

@@ -315,7 +315,7 @@ impl BufFlush {
                 ut_ad!(buf_page_ref.is_in_flush_list());
 
                 return true;
-            } else if buf_page_ref.buf_page_io_fix_count() == 0 {
+            } else if buf_page_ref.buf_page_fix_count() == 0 {
                 return true;
             }
         }
@@ -614,7 +614,7 @@ impl BufFlush {
             let fix_ok = if i == page_no {
                 true
             } else {
-                page.buf_page_io_fix_count() == 0
+                page.buf_page_fix_count() == 0
             };
 
             if fix_ok && self.ready_for_flush(&block, flush_type) {
