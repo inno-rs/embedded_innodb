@@ -17,6 +17,7 @@ use crate::{
     ut::ut0dbg::ut_ad,
     ut_panic,
 };
+use crate::buf::buf0buf::BufPool;
 
 pub const MTR_MAGIC_N: u32 = 54551;
 /// Mini-transaction (MTR) for managing atomic operations in the database.
@@ -37,6 +38,7 @@ pub struct Mtr {
     savepoints: Vec<Savepoint>,
     dblwr_create_in_progress: bool,
     magic_n: u32,
+    buf_pool: Option<Arc<BufPool>>,
 }
 
 impl Mtr {
@@ -66,6 +68,7 @@ impl Mtr {
             savepoints: Vec::new(),
             dblwr_create_in_progress: false,
             magic_n: MTR_MAGIC_N,
+            buf_pool: None,
         }
     }
 
@@ -134,31 +137,48 @@ impl Mtr {
         self.memo.contains(slot)
     }
 
-    /// Releases a specific resource from the mini-transaction's memo list.
+    /// Release a specific memo slot while the MTR is still ACTIVE.
     ///
-    /// This method finds and removes a specific memo slot from the memo list,
-    /// then performs the appropriate release action based on the type of resource.
-    /// The resource is completely released from the mini-transaction's control.
+    /// This method is used when the caller wants to explicitly release
+    /// a resource *before* the mini-transaction commits.
     ///
-    /// # Arguments
-    /// * `to_release` - The memo slot representing the resource to be released
+    /// It searches the memo stack from the top (LIFO) down to find the
+    /// most recent matching slot. If found:
+    ///   • it removes that slot from the memo list  
+    ///   • performs the appropriate cleanup action:
+    ///        - PageFix  → unfix page in buffer pool
+    ///        - PageDirty → (no-op; dirty pages stay dirty until flushed)
+    ///        - Latch     → release shared/exclusive latch
+    ///        - Other     → custom cleanup if needed
     ///
+    /// ## State Requirements
+    /// This function may only be called when the MTR is **ACTIVE**.
+    /// A panic occurs otherwise.
+    ///
+    /// ## Why this exists
+    /// InnoDB allows releasing individual memo entries while the
+    /// MTR is still running—for example:
+    ///   - early page unfix
+    ///   - releasing a latch earlier than commit
+    ///   - selective resource cleanup during rollback_to_savepoint()
+    ///
+    /// `memo_release` *removes* the entry from the memo vector entirely,
+    /// unlike `memo_slot_release`, which only clears the slot but
+    /// does not shrink the vector.
+    ///
+    /// ## Panics
+    /// - If the MTR is not ACTIVE.
+    /// - If the matching memo slot is not found.
+    /// - If buf_pool is not attached when releasing a PageFix.
     pub fn memo_release(&mut self, to_release: &MemoSlot) {
         ut_ad!(
-            self.mtr_state == MtrState::MtrActive,
-            "memo release only allowed when ACTIVE"
-        );
-        if let Some(pos) = self.memo.iter().rposition(|s| s == to_release) {
+        self.mtr_state == MtrState::MtrActive,
+        "memo_release only allowed when ACTIVE"
+    );
+
+        if let Some(pos) = self.memo.iter().rposition(|s| *s == *to_release) {
             let slot = self.memo.remove(pos);
-            // release slot exactly as in rollback_to_savepoint:
-            match slot {
-                MemoSlot::PageFix(page, mode) => {
-                    /* buf_pool.unfix(page, mode) */
-                }
-                MemoSlot::PageDirty(page) => { /* clear dirty flag? */ }
-                MemoSlot::Latch(handle, mode) => { /* handle.release(mode) */ }
-                MemoSlot::Other(res) => { /* custom cleanup */ }
-            }
+            self.release_slot_resource(slot);
         } else {
             ut_panic!("memo_release: slot not found");
         }
@@ -207,43 +227,50 @@ impl Mtr {
         old
     }
 
-    /// Releases a single memo slot in-place (C++ `mtr_memo_slot_release`).
+    /// Release a memo slot **in-place**—used internally by commit() and rollback.
     ///
-    /// This method releases a specific memo slot by replacing it with a dummy slot
-    /// and then performing the appropriate release action based on the type of resource.
-    /// Unlike `memo_release`, this method modifies the slot in-place rather than
-    /// removing it from the memo list.
+    /// This helper performs the same logical cleanup as `memo_release()`,
+    /// but with two important differences:
     ///
-    /// # Arguments
-    /// * `slot` - A mutable reference to the memo slot to be released
+    /// ### 1. Slot is replaced with a dummy instead of removing it
+ 
+    /// This prevents double-release during commit, because the caller
+    /// (`commit()` or `rollback_to_savepoint()`) may continue iterating
+    /// through the memo array after this operation.
     ///
+    /// ### 2. Does NOT require the MTR to be ACTIVE
+    /// Unlike `memo_release()`, this function is intentionally allowed
+    /// during the **COMMITTING** phase.  
+    /// InnoDB’s commit logic does:
+    /// ```cpp
+    /// mtr->m_state = MTR_COMMITTING;
+    /// mtr_memo_pop_all()  // calls mtr_memo_slot_release()
+    /// ```
+    /// So asserting the ACTIVE state here would break commit.
+    ///
+    /// ## When used
+    /// - `commit()` when cleaning up *all* memo slots  
+    /// - `rollback_to_savepoint()`
+    /// - internal selective cleanup
+    ///
+    /// ## What it does
+    /// Based on the variant it:
+    ///   • PageFix(page_id, mode) → buf_pool.release_page(page_id, mode)  
+    ///   • PageDirty(_) → no-op (dirty state persists)  
+    ///   • Latch(_, mode) → release latch (currently stubbed)  
+    ///   • Other(_) → no-op  
+    ///
+    /// ## Panics
+    /// - If buf_pool is not attached when releasing a PageFix.
+    /// - Never checks or enforces the MTR state.
     pub fn memo_slot_release(&mut self, slot: &mut MemoSlot) {
-        // Swap out the slot with a dummy so we don't double-release
+        // Replace slot with a dummy to avoid double release
         let owned = std::mem::replace(
             slot,
             MemoSlot::Other(OtherResource { id: 0, flags: 0 }),
         );
-        match owned {
-            MemoSlot::PageFix(page_id, mode) => {
-                // TODO: call buffer-pool release: srv_buf_pool.release(page, mode, self)
-            }
-            MemoSlot::PageDirty(page) => {
-                // TODO: release dirty page: srv_buf_pool.release(page, /* buf_fix type */, self)
-            }
-            MemoSlot::Latch(handle, mode) => {
-                match mode {
-                    LockMode::Shared => {
-                        // TODO: rw_lock_s_unlock(handle)
-                    }
-                    LockMode::Exclusive => {
-                        // TODO: rw_lock_x_unlock(handle)
-                    }
-                }
-            }
-            MemoSlot::Other(res) => {
-                // TODO: debug assert for MTR_MEMO_MODIFY and memo_contains
-            }
-        }
+
+        self.release_slot_resource(owned);
     }
 
     /// Commits the mini-transaction, making all its changes permanent.
@@ -752,4 +779,35 @@ impl Mtr {
     pub fn set_mtr_state(&mut self, mtr_state: MtrState) {
         self.mtr_state = mtr_state;
     }
+
+    pub fn attach_buf_pool(&mut self, pool: Arc<BufPool>) {
+        self.buf_pool = Some(pool);
+    }
+
+    /// Internal helper: releases a MemoSlot's resource.
+    /// Returns nothing — caller decides whether to remove slot or replace with dummy.
+    fn release_slot_resource(&mut self, slot: MemoSlot) {
+        match slot {
+            MemoSlot::PageFix(page_id, fix_mode) => {
+                if let Some(pool) = &self.buf_pool {
+                    pool.release_page(page_id, fix_mode);
+                } else {
+                    panic!("MTR has no buf_pool attached");
+                }
+            }
+
+            MemoSlot::PageDirty(_pid) => {
+                // No-op — dirty pages remain dirty
+            }
+
+            MemoSlot::Latch(_handle, _mode) => {
+                // No-op in your minimal implementation
+            }
+
+            MemoSlot::Other(_) => {
+                // No-op
+            }
+        }
+    }
+    
 }

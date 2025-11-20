@@ -1,9 +1,12 @@
 #[cfg(test)]
 mod tests {
+    use std::sync::{ Mutex};
+    use crate::innodb::innodb0types::PageId;
     use crate::mtr::{
         mtr0mtr::Mtr,
         mtr0types::{MemoSlot, MtrLogMode, MtrState, OtherResource},
     };
+    use crate::mtr::mtr0types::FixMode;
 
     #[test]
     fn test_start_and_state() {
@@ -54,15 +57,42 @@ mod tests {
     }
 
     #[test]
-    fn test_memo_release() {
+    fn test_memo_release_basic_removal() {
         let mut mtr = Mtr::new();
         mtr.start();
+
         let slot = MemoSlot::Other(OtherResource { id: 42, flags: 7 });
-        mtr.memo_push(slot.clone());
-        // release should succeed
+
+        mtr.memo_push(slot);
+
+        assert_eq!(mtr.memo().len(), 1);
+
         mtr.memo_release(&slot);
+
+        // slot should be removed
+        assert_eq!(mtr.memo().len(), 0);
     }
 
+    #[test]
+    fn test_memo_release_removes_last_match() {
+        let mut mtr = Mtr::new();
+        mtr.start();
+
+        let slot1 = MemoSlot::Other(OtherResource { id: 1, flags: 0 });
+        let slot2 = MemoSlot::Other(OtherResource { id: 1, flags: 0 });
+
+        mtr.memo_push(slot1);
+        mtr.memo_push(slot2);
+
+        mtr.memo_release(&slot1);
+
+        // Should remove only the last occurrence
+        assert_eq!(mtr.memo().len(), 1);
+        assert_eq!(mtr.memo()[0], slot1); // the first one remains
+    }
+
+  
+    
     #[test]
     #[should_panic(expected = "memo_release: slot not found")]
     fn test_memo_release_panic() {
@@ -79,5 +109,19 @@ mod tests {
         mtr.memo_push(MemoSlot::Other(OtherResource { id: 3, flags: 0 }));
         mtr.commit();
         assert_eq!(mtr.get_mtr_state(), MtrState::MtrUndefined);
+    }
+
+    #[derive(Default)]
+    struct MockBufPool {
+        released: Mutex<Vec<(PageId, FixMode)>>,
+    }
+
+    impl MockBufPool {
+        fn new() -> Self {
+            Self { released: Mutex::new(vec![]) }
+        }
+        fn release_page(&self, pid: PageId, mode: FixMode) {
+            self.released.lock().unwrap().push((pid, mode));
+        }
     }
 }

@@ -690,7 +690,7 @@ impl BufLRU {
         // 0) Sanity checks
         let buf_page = block_guard.buf_block_get_page_mut();
         ut_a!(buf_page.buf_page_get_io_fix() == BufIoFix::BufIoNone);
-        ut_a!(buf_page.buf_page_io_fix_count() == 0);
+        ut_a!(buf_page.buf_page_fix_count() == 0);
         buf_page.buf_page_get_io_fix();
 
         // 1) Unlink from our intrusive LRU list

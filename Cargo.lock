@@ -340,6 +340,7 @@ dependencies = [
  "fixedbitset",
  "intrusive-collections",
  "libc",
+ "log",
  "once_cell",
  "parking_lot",
  "pretty_assertions",

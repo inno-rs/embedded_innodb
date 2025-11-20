@@ -847,6 +847,29 @@ impl BufPool {
         }
     }
 
+    pub fn release_page(&self, pid: PageId, mode: FixMode) {
+        // 1) find the block
+        let block = {
+            let inner = self.inner.lock().unwrap();
+            inner.page_hash.get(&pid).cloned()
+        };
+
+        let Some(block) = block else { return };
+
+        let mut guard = block.write().unwrap();
+        let page = guard.buf_block_get_page_mut();
+
+        // 2) decrement fix count
+        page.dec_buf_fix();
+
+        // 3) unlock latch depending on mode
+        match mode {
+            FixMode::Shared => guard.frame_s_unlatch(),
+            FixMode::Exclusive => guard.frame_x_unlatch(),
+            FixMode::NoLatch => {}
+        }
+    }
+
     /// Frees a buffer block and returns it to the free list.
     ///
     /// This method releases a buffer block that is no longer needed, making it
