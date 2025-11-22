@@ -1,12 +1,25 @@
 #[cfg(test)]
 mod tests {
-    use std::sync::{ Mutex};
+    use crate::buf::buf0iface::BufPoolLike;
     use crate::innodb::innodb0types::PageId;
+    use crate::mtr::mtr0types::FixMode;
     use crate::mtr::{
         mtr0mtr::Mtr,
         mtr0types::{MemoSlot, MtrLogMode, MtrState, OtherResource},
     };
-    use crate::mtr::mtr0types::FixMode;
+    use crate::tests::test0utils;
+    use std::sync::Arc;
+
+    #[derive(Default)]
+    struct FakePool {
+        released: std::cell::RefCell<Vec<(PageId, FixMode)>>,
+    }
+
+    impl BufPoolLike for FakePool {
+        fn release_page(&self, pid: PageId, mode: FixMode) {
+            self.released.borrow_mut().push((pid, mode));
+        }
+    }
 
     #[test]
     fn test_start_and_state() {
@@ -91,8 +104,6 @@ mod tests {
         assert_eq!(mtr.memo()[0], slot1); // the first one remains
     }
 
-  
-    
     #[test]
     #[should_panic(expected = "memo_release: slot not found")]
     fn test_memo_release_panic() {
@@ -111,17 +122,68 @@ mod tests {
         assert_eq!(mtr.get_mtr_state(), MtrState::MtrUndefined);
     }
 
-    #[derive(Default)]
-    struct MockBufPool {
-        released: Mutex<Vec<(PageId, FixMode)>>,
-    }
+    #[test]
+    fn test_release_block_at_savepoint_basic() {
+        //
+        // 1. Create a fake page + block (test helper)
+        //
+        let owning_page = test0utils::create_raw_page();
+        let block = owning_page.buf_block.clone();
+        let pid = owning_page.page.page_get_page_id();
 
-    impl MockBufPool {
-        fn new() -> Self {
-            Self { released: Mutex::new(vec![]) }
+        //
+        // 2. Set initial buf_fix_count = 1
+        //
+        {
+            let mut g = block.write().unwrap();
+            let page = g.buf_block_get_page_mut();
+            page.set_buf_page_io_fix_count(1);
+            assert_eq!(page.buf_page_fix_count(), 1);
         }
-        fn release_page(&self, pid: PageId, mode: FixMode) {
-            self.released.lock().unwrap().push((pid, mode));
+
+        //
+        // 3. Create MTR and attach a *single shared* FakePool
+        //
+        let fake_pool = Arc::new(FakePool::default());
+        let mut mtr = Mtr::new();
+        mtr.start();
+        mtr.attach_buf_pool(fake_pool.clone());
+
+        //
+        // 4. Set savepoint + memo push PageFix
+        //
+        let sp = mtr.set_savepoint();
+        mtr.memo_push(MemoSlot::PageFix(pid, FixMode::Exclusive));
+
+        assert_eq!(mtr.memo().len(), sp + 1);
+
+        //
+        // 5. Call release_block_at_savepoint
+        //
+        {
+            // get mutable block reference
+            let mut guard = block.write().unwrap();
+            mtr.release_block_at_savepoint(sp, &mut guard);
+            // guard dropped after this scope
+        }
+
+       
+
+        //
+        // 6. FakeBufPool must record release
+        //
+        {
+            let releases = fake_pool.released.borrow();
+            assert_eq!(releases.len(), 1);
+            assert_eq!(releases[0], (pid, FixMode::Exclusive));
+        }
+
+        //
+        // 7. Memo slot must be replaced with dummy
+        //
+        match &mtr.memo()[sp] {
+            MemoSlot::Other(_) => {} // expected
+            _ => panic!("memo slot at savepoint not replaced with dummy"),
         }
     }
 }

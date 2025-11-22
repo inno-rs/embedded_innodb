@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
+
 use crate::{
     buf::buf0types::BufBlock,
     log::log0log::Log,
@@ -17,7 +18,7 @@ use crate::{
     ut::ut0dbg::ut_ad,
     ut_panic,
 };
-use crate::buf::buf0buf::BufPool;
+use crate::buf::buf0iface::BufPoolLike;
 
 pub const MTR_MAGIC_N: u32 = 54551;
 /// Mini-transaction (MTR) for managing atomic operations in the database.
@@ -38,7 +39,7 @@ pub struct Mtr {
     savepoints: Vec<Savepoint>,
     dblwr_create_in_progress: bool,
     magic_n: u32,
-    buf_pool: Option<Arc<BufPool>>,
+    buf_pool: Option<Arc<dyn BufPoolLike>>,
 }
 
 impl Mtr {
@@ -144,7 +145,7 @@ impl Mtr {
     ///
     /// It searches the memo stack from the top (LIFO) down to find the
     /// most recent matching slot. If found:
-    ///   • it removes that slot from the memo list  
+    ///   • it removes that slot from the memo list
     ///   • performs the appropriate cleanup action:
     ///        - PageFix  → unfix page in buffer pool
     ///        - PageDirty → (no-op; dirty pages stay dirty until flushed)
@@ -172,9 +173,9 @@ impl Mtr {
     /// - If buf_pool is not attached when releasing a PageFix.
     pub fn memo_release(&mut self, to_release: &MemoSlot) {
         ut_ad!(
-        self.mtr_state == MtrState::MtrActive,
-        "memo_release only allowed when ACTIVE"
-    );
+            self.mtr_state == MtrState::MtrActive,
+            "memo_release only allowed when ACTIVE"
+        );
 
         if let Some(pos) = self.memo.iter().rposition(|s| *s == *to_release) {
             let slot = self.memo.remove(pos);
@@ -233,14 +234,14 @@ impl Mtr {
     /// but with two important differences:
     ///
     /// ### 1. Slot is replaced with a dummy instead of removing it
- 
+
     /// This prevents double-release during commit, because the caller
     /// (`commit()` or `rollback_to_savepoint()`) may continue iterating
     /// through the memo array after this operation.
     ///
     /// ### 2. Does NOT require the MTR to be ACTIVE
     /// Unlike `memo_release()`, this function is intentionally allowed
-    /// during the **COMMITTING** phase.  
+    /// during the **COMMITTING** phase.
     /// InnoDB’s commit logic does:
     /// ```cpp
     /// mtr->m_state = MTR_COMMITTING;
@@ -249,16 +250,16 @@ impl Mtr {
     /// So asserting the ACTIVE state here would break commit.
     ///
     /// ## When used
-    /// - `commit()` when cleaning up *all* memo slots  
+    /// - `commit()` when cleaning up *all* memo slots
     /// - `rollback_to_savepoint()`
     /// - internal selective cleanup
     ///
     /// ## What it does
     /// Based on the variant it:
-    ///   • PageFix(page_id, mode) → buf_pool.release_page(page_id, mode)  
-    ///   • PageDirty(_) → no-op (dirty state persists)  
-    ///   • Latch(_, mode) → release latch (currently stubbed)  
-    ///   • Other(_) → no-op  
+    ///   • PageFix(page_id, mode) → buf_pool.release_page(page_id, mode)
+    ///   • PageDirty(_) → no-op (dirty state persists)
+    ///   • Latch(_, mode) → release latch (currently stubbed)
+    ///   • Other(_) → no-op
     ///
     /// ## Panics
     /// - If buf_pool is not attached when releasing a PageFix.
@@ -473,11 +474,14 @@ impl Mtr {
         self.mtr_state == MtrState::MtrActive
     }
 
-    /// Releases a buffer block at a specific savepoint without rolling back other operations.
+    ///A precise method to unfix and unlatch exactly ONE page fix that happened after a given savepoint,
+    /// without affecting the rest of the mini-transaction.
     ///
-    /// This method allows for selective release of a buffer block that was acquired
-    /// at a specific savepoint, without affecting other resources acquired by the
-    /// mini-transaction.
+    /// It is used for:
+    ///•	Partial rollback of page fixes
+    /// •	Selective early release of pages
+    /// •	Fine-grained B-tree operations
+    /// •	Maintaining correctness during multi-step page manipulation
     ///
     /// # Arguments
     /// * `savepoint` - The savepoint at which the block was acquired
@@ -512,9 +516,6 @@ impl Mtr {
 
         // 2) release that slot (unfix/dirty) in place
         self.memo_slot_release(&mut slot_ref);
-
-        // 3) drop the fix count under lock
-        block.fix_dec(); // Unpinning the page
     }
 
     /// Gets a reference to the current state of the mini-transaction.
@@ -780,10 +781,13 @@ impl Mtr {
         self.mtr_state = mtr_state;
     }
 
-    pub fn attach_buf_pool(&mut self, pool: Arc<BufPool>) {
-        self.buf_pool = Some(pool);
+    pub fn attach_buf_pool<P>(&mut self, pool: Arc<P>)
+    where
+        P: BufPoolLike + 'static,
+    {
+        let trait_object: Arc<dyn BufPoolLike> = pool;
+        self.buf_pool = Some(trait_object);
     }
-
     /// Internal helper: releases a MemoSlot's resource.
     /// Returns nothing — caller decides whether to remove slot or replace with dummy.
     fn release_slot_resource(&mut self, slot: MemoSlot) {
@@ -809,5 +813,4 @@ impl Mtr {
             }
         }
     }
-    
 }

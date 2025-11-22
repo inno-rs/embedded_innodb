@@ -196,3 +196,9 @@ pub enum MemoSlot {
 
 /// A savepoint is just the current memo‐stack length at that moment.
 pub type Savepoint = usize;
+
+/// Trait for Buffer Pool operations required by Mtr.
+/// This allows mocking the Buffer Pool in tests.
+pub trait MtrBufPool: Send + Sync {
+    fn release_page(&self, pid: PageId, mode: FixMode);
+}

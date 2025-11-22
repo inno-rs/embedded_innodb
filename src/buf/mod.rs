@@ -8,3 +8,5 @@ pub(crate) mod buf0lru;
 mod buf0lru_tests;
 pub(crate) mod buf0rea;
 pub(crate) mod buf0types;
+pub(crate) mod buf0iface;
+mod buf0iface_impls;
